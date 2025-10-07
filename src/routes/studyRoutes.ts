@@ -2,11 +2,12 @@
 import { Router } from 'express';
 import { 
   extractTranscript, 
+  generateStudyMaterial
 } from '../controllers/studyContoller';
 
 const router = Router();
 
 router.post('/extract', extractTranscript);
-// router.post('/summarize', generateStudyMaterial);
+router.post('/summarize', generateStudyMaterial);
 
 export default router;

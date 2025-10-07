@@ -1,7 +1,7 @@
 // This controller is for youtube video transcripts and study material generation
 import { Request, Response } from "express";
-import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments } from "../services/transcriptService";
-
+import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/transcriptService";
+import { summarizeTranscript } from "../services/summarizeService";
 
 /**
  * Extract transcript from YouTube video
@@ -69,6 +69,40 @@ export async function extractTranscript(req: Request, res: Response) {
     });
   } catch (err) {
     console.error("extractTranscript unexpected error:", err);
+    return res.status(500).json({ error: "Unexpected server error" });
+  }
+}
+
+
+
+/**
+ * Generate study material from transcript
+ */
+export async function generateStudyMaterial(req: Request, res: Response) {
+  try {
+    const { videoId, transcript, language } = req.body as {
+      videoId?: string;
+      transcript?: TranscriptSegment[];
+      language?: string;
+    };
+
+    if (!videoId || !Array.isArray(transcript)) {
+      return res.status(400).json({ error: "Missing videoId or transcript" });
+    }
+
+    const result = await summarizeTranscript({ videoId, transcript, language });
+    if (!result.success) {
+      return res.status(502).json({ error: result.error });
+    }
+
+    return res.json({ 
+      status: 200, 
+      videoId, 
+      markdown: result.markdown,
+      message: "Study material generated successfully."
+    });
+  } catch (e) {
+    console.error("generateStudyMaterial error", e);
     return res.status(500).json({ error: "Unexpected server error" });
   }
 }
