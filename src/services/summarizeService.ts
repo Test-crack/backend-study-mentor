@@ -1,4 +1,4 @@
-import type { TranscriptSegment } from "./transcriptService";
+import type { TranscriptSegment } from "./transcriptService.js";
 import OpenAI from "openai";
 
 export type SummarizeRequest = {

@@ -1,49 +1,33 @@
-import express, { Request, Response } from 'express';
-import studyRoutes from './routes/studyRoutes';
+import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import studyRoutes from './routes/studyRoutes.js';  // ← Add .js
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT) || 4000;
+
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://your-project.vercel.app',
+    /\.vercel\.app$/
+  ],
+  credentials: true
+}));
 
 app.use(express.json());
 
-
-// Define allowed origins
-const allowedOrigins = [
-  'http://localhost:8080',              // Dev client
-  'https://myedtech.com',               // Production site
-  'https://www.myedtech.com',           // Optional: www variant
-];
-
-// Dynamic CORS configuration
-const corsOptions: cors.CorsOptions = {
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true); // Allow request
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true, // enable if you plan to use cookies or JWT via headers
-};
-
-app.use(cors(corsOptions));
-app.use(express.json());
-
-
-app.get('/', (_req: Request, res: Response) => {
-  res.send('Study Material Generator Backend - Running');
+app.get('/health', (req, res) => {
+  console.log('✅ Health check hit');
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/yt-study', studyRoutes);
+app.use('/api/study', studyRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {  // ← Add 0.0.0.0
+  console.log(`✅ Server running on port ${PORT}`);
 });
 
-
+export default app;

@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { 
   extractTranscript, 
   generateStudyMaterial
-} from '../controllers/studyContoller';
+} from '../controllers/studyContoller.js';
 
 const router = Router();
 
