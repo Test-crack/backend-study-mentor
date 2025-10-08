@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import studyRoutes from './routes/studyRoutes';
+import readingRoutes from './routes/readingRoutes';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
@@ -41,6 +42,7 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 app.use('/api/yt-study', studyRoutes);
+app.use('/api/reading', readingRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
