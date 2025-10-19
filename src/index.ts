@@ -11,8 +11,10 @@ const PORT = Number(process.env.PORT) || 4000;
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://your-project.vercel.app',
-    /\.vercel\.app$/
+    'http://localhost:8080',
+    'https://platform.theblinkgrid.com',
+    /\.vercel\.app$/,
+    /\.theblinkgrid\.com$/
   ],
   credentials: true
 }));
