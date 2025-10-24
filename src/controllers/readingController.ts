@@ -34,7 +34,7 @@ interface SubmitRequest {
 }
 
 interface Metrics {
-  wpm: number;
+  weightedWPM: number;
   accuracy: number;
   retention: number;
   speedLearningScore: number;
@@ -99,6 +99,13 @@ export const getModules = (_req: Request, res: Response) => {
  */
 export const getRandomPassageController = (req: Request, res: Response) => {
   try {
+    // Validate request body exists
+    if (!req.body) {
+      return res.status(400).json({
+        error: 'Both module and difficulty are required'
+      });
+    }
+
     const { module, difficulty } = req.body;
 
     // Validate required fields
@@ -153,6 +160,9 @@ export const getRandomPassageController = (req: Request, res: Response) => {
  */
 export const submitAssessment = (req: Request, res: Response) => {
   try {
+    if (!req.body) {
+      return res.status(400).json({ error: 'Invalid request data' });
+    }
     const { passageId, readingTimeSeconds, answers } = req.body as SubmitRequest;
 
     // Validate request
@@ -198,20 +208,23 @@ export const submitAssessment = (req: Request, res: Response) => {
 
     // 1. Reading Speed (WPM)
     const wpm = Math.round(wordCount / (readingTimeSeconds / 60));
-
+    
     // 2. Accuracy (%)
     const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
-
+    
     // 3. Retention Score (%)
     const speedFactor = Math.min(1, wpm / idealWPM);
     const retention = Math.round((accuracy / 100) * speedFactor * 100);
-
+    
     // 4. Overall Speed Learning Score (out of 100)
     const speedComponent = Math.min(100, (wpm / idealWPM) * 100);
     const speedLearningScore = Math.round((0.6 * accuracy) + (0.4 * speedComponent));
-
+    
+    // accuracy - weighted WPM  
+    const weightedWPM = wpm * accuracy / 100;
+    
     const metrics: Metrics = {
-      wpm,
+      weightedWPM,
       accuracy,
       retention,
       speedLearningScore
