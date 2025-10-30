@@ -27,10 +27,18 @@ interface SubmitAnswer {
   selectedOption: string;
 }
 
+interface FocusData {
+  focusTime: number;           // Time actually focused
+  totalSessionTime: number;    // Total session time
+  focusRatio: number;          // Focus ratio (0.0-1.0)
+  tabSwitches: number;         // Number of tab switches
+}
+
 interface SubmitRequest {
   passageId: string;
   readingTimeSeconds: number;
   answers: SubmitAnswer[];
+  focusData: FocusData;
 }
 
 interface Metrics {
@@ -38,6 +46,113 @@ interface Metrics {
   accuracy: number;
   retention: number;
   speedLearningScore: number;
+}
+
+interface IntegrityFlags {
+  lowFocusRatio: boolean;
+  excessiveTabSwitches: boolean;
+  suspiciousBehavior: boolean;
+  integrityScore: number;
+}
+
+/**
+ * Validate focus data and detect suspicious behavior
+ */
+function validateFocusData(focusData: FocusData): IntegrityFlags {
+  const { focusRatio, tabSwitches, totalSessionTime } = focusData;
+  
+  // Thresholds for integrity validation
+  const MIN_FOCUS_RATIO = 0.7;        // 70% minimum focus ratio
+  const MAX_TAB_SWITCHES = 5;          // Maximum 5 tab switches
+  const MIN_SESSION_TIME = 20;        // Minimum 30 seconds session time
+  
+  const lowFocusRatio = focusRatio < MIN_FOCUS_RATIO;
+  const excessiveTabSwitches = tabSwitches > MAX_TAB_SWITCHES;
+  const shortSession = totalSessionTime < MIN_SESSION_TIME;
+  
+  // Calculate integrity score (0-100)
+  let integrityScore = 100;
+  
+  if (lowFocusRatio) integrityScore -= 30;
+  if (excessiveTabSwitches) integrityScore -= 25;
+  if (shortSession) integrityScore -= 20;
+  
+  // Additional penalties for extreme cases
+  if (focusRatio < 0.3) integrityScore -= 20;  // Very low focus
+  if (tabSwitches > 10) integrityScore -= 15;  // Excessive tab switching
+  
+  integrityScore = Math.max(0, integrityScore);
+  
+  const suspiciousBehavior = integrityScore < 50 || 
+                            (lowFocusRatio && excessiveTabSwitches) ||
+                            focusRatio < 0.2;
+  
+  return {
+    lowFocusRatio,
+    excessiveTabSwitches,
+    suspiciousBehavior,
+    integrityScore
+  };
+}
+
+/**
+ * Adjust metrics based on focus integrity
+ */
+function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFlags): Metrics {
+  const { integrityScore, suspiciousBehavior } = integrityFlags;
+  
+  if (suspiciousBehavior) {
+    // Heavy penalty for suspicious behavior
+    return {
+      weightedWPM: metrics.weightedWPM * 0.5,
+      accuracy: Math.max(0, metrics.accuracy - 20),
+      retention: Math.max(0, metrics.retention - 25),
+      speedLearningScore: Math.max(0, metrics.speedLearningScore - 30)
+    };
+  }
+  
+  if (integrityScore < 70) {
+    // Moderate penalty for low integrity
+    const penalty = (70 - integrityScore) / 100;
+    return {
+      weightedWPM: metrics.weightedWPM * (1 - penalty * 0.3),
+      accuracy: Math.max(0, metrics.accuracy - penalty * 10),
+      retention: Math.max(0, metrics.retention - penalty * 15),
+      speedLearningScore: Math.max(0, metrics.speedLearningScore - penalty * 20)
+    };
+  }
+  
+  // No adjustment for good integrity
+  return metrics;
+}
+
+/**
+ * Generate integrity feedback
+ */
+function generateIntegrityFeedback(integrityFlags: IntegrityFlags): string {
+  const { lowFocusRatio, excessiveTabSwitches, suspiciousBehavior, integrityScore } = integrityFlags;
+  
+  if (suspiciousBehavior) {
+    return "⚠️ Assessment integrity compromised. Please retake the assessment with proper focus and attention.";
+  }
+  
+  if (lowFocusRatio && excessiveTabSwitches) {
+    return "⚠️ Low focus detected with frequent tab switching. Your results may not reflect your true abilities.";
+  }
+  
+  if (lowFocusRatio) {
+    return "⚠️ Low focus ratio detected. Try to minimize distractions for better results.";
+  }
+  
+  if (excessiveTabSwitches) {
+    return "⚠️ Frequent tab switching detected. Please stay focused on the assessment.";
+  }
+  
+  if (integrityScore < 80) {
+    return "ℹ️ Good effort! Try to maintain better focus for optimal results.";
+  }
+  
+  return "✅ Excellent focus maintained throughout the assessment!";
 }
 
 /**
@@ -83,6 +198,7 @@ function generateFeedback(metrics: Metrics, idealWPM: number, actualWPM: number)
 export const getModules = (_req: Request, res: Response) => {
   try {
     const modules = getModulesList();
+    
     res.json({
       modules,
       total: modules.length
@@ -163,11 +279,20 @@ export const submitAssessment = (req: Request, res: Response) => {
     if (!req.body) {
       return res.status(400).json({ error: 'Invalid request data' });
     }
-    const { passageId, readingTimeSeconds, answers } = req.body as SubmitRequest;
+    console.log(req.body);
+    const { passageId, readingTimeSeconds, answers, focusData } = req.body as SubmitRequest;
 
     // Validate request
-    if (!passageId || typeof readingTimeSeconds !== 'number' || !Array.isArray(answers)) {
+    if (!passageId || typeof readingTimeSeconds !== 'number' || !Array.isArray(answers) || !focusData) {
       return res.status(400).json({ error: 'Invalid request data' });
+    }
+
+    // Validate focus data structure
+    if (typeof focusData.focusRatio !== 'number' || 
+        typeof focusData.tabSwitches !== 'number' ||
+        typeof focusData.focusTime !== 'number' ||
+        typeof focusData.totalSessionTime !== 'number') {
+      return res.status(400).json({ error: 'Invalid focus data structure' });
     }
 
     // Find passage from new library or fall back to old data
@@ -183,6 +308,19 @@ export const submitAssessment = (req: Request, res: Response) => {
     }
 
     const { wordCount, idealWPM, questions } = data;
+
+    // Validate focus data and check for suspicious behavior
+    const integrityFlags = validateFocusData(focusData);
+    
+    // If suspicious behavior detected, return early with warning
+    if (integrityFlags.suspiciousBehavior) {
+      return res.status(400).json({
+        error: "Assessment integrity compromised",
+        flag: "suspicious_behavior",
+        integrityFlags,
+        integrityFeedback: generateIntegrityFeedback(integrityFlags)
+      });
+    }
 
     // Calculate correct answers and build answer review
     let correctAnswers = 0;
@@ -206,6 +344,30 @@ export const submitAssessment = (req: Request, res: Response) => {
 
     // Calculate metrics according to specifications
 
+    // 0. Minimum viable Time check - improved logic
+    // Calculate minimum time based on realistic reading speeds:
+    // - Fast readers: 300-400 WPM (minimum viable)
+    // - Average readers: 200-300 WPM 
+    // - Slow readers: 100-200 WPM
+    // We use 400 WPM as the maximum reasonable speed for comprehension
+    const maxReasonableWPM = 400;
+    const minTimeSec = Math.ceil((wordCount / maxReasonableWPM) * 60);
+    
+    // Additional check: ensure minimum time is at least 20 seconds for any passage
+    const absoluteMinTime = Math.max(minTimeSec, 20);
+    
+    // Validate reading time
+    if (readingTimeSeconds < absoluteMinTime) {
+      console.log('Reading time too short');
+      const suggestedTime = Math.ceil(absoluteMinTime / 60);
+      return res.status(400).json({
+        error: `Reading time too short. Please read carefully for at least ${suggestedTime} minute${suggestedTime > 1 ? 's' : ''} to ensure proper comprehension.`,
+        flag: "too_fast",
+        suggestedMinTime: absoluteMinTime,
+        actualTime: readingTimeSeconds
+      });
+    }
+
     // 1. Reading Speed (WPM)
     const wpm = Math.round(wordCount / (readingTimeSeconds / 60));
     
@@ -223,24 +385,37 @@ export const submitAssessment = (req: Request, res: Response) => {
     // accuracy - weighted WPM  
     const weightedWPM = wpm * accuracy / 100;
     
-    const metrics: Metrics = {
+    const baseMetrics: Metrics = {
       weightedWPM,
       accuracy,
       retention,
       speedLearningScore
     };
 
+    // Adjust metrics based on focus integrity
+    const adjustedMetrics = adjustMetricsForIntegrity(baseMetrics, integrityFlags);
+
     // Generate feedback based on performance
-    const feedback = generateFeedback(metrics, idealWPM, wpm);
+    const performanceFeedback = generateFeedback(adjustedMetrics, idealWPM, wpm);
+    const integrityFeedback = generateIntegrityFeedback(integrityFlags);
 
     res.json({
-      metrics,
-      feedback,
-      answerReview, // New: detailed answer review
+      metrics: adjustedMetrics,
+      baseMetrics, // Original metrics before integrity adjustment
+      feedback: performanceFeedback,
+      integrityFeedback,
+      integrityFlags,
+      answerReview,
       passageInfo: {
         id: passageId,
         title: data.title,
         difficulty: data.difficulty
+      },
+      focusData: {
+        focusRatio: focusData.focusRatio,
+        tabSwitches: focusData.tabSwitches,
+        focusTime: focusData.focusTime,
+        totalSessionTime: focusData.totalSessionTime
       }
     });
   } catch (error) {
