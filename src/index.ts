@@ -17,6 +17,7 @@ const allowedOrigins = [
   'http://localhost:8080',              // Dev client
   'https://myedtech.com',               // Production site
   'https://www.myedtech.com',           // Optional: www variant
+  'http://72.60.221.118:5000',   // Frontend served via VPS
 ];
 
 // Dynamic CORS configuration
@@ -44,8 +45,8 @@ app.get('/', (_req: Request, res: Response) => {
 app.use('/api/yt-study', studyRoutes);
 app.use('/api/reading', readingRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
 
 
