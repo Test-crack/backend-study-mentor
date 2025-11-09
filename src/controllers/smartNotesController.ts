@@ -4,6 +4,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
+import { extractTextFromFile } from "../services/textExtractor.service";
+
 
 // === Ensure uploads directory exists ===
 const uploadDir = path.resolve(__dirname, "../../uploads");
@@ -83,11 +85,20 @@ export const uploadNotesController = async (req: FileRequest, res: Response): Pr
     // });
 
     // ✅ Queue background analysis (non-blocking)
-    setImmediate(() => {
+    setImmediate(async () => {
       console.log(`[PROCESS] ${file.originalname} queued for analysis at path: ${file.path}`);
-      // analyzeFile(file.path, fileType)
-      //   .then(result => updateNoteWithAnalysis(note.id, result))
-      //   .catch(err => console.error("Background processing failed:", err));
+      try {
+        console.log(`[PROCESS] Starting text extraction for: ${file.originalname}`);
+        const extractedText = await extractTextFromFile(file.path, file.mimetype);
+
+        console.log(`[PROCESS] Extraction successful: ${extractedText.slice(0, 200)}...`);
+
+    // 👉 Later: Save extracted text to DB or trigger LLM summarization here
+    // await prisma.note.update({ where: { id: note.id }, data: { content: extractedText } });
+
+  } catch (err) {
+      console.error(`[PROCESS] Extraction failed for ${file.originalname}:`, err);
+  }
     });
 
     // ✅ Send success response
