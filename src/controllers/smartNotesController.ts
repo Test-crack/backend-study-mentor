@@ -93,6 +93,16 @@ export const uploadNotesController = async (req: FileRequest, res: Response): Pr
 
         console.log(`[PROCESS] Extraction successful: ${extractedText.slice(0, 200)}...`);
 
+        // ✅ Save extracted text to .txt file
+        const extractedDir = path.resolve(__dirname, "../../uploads/extracted");
+        fs.mkdirSync(extractedDir, { recursive: true });
+        
+        const baseFileName = path.parse(file.filename).name;
+        const txtFilePath = path.join(extractedDir, `${baseFileName}.txt`);
+        
+        await fs.promises.writeFile(txtFilePath, extractedText, "utf-8");
+        console.log(`[PROCESS] Extracted text saved to: ${txtFilePath}`);
+
     // 👉 Later: Save extracted text to DB or trigger LLM summarization here
     // await prisma.note.update({ where: { id: note.id }, data: { content: extractedText } });
 
