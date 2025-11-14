@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { extractTextFromFile } from "../services/textExtractor.service";
+import { generateMaterial } from "../services/summarizeService";
 
 
 // === Ensure uploads directory exists ===
@@ -84,40 +85,32 @@ export const uploadNotesController = async (req: FileRequest, res: Response): Pr
     //   },
     // });
 
-    // ✅ Queue background analysis (non-blocking)
-    setImmediate(async () => {
-      console.log(`[PROCESS] ${file.originalname} queued for analysis at path: ${file.path}`);
-      try {
-        console.log(`[PROCESS] Starting text extraction for: ${file.originalname}`);
-        const extractedText = await extractTextFromFile(file.path, file.mimetype);
+    // ✅ Extract text immediately (blocking to get the path)
+    console.log(`[PROCESS] Starting text extraction for: ${file.originalname}`);
+    const extractedText = await extractTextFromFile(file.path, file.mimetype);
+    console.log(`[PROCESS] Extraction successful: ${extractedText.slice(0, 200)}...`);
 
-        console.log(`[PROCESS] Extraction successful: ${extractedText.slice(0, 200)}...`);
-
-        // ✅ Save extracted text to .txt file
-        const extractedDir = path.resolve(__dirname, "../../uploads/extracted");
-        fs.mkdirSync(extractedDir, { recursive: true });
-        
-        const baseFileName = path.parse(file.filename).name;
-        const txtFilePath = path.join(extractedDir, `${baseFileName}.txt`);
-        
-        await fs.promises.writeFile(txtFilePath, extractedText, "utf-8");
-        console.log(`[PROCESS] Extracted text saved to: ${txtFilePath}`);
+    // ✅ Save extracted text to .txt file
+    const extractedDir = path.resolve(__dirname, "../../uploads/extracted");
+    fs.mkdirSync(extractedDir, { recursive: true });
+    
+    const baseFileName = path.parse(file.filename).name;
+    const txtFilePath = path.join(extractedDir, `${baseFileName}.txt`);
+    
+    await fs.promises.writeFile(txtFilePath, extractedText, "utf-8");
+    console.log(`[PROCESS] Extracted text saved to: ${txtFilePath}`);
 
     // 👉 Later: Save extracted text to DB or trigger LLM summarization here
     // await prisma.note.update({ where: { id: note.id }, data: { content: extractedText } });
 
-  } catch (err) {
-      console.error(`[PROCESS] Extraction failed for ${file.originalname}:`, err);
-  }
-    });
-
-    // ✅ Send success response
+    // ✅ Send success response with extracted file path
     const responsePayload = {
       success: true,
-      message: "File uploaded successfully and queued for processing",
+      message: "File uploaded and processed successfully",
       fileInfo: {
         name: file.originalname,
-        path: `/uploads/${file.filename}`,
+        originalPath: `/uploads/${file.filename}`,
+        extractedPath: `/uploads/extracted/${baseFileName}.txt`,
         type: fileType,
         size: fileSize,
         lastModified,
@@ -130,3 +123,75 @@ export const uploadNotesController = async (req: FileRequest, res: Response): Pr
     res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 };
+
+
+export const generateMaterialController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { extractedPath, materialType } = req.body;
+
+    if (!extractedPath) {
+      res.status(400).json({ error: "extractedPath is required" });
+      return;
+    }
+
+    if (!materialType) {
+      res.status(400).json({ error: "materialType is required (overview, standard, detailed, quiz)" });
+      return;
+    }
+
+    // Validate materialType
+    const validTypes = ["overview", "standard", "detailed", "quiz"];
+    if (!validTypes.includes(materialType)) {
+      res.status(400).json({ error: `Invalid materialType. Must be one of: ${validTypes.join(", ")}` });
+      return;
+    }
+
+    // Construct full file path
+    const extractedDir = path.resolve(__dirname, "../../uploads/extracted");
+    const fileName = path.basename(extractedPath);
+    const fullPath = path.join(extractedDir, fileName);
+
+    // Check if file exists
+    if (!fs.existsSync(fullPath)) {
+      console.warn(`[CTRL] File not found: ${fullPath}`);
+      res.status(404).json({ 
+        error: "Extracted file not found. Please re-upload the file.",
+        extractedPath 
+      });
+      return;
+    }
+
+    // Read the extracted text
+    console.log(`[CTRL] Reading extracted text from: ${fullPath}`);
+    const extractedText = await fs.promises.readFile(fullPath, "utf-8");
+
+    if (!extractedText || extractedText.trim().length === 0) {
+      res.status(400).json({ error: "Extracted file is empty" });
+      return;
+    }
+
+    // Generate material using the service
+    console.log(`[CTRL] Generating ${materialType} material...`);
+    
+    const result = await generateMaterial({
+      content: extractedText,
+      materialType: materialType as "overview" | "standard" | "detailed" | "quiz",
+    });
+
+    if (!result.success) {
+      res.status(500).json({ error: result.error });
+      return;
+    }
+
+    // Send success response
+    res.status(200).json({
+      success: true,
+      materialType,
+      markdown: result.markdown,
+    });
+
+  } catch (error: any) {
+    console.error("❌ Generate material error:", error);
+    res.status(500).json({ error: error.message || "Internal Server Error" });
+  }
+}; 

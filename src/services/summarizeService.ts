@@ -1,5 +1,6 @@
 import type { TranscriptSegment } from "./transcriptService";
 import OpenAI from "openai";
+import { YOUTUBE_TRANSCRIPT_PROMPT, MATERIAL_PROMPTS, type MaterialType } from "../data/prompts";
 
 export type SummarizeRequest = {
   videoId: string;
@@ -15,64 +16,6 @@ export type SummarizeResult = {
   error: string;
 };
 
-const DEFAULT_PROMPT = `You are an expert educational content creator. Create a comprehensive study material from the given YouTube transcript.
-
-Structure the output as follows:
-
-### **Overview**
-[Brief summary – 2–3 sentences about what the video covers]
-
----
-
-### **Concept 1: [Topic Name]**
-**Timestamp:** [MM:SS]
-
-- Main Point 1
-- Main Point 2
-- Main Point 3
-
-**Why This Matters:** [Explanation of importance and relevance]
-
----
-
-### **Concept 2: [Topic Name]**
-**Timestamp:** [MM:SS]
-
-- Main Point 1
-- Main Point 2
-- Main Point 3
-
-**Key Takeaway:** [Summary of this concept]
-
----
-
-[Continue with more concepts as needed]
-
-### **Summary**
-[Overall summary of the entire content - 3-4 sentences]
-
-### **Study Tips**
-- [Practical tip 1]
-- [Practical tip 2]
-- [Practical tip 3]
-
-### **Further Exploration**
-- [Related topic 1]
-- [Related topic 2]
-- [Additional resources or concepts to explore]
-
----
-
-**Instructions:**
-1. Divide content into logical sections/topics based on the transcript
-2. Add clear topic headings that describe each concept
-3. Highlight key concepts and important details
-4. Use bullet points for important details
-5. Include timestamps for each major concept (format as MM:SS)
-6. Provide "Why This Matters" or "Key Takeaway" for each concept
-7. Make it study-friendly with clear structure and actionable insights
-8. Use only Markdown syntax, no code blocks or special formatting`;
-
 function buildPrompt(segments: TranscriptSegment[], language?: string) {
   // Create transcript with timestamps for better context
   const transcriptWithTimestamps = segments
@@ -83,7 +26,7 @@ function buildPrompt(segments: TranscriptSegment[], language?: string) {
     .join("\n");
   
   const langHint = language ? `Write the study material in ${language}.` : "";
-  return `${DEFAULT_PROMPT}\n\n${langHint}\n\nTranscript with timestamps:\n${transcriptWithTimestamps}`;
+  return `${YOUTUBE_TRANSCRIPT_PROMPT}\n\n${langHint}\n\nTranscript with timestamps:\n${transcriptWithTimestamps}`;
 }
 
 function formatTimestamp(seconds: number): string {
@@ -151,4 +94,71 @@ function removeTopLevelMarkdownBlock(md: string): string {
   md = md.slice(0, -3);
  }
  return md;
+}
+
+// ===== GENERATE MATERIAL FROM EXTRACTED TEXT =====
+
+export type { MaterialType } from "../data/prompts";
+
+export type GenerateMaterialRequest = {
+  content: string;
+  materialType: MaterialType;
+};
+
+export type GenerateMaterialResult = {
+  success: true;
+  markdown: string;
+} | {
+  success: false;
+  error: string;
+};
+
+export async function generateMaterial(req: GenerateMaterialRequest): Promise<GenerateMaterialResult> {
+  try {
+    const { content, materialType } = req;
+
+    if (!content || content.trim().length === 0) {
+      return { success: false, error: "Content is empty." };
+    }
+
+    if (!MATERIAL_PROMPTS[materialType]) {
+      return { success: false, error: "Invalid material type." };
+    }
+
+    const apiKey = process.env.OPENROUTER_API_KEY;
+
+    if (!apiKey) {
+      // Fallback response if no API key
+      const md = `# ${materialType.charAt(0).toUpperCase() + materialType.slice(1)} Material\n\n> (Demo: set OPENROUTER_API_KEY for AI-generated content)\n\n## Content Preview\n${content.slice(0, 500)}...\n\n## Notes\nThis is a local fallback. Configure your API key to generate AI-powered study materials.`;
+      return { success: true, markdown: md };
+    }
+
+    const prompt = `${MATERIAL_PROMPTS[materialType]}\n\nContent to process:\n${content}`;
+
+    // Use OpenAI SDK configured for OpenRouter
+    const client = new OpenAI({
+      apiKey,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+        "X-Title": process.env.APP_NAME || "Study Material Generator",
+      },
+    });
+
+    const completion = await client.chat.completions.create({
+      model: "openai/gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You are a helpful assistant for creating educational study materials." },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.3,
+    });
+
+    const md = completion?.choices?.[0]?.message?.content;
+    if (!md) return { success: false, error: "Failed to generate material." };
+
+    return { success: true, markdown: removeTopLevelMarkdownBlock(md) };
+  } catch (e: any) {
+    return { success: false, error: e?.message || "Failed to generate material" };
+  }
 }
