@@ -41,6 +41,7 @@
     "multer": "^2.0.2",
     "openai": "^6.2.0",
     "pdf-parse": "^2.4.5",
+    "tesseract.js": "^6.0.1",
     "textract": "^2.5.0",
     "uuid": "^13.0.0",
     "youtubei.js": "^15.1.1"

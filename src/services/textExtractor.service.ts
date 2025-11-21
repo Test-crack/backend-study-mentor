@@ -1,6 +1,7 @@
 import fs from "fs-extra";
 import path from "path";
 import textract from "textract";
+import { extractTextFromImage, isImageFile } from "./ocrService";
 
 /**
  * Extract text content from various file types.
@@ -19,17 +20,30 @@ export async function extractTextFromFile(filePath: string, mimeType?: string): 
   try {
     console.log(`[EXTRACT] Starting extraction for: ${filePath} (${mimeType || ext})`);
 
-    // 1️⃣ --- Handle PDF via pdf-parse (most reliable for Node.js)
-    if (mimeType === "application/pdf" || ext === ".pdf") {
+    // 1️⃣ --- Handle images with OCR (including handwritten notes)
+    if (isImageFile(filePath, mimeType)) {
+      console.log(`[EXTRACT] Detected image file, using OCR...`);
+      const ocrResult = await extractTextFromImage(filePath, { lang: "eng" });
+      
+      if (ocrResult.success && ocrResult.text.length > 20) {
+        console.log(`[EXTRACT] OCR confidence: ${ocrResult.confidence.toFixed(2)}%`);
+        textContent = ocrResult.text;
+      } else {
+        throw new Error(`OCR failed or returned insufficient text (confidence: ${ocrResult.confidence}%)`);
+      }
+    }
+
+    // 2️⃣ --- Handle PDF via pdf-parse (most reliable for Node.js)
+    else if (mimeType === "application/pdf" || ext === ".pdf") {
       textContent = await extractWithPdfParse(filePath);
     }
 
-    // 2️⃣ --- Handle DOCX / TXT / other with textract
+    // 3️⃣ --- Handle DOCX / TXT / other with textract
     else {
       textContent = await extractTextWithTextract(filePath);
     }
 
-    // 3️⃣ --- Clean + normalize text for better LLM input
+    // 4️⃣ --- Clean + normalize text for better LLM input
     textContent = cleanExtractedText(textContent);
 
     if (!textContent || textContent.length < 20) {
@@ -41,7 +55,26 @@ export async function extractTextFromFile(filePath: string, mimeType?: string): 
   } catch (err: any) {
     console.error(`[EXTRACT] Error processing ${filePath}: ${err.message}`);
 
-    // 4️⃣ --- Fallback strategies if PDF parsing fails
+    // 5️⃣ --- Fallback strategies if extraction fails
+    
+    // Try OCR as fallback for images
+    if (isImageFile(filePath, mimeType)) {
+      console.warn(`[EXTRACT] ⚠️ Image extraction failed, trying OCR with different settings...`);
+      try {
+        const ocrResult = await extractTextFromImage(filePath, { 
+          lang: "eng",
+          psm: 11, // Sparse text mode for handwritten notes
+        });
+        if (ocrResult.success && ocrResult.text.length > 10) {
+          console.log(`[EXTRACT] ✅ OCR fallback succeeded`);
+          return cleanExtractedText(ocrResult.text);
+        }
+      } catch (ocrErr: any) {
+        console.error(`[EXTRACT] OCR fallback failed: ${ocrErr.message}`);
+      }
+    }
+
+    // 6️⃣ --- Fallback strategies if PDF parsing fails
     if (mimeType === "application/pdf" || ext === ".pdf") {
       console.warn(`[EXTRACT] ⚠️ PDF extraction failed, attempting fallbacks...`);
       
