@@ -40,8 +40,8 @@ export async function extractTextFromImage(
 
     const {
       lang = "eng", // Default to English
-      psm = 3, // Default: Fully automatic page segmentation
-      oem = 3, // Default: LSTM neural net mode
+      psm = 6, // Changed to 6: Single uniform block of text (better for handwritten notes)
+      oem = 1, // Changed to 1: LSTM only (better for handwriting)
     } = options;
 
     // Initialize Tesseract worker
@@ -96,15 +96,26 @@ export async function extractTextFromMultipleImages(
   options: OCROptions = {}
 ): Promise<OCRResult> {
   try {
-    console.log(`[OCR] Batch processing ${imagePaths.length} images...`);
+    console.log(`[OCR] ========== STARTING BATCH OCR ==========`);
+    console.log(`[OCR] Processing ${imagePaths.length} images...`);
+    console.log(`[OCR] Image paths:`, imagePaths);
 
     const results = await Promise.all(
-      imagePaths.map((imagePath) => extractTextFromImage(imagePath, options))
+      imagePaths.map((imagePath, index) => {
+        console.log(`[OCR] Starting OCR for image ${index + 1}/${imagePaths.length}: ${imagePath}`);
+        return extractTextFromImage(imagePath, options);
+      })
     );
+
+    console.log(`[OCR] All OCR operations completed`);
+    results.forEach((result, index) => {
+      console.log(`[OCR] Image ${index + 1} - Success: ${result.success}, Confidence: ${result.confidence}%, Text length: ${result.text?.length || 0}`);
+    });
 
     const successfulResults = results.filter((r) => r.success);
     
     if (successfulResults.length === 0) {
+      console.error(`[OCR] ❌ All ${imagePaths.length} OCR attempts failed`);
       throw new Error("All OCR attempts failed");
     }
 
@@ -112,6 +123,8 @@ export async function extractTextFromMultipleImages(
     const avgConfidence = successfulResults.reduce((sum, r) => sum + r.confidence, 0) / successfulResults.length;
 
     console.log(`[OCR] ✅ Batch complete. ${successfulResults.length}/${imagePaths.length} successful. Avg confidence: ${avgConfidence.toFixed(2)}%`);
+    console.log(`[OCR] Combined text length: ${combinedText.length} characters`);
+    console.log(`[OCR] ========== BATCH OCR COMPLETE ==========`);
 
     return {
       text: combinedText,
@@ -120,6 +133,7 @@ export async function extractTextFromMultipleImages(
     };
   } catch (error: any) {
     console.error(`[OCR] ❌ Batch error: ${error.message}`);
+    console.error(`[OCR] Error stack:`, error.stack);
     return {
       text: "",
       confidence: 0,
@@ -153,7 +167,13 @@ export function isImageFile(filePath: string, mimeType?: string): boolean {
  * @param raw - Raw OCR output
  * @returns Cleaned text
  */
-function cleanOCRText(raw: string): string {
+function cleanOCRText(raw: any): string {
+  // Handle non-string values
+  if (!raw || typeof raw !== "string") {
+    console.warn(`[OCR] cleanOCRText received non-string value: ${typeof raw}`);
+    return "";
+  }
+  
   return raw
     .replace(/\s+/g, " ") // Collapse multiple spaces
     .replace(/\n{3,}/g, "\n\n") // Normalize excessive newlines

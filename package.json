@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -33,6 +33,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "canvas": "^3.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
@@ -41,6 +42,10 @@
     "multer": "^2.0.2",
     "openai": "^6.2.0",
     "pdf-parse": "^2.4.5",
+    "pdf-poppler": "^0.2.3",
+    "pdf2pic": "^3.2.0",
+    "pdfjs-dist": "^5.4.394",
+    "sharp": "^0.34.5",
     "tesseract.js": "^6.0.1",
     "textract": "^2.5.0",
     "uuid": "^13.0.0",
