@@ -29,10 +29,13 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/textract": "^2.4.5",
     "nodemon": "^3.1.10",
+    "prisma": "^7.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@prisma/client": "^7.0.1",
+    "@supabase/supabase-js": "^2.86.0",
     "canvas": "^3.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
