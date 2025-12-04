@@ -1,11 +1,13 @@
+import dotenv from 'dotenv';
+dotenv.config(); 
 import express, { Request, Response } from 'express';
 import studyRoutes from './routes/studyRoutes';
 import readingRoutes from './routes/readingRoutes';
 import smartNotesRoutes from './routes/smartNotesRoutes';
 import cors from 'cors';
-import dotenv from 'dotenv';
 
-dotenv.config();
+import { requireAuth } from './middleware/auth';
+import { ensureUser } from './middleware/ensureUser';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -62,8 +64,8 @@ app.get('/test', (_req: Request, res: Response) => {
   res.json({ message: 'Test successful', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/yt-study', studyRoutes);
-app.use('/api/reading', readingRoutes);
+app.use('/api/yt-study',studyRoutes);
+app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 
 app.listen(Number(PORT), '0.0.0.0', () => {
