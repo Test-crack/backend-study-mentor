@@ -4,6 +4,7 @@ import express, { Request, Response } from 'express';
 import studyRoutes from './routes/studyRoutes';
 import readingRoutes from './routes/readingRoutes';
 import smartNotesRoutes from './routes/smartNotesRoutes';
+import conceptRoutes from './routes/conceptRoutes';
 import cors from 'cors';
 
 import { requireAuth } from './middleware/auth';
@@ -67,6 +68,7 @@ app.get('/test', (_req: Request, res: Response) => {
 app.use('/api/yt-study',studyRoutes);
 app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
+app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
 
 app.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`✅ Server running on port ${PORT}`);

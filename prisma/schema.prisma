@@ -6,15 +6,52 @@ datasource db {
   provider = "postgresql"
 }
 
-model test {
-  id   Int     @id
-  name String? @db.Char
-}
-
 model User {
   id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   supabaseuserid String   @unique @db.VarChar(255)
   email          String   @unique @db.VarChar(255)
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  userConcepts   UserConcept[]
+
+  @@index([email])
+}
+
+// Core concept model - represents unique learning concepts
+model Concept {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  conceptId         String   @unique @db.VarChar(100) // e.g., BIOLOGY.PHOTOSYNTHESIS.001
+  baseConceptId     String   @db.VarChar(100)         // e.g., BIOLOGY.PHOTOSYNTHESIS
+  domain            String   @db.VarChar(50)          // e.g., biology, physics, math
+  conceptSlug       String   @db.VarChar(100)         // e.g., photosynthesis
+  sequence          Int                                // Auto-incremented per baseConceptId
+  keywords          String[]                           // Array of keywords
+  learningObjective String   @db.Text                 // "Students will be able to..."
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  userConcepts      UserConcept[]
+
+  @@unique([baseConceptId, sequence])
+  @@index([domain])
+  @@index([conceptSlug])
+  @@index([baseConceptId])
+}
+
+// Junction table - tracks which users have interacted with which concepts
+model UserConcept {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String   @db.Uuid
+  conceptId String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  concept   Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, conceptId])
+  @@index([userId])
+  @@index([conceptId])
 }
