@@ -82,43 +82,17 @@ export async function createConceptWithContent(
   }
 }
 
-export interface LinkUserToConceptInput {
-  userId: string;
-  conceptId: string;
-  contentType: ContentType;
-  title?: string;
-  ytLink?: string;
-  path?: string;
-}
-
 /**
- * Link a user to a concept and create content entry
+ * Link a user to a concept
  */
-export async function linkUserToConcept(input: LinkUserToConceptInput): Promise<boolean> {
-  const { userId, conceptId, contentType, title, ytLink, path } = input;
-  
+export async function linkUserToConcept(userId: string, conceptId: string): Promise<boolean> {
   try {
-    await prisma.$transaction(async (tx) => {
-      // Create user-concept link
-      await tx.userConcept.create({
-        data: {
-          userId,
-          conceptId,
-        },
-      });
-
-      // Create content entry
-      await tx.content.create({
-        data: {
-          conceptId,
-          contentType,
-          title,
-          ytLink,
-          path,
-        },
-      });
+    await prisma.userConcept.create({
+      data: {
+        userId,
+        conceptId,
+      },
     });
-
     return true;
   } catch (error: any) {
     // Ignore duplicate key errors (user already linked to concept)
