@@ -60,7 +60,7 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 
-app.use('/api/yt-study', ytStudyRoutes);
+app.use('/api/yt-study',requireAuth, ensureUser, ytStudyRoutes);
 app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later

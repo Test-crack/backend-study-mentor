@@ -3,8 +3,9 @@ import { Request, Response } from "express";
 import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/transcriptService";
 import { summarizeTranscript } from "../services/summarizeService";
 import { analyzeContentToConcept } from "../services/conceptService";
-import { createConceptWithContent } from "../services/conceptDbService";
+import { createConceptWithContent, linkUserToConcept } from "../services/conceptDbService";
 import { ContentType } from "@prisma/client";
+import { AuthRequest } from "../middleware/auth";
 
 /**
  * Extract transcript from YouTube video
@@ -82,7 +83,7 @@ export async function extractTranscript(req: Request, res: Response) {
 /**
  * Generate study material from transcript
  */
-export async function generateStudyMaterial(req: Request, res: Response) {
+export async function generateStudyMaterial(req: AuthRequest & { appUserId?: string }, res: Response) {
   try {
     const { videoId, transcript, language, title, url } = req.body as {
       videoId?: string;
@@ -96,7 +97,12 @@ export async function generateStudyMaterial(req: Request, res: Response) {
       return res.status(400).json({ error: "Missing videoId or transcript" });
     }
 
-    // Step 1: Generate study material
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    // Step 1: Generate study material (summary)
     const summaryResult = await summarizeTranscript({ videoId, transcript, language });
     if (!summaryResult.success) {
       return res.status(502).json({ error: summaryResult.error });
@@ -105,8 +111,6 @@ export async function generateStudyMaterial(req: Request, res: Response) {
     // Step 2: Extract concepts from the generated study material
     let conceptResult = null;
     try {
-      const transcriptText = transcript.map(seg => seg.text).join(" ");
-      
       const conceptAnalysis = await analyzeContentToConcept({
         text: summaryResult.markdown,
         title: title || `YouTube Video ${videoId}`,
@@ -118,18 +122,23 @@ export async function generateStudyMaterial(req: Request, res: Response) {
         analysisResult: conceptAnalysis,
         contentType: ContentType.YOUTUBE,
         title: title || `YouTube Video ${videoId}`,
-        ytLink: url || `https://youtube.com/watch?v=${videoId}`,
-        path: videoId, // Store videoId as path for easy retrieval
+        ytLink: videoId, // Store videoId in ytLink field
+        path: undefined, // path is undefined for YouTube content
       });
 
-      if (dbResult.success) {
+      if (dbResult.success && dbResult.conceptId) {
+        // Step 4: Link user to the concept
+        const linkSuccess = await linkUserToConcept(userId, dbResult.conceptId);
+        
         conceptResult = {
           conceptId: dbResult.fullConceptId,
           domain: conceptAnalysis.domain,
           keywords: conceptAnalysis.keywords,
           learningObjective: conceptAnalysis.learningObjective,
+          userLinked: linkSuccess,
         };
         console.log(`✅ Concept extracted and saved: ${dbResult.fullConceptId}`);
+        console.log(`✅ User ${userId} linked to concept: ${linkSuccess}`);
       } else {
         console.error("Failed to save concept to database:", dbResult.error);
       }
