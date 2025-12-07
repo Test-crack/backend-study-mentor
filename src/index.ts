@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config(); 
 import express, { Request, Response } from 'express';
-import studyRoutes from './routes/studyRoutes';
+import ytStudyRoutes from './routes/ytStudyRoutes';
 import readingRoutes from './routes/readingRoutes';
 import smartNotesRoutes from './routes/smartNotesRoutes';
 import conceptRoutes from './routes/conceptRoutes';
@@ -59,13 +59,8 @@ app.get('/', (_req: Request, res: Response) => {
   res.send('Study Material Generator Backend - Running');
 });
 
-// Test endpoint to verify logging
-app.get('/test', (_req: Request, res: Response) => {
-  console.log('[TEST] Test endpoint hit');
-  res.json({ message: 'Test successful', timestamp: new Date().toISOString() });
-});
 
-app.use('/api/yt-study',studyRoutes);
+app.use('/api/yt-study', ytStudyRoutes);
 app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
