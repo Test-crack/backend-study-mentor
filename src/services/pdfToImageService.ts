@@ -2,7 +2,7 @@ import fs from "fs-extra";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import sharp from "sharp";
-const poppler = require("pdf-poppler");
+import { fromPath } from "pdf2pic";
 
 /**
  * Convert PDF pages to images for OCR processing
@@ -43,20 +43,36 @@ export async function convertPdfToImages(
     console.log(`[PDF2IMG] Temp directory created successfully`);
 
     const outputPrefix = `page`;
-    console.log(`[PDF2IMG] Converting PDF to images with Poppler (DPI: ${scale})...`);
+    console.log(`[PDF2IMG] Converting PDF to images with pdf2pic (DPI: ${scale})...`);
 
-    // Configure poppler options
-    const popplerOptions = {
+    // Configure pdf2pic options
+    const converter = fromPath(pdfPath, {
+      density: scale,
+      saveFilename: outputPrefix,
+      savePath: tempDir,
       format: format,
-      out_dir: tempDir,
-      out_prefix: outputPrefix,
-      page: null, // Convert all pages
-      scale: scale,
-    };
+      width: 2480,
+      height: 3508
+    });
 
-    // Convert PDF to images using poppler
-    await poppler.convert(pdfPath, popplerOptions);
-    console.log(`[PDF2IMG] Poppler conversion complete`);
+    // Get PDF page count and convert all pages
+    const pdfStats = await fs.stat(pdfPath);
+    console.log(`[PDF2IMG] PDF size: ${pdfStats.size} bytes`);
+    
+    // Convert pages (pdf2pic uses 1-based indexing)
+    let pageNum = 1;
+    let hasMorePages = true;
+    
+    while (hasMorePages) {
+      try {
+        await converter(pageNum, { responseType: "image" });
+        pageNum++;
+      } catch (error) {
+        hasMorePages = false;
+      }
+    }
+    
+    console.log(`[PDF2IMG] pdf2pic conversion complete`);
 
     // Get all generated image files
     const files = await fs.readdir(tempDir);
