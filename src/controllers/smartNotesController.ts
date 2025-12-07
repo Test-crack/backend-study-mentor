@@ -87,8 +87,13 @@ export const uploadNotesController = async (req: FileRequest, res: Response): Pr
 
     // ✅ Extract text immediately (blocking to get the path)
     console.log(`[PROCESS] Starting text extraction for: ${file.originalname}`);
+    console.log(`[PROCESS] File path: ${file.path}`);
+    console.log(`[PROCESS] MIME type: ${file.mimetype}`);
+    
     const extractedText = await extractTextFromFile(file.path, file.mimetype);
-    console.log(`[PROCESS] Extraction successful: ${extractedText.slice(0, 200)}...`);
+    
+    console.log(`[PROCESS] Extraction successful! Length: ${extractedText.length} chars`);
+    console.log(`[PROCESS] Preview: ${extractedText.slice(0, 200)}...`);
 
     // ✅ Save extracted text to .txt file
     const extractedDir = path.resolve(__dirname, "../../uploads/extracted");
@@ -120,7 +125,11 @@ export const uploadNotesController = async (req: FileRequest, res: Response): Pr
     res.status(200).json(responsePayload);
   } catch (error: any) {
     console.error("❌ Upload error:", error);
-    res.status(500).json({ error: error.message || "Internal Server Error" });
+    console.error("❌ Error stack:", error.stack);
+    res.status(500).json({ 
+      error: error.message || "Internal Server Error",
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 

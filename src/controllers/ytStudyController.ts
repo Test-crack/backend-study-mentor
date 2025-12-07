@@ -2,12 +2,17 @@
 import { Request, Response } from "express";
 import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/transcriptService";
 import { summarizeTranscript } from "../services/summarizeService";
+import { analyzeContentToConcept } from "../services/conceptService";
+import { createConceptWithContent, linkUserToConcept } from "../services/conceptDbService";
+import { ContentType } from "@prisma/client";
+import { AuthRequest } from "../middleware/auth";
 
 /**
  * Extract transcript from YouTube video
  */
 export async function extractTranscript(req: Request, res: Response) {
   try {
+    console.log("extractTranscript request received:", req.body);
     const { url } = req.body as { url?: string };
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "Missing url in request body" });
@@ -58,7 +63,7 @@ export async function extractTranscript(req: Request, res: Response) {
     // Merge adjacent segments with total duration < 5 seconds
     const mergedTranscript = mergeShortSegments(result.transcript, 5);
     
-    console.log("Transcript fetched successfully:", result);
+    console.log(`Transcript fetched successfully for videoId: ${result.videoId}, segments: ${mergedTranscript.length}`);
     
     // Return raw transcript to frontend for testing/display
     return res.json({
@@ -78,27 +83,75 @@ export async function extractTranscript(req: Request, res: Response) {
 /**
  * Generate study material from transcript
  */
-export async function generateStudyMaterial(req: Request, res: Response) {
+export async function generateStudyMaterial(req: AuthRequest & { appUserId?: string }, res: Response) {
   try {
-    const { videoId, transcript, language } = req.body as {
+    const { videoId, transcript, language, title, url } = req.body as {
       videoId?: string;
       transcript?: TranscriptSegment[];
       language?: string;
+      title?: string;
+      url?: string;
     };
 
     if (!videoId || !Array.isArray(transcript)) {
       return res.status(400).json({ error: "Missing videoId or transcript" });
     }
 
-    const result = await summarizeTranscript({ videoId, transcript, language });
-    if (!result.success) {
-      return res.status(502).json({ error: result.error });
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    // Step 1: Generate study material (summary)
+    const summaryResult = await summarizeTranscript({ videoId, transcript, language });
+    if (!summaryResult.success) {
+      return res.status(502).json({ error: summaryResult.error });
+    }
+
+    // Step 2: Extract concepts from the generated study material
+    let conceptResult = null;
+    try {
+      const conceptAnalysis = await analyzeContentToConcept({
+        text: summaryResult.markdown,
+        title: title || `YouTube Video ${videoId}`,
+        sourceType: "youtube",
+      });
+
+      // Step 3: Save concept and content to database
+      const dbResult = await createConceptWithContent({
+        analysisResult: conceptAnalysis,
+        contentType: ContentType.YOUTUBE,
+        title: title || `YouTube Video ${videoId}`,
+        ytLink: videoId, // Store videoId in ytLink field
+        path: undefined, // path is undefined for YouTube content
+      });
+
+      if (dbResult.success && dbResult.conceptId) {
+        // Step 4: Link user to the concept
+        const linkSuccess = await linkUserToConcept(userId, dbResult.conceptId);
+        
+        conceptResult = {
+          conceptId: dbResult.fullConceptId,
+          domain: conceptAnalysis.domain,
+          keywords: conceptAnalysis.keywords,
+          learningObjective: conceptAnalysis.learningObjective,
+          userLinked: linkSuccess,
+        };
+        console.log(`✅ Concept extracted and saved: ${dbResult.fullConceptId}`);
+        console.log(`✅ User ${userId} linked to concept: ${linkSuccess}`);
+      } else {
+        console.error("Failed to save concept to database:", dbResult.error);
+      }
+    } catch (conceptError: any) {
+      console.error("Concept extraction failed (non-critical):", conceptError.message);
+      // Continue without concept - it's not critical for the main flow
     }
 
     return res.json({ 
       status: 200, 
       videoId, 
-      markdown: result.markdown,
+      markdown: summaryResult.markdown,
+      concept: conceptResult,
       message: "Study material generated successfully."
     });
   } catch (e) {

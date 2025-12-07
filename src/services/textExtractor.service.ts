@@ -1,6 +1,8 @@
 import fs from "fs-extra";
 import path from "path";
 import textract from "textract";
+import { extractTextFromImage, isImageFile, extractTextFromMultipleImages } from "./ocrService";
+import { convertPdfToImages } from "./pdfToImageService";
 
 /**
  * Extract text content from various file types.
@@ -19,17 +21,56 @@ export async function extractTextFromFile(filePath: string, mimeType?: string): 
   try {
     console.log(`[EXTRACT] Starting extraction for: ${filePath} (${mimeType || ext})`);
 
-    // 1️⃣ --- Handle PDF via pdf-parse (most reliable for Node.js)
-    if (mimeType === "application/pdf" || ext === ".pdf") {
-      textContent = await extractWithPdfParse(filePath);
+    // 1️⃣ --- Handle images with OCR (including handwritten notes)
+    if (isImageFile(filePath, mimeType)) {
+      console.log(`[EXTRACT] Detected image file, using OCR...`);
+      const ocrResult = await extractTextFromImage(filePath, { lang: "eng" });
+      
+      if (ocrResult.success && ocrResult.text.length > 20) {
+        console.log(`[EXTRACT] OCR confidence: ${ocrResult.confidence.toFixed(2)}%`);
+        textContent = ocrResult.text;
+      } else {
+        throw new Error(`OCR failed or returned insufficient text (confidence: ${ocrResult.confidence}%)`);
+      }
     }
 
-    // 2️⃣ --- Handle DOCX / TXT / other with textract
+    // 2️⃣ --- Handle PDF (use OCR directly for handwritten notes)
+    else if (mimeType === "application/pdf" || ext === ".pdf") {
+      console.log(`[EXTRACT] Processing PDF with OCR (best for handwritten notes)...`);
+      
+      // Convert PDF pages to images and run OCR
+      console.log(`[EXTRACT] Step 1: Converting PDF to images...`);
+      const imagePaths = await convertPdfToImages(filePath);
+      console.log(`[EXTRACT] Step 1 COMPLETE: Converted to ${imagePaths.length} images`);
+      console.log(`[EXTRACT] Image paths:`, imagePaths);
+      
+      console.log(`[EXTRACT] Step 2: Running OCR on images...`);
+      const ocrResult = await extractTextFromMultipleImages(imagePaths, {
+        lang: "eng",
+        psm: 6, // Single uniform block of text (better for handwritten notes)
+        oem: 1, // LSTM only (better for handwriting)
+      });
+      console.log(`[EXTRACT] Step 2 COMPLETE: OCR finished`);
+      console.log(`[EXTRACT] OCR success: ${ocrResult.success}, confidence: ${ocrResult.confidence}%, text length: ${ocrResult.text?.length || 0}`);
+      
+      // DON'T cleanup images yet - keep them for debugging
+      console.log(`[EXTRACT] Keeping images for debugging at: ${imagePaths[0] ? path.dirname(imagePaths[0]) : 'unknown'}`);
+      // await Promise.all(imagePaths.map((img: string) => fs.remove(img).catch(() => {})));
+      
+      if (ocrResult.success && ocrResult.text && ocrResult.text.length > 20) {
+        console.log(`[EXTRACT] PDF OCR confidence: ${ocrResult.confidence.toFixed(2)}%`);
+        textContent = ocrResult.text;
+      } else {
+        throw new Error(`PDF OCR failed or returned insufficient text (confidence: ${ocrResult.confidence}%)`);
+      }
+    }
+
+    // 3️⃣ --- Handle DOCX / TXT / other with textract
     else {
       textContent = await extractTextWithTextract(filePath);
     }
 
-    // 3️⃣ --- Clean + normalize text for better LLM input
+    // 4️⃣ --- Clean + normalize text for better LLM input
     textContent = cleanExtractedText(textContent);
 
     if (!textContent || textContent.length < 20) {
@@ -41,34 +82,23 @@ export async function extractTextFromFile(filePath: string, mimeType?: string): 
   } catch (err: any) {
     console.error(`[EXTRACT] Error processing ${filePath}: ${err.message}`);
 
-    // 4️⃣ --- Fallback strategies if PDF parsing fails
-    if (mimeType === "application/pdf" || ext === ".pdf") {
-      console.warn(`[EXTRACT] ⚠️ PDF extraction failed, attempting fallbacks...`);
-      
-      // Try pdf-parse as fallback (simpler, no external deps)
+    // 5️⃣ --- Fallback strategies if extraction fails
+    
+    // Try OCR as fallback for images
+    if (isImageFile(filePath, mimeType)) {
+      console.warn(`[EXTRACT] ⚠️ Image extraction failed, trying OCR with different settings...`);
       try {
-        console.log(`[EXTRACT] Trying pdf-parse fallback...`);
-        const fallbackText = await extractWithPdfParse(filePath);
-        const cleaned = cleanExtractedText(fallbackText);
-        if (cleaned && cleaned.length > 20) {
-          console.log(`[EXTRACT] ✅ Fallback succeeded via pdf-parse`);
-          return cleaned;
+        const ocrResult = await extractTextFromImage(filePath, { 
+          lang: "eng",
+          psm: 6, // Single uniform block of text
+          oem: 1, // LSTM only
+        });
+        if (ocrResult.success && ocrResult.text.length > 10) {
+          console.log(`[EXTRACT] ✅ OCR fallback succeeded`);
+          return cleanExtractedText(ocrResult.text);
         }
-      } catch (pdfParseErr: any) {
-        console.error(`[EXTRACT] pdf-parse fallback failed: ${pdfParseErr.message}`);
-      }
-
-      // Try textract as last resort (requires pdftotext)
-      try {
-        console.log(`[EXTRACT] Trying textract fallback...`);
-        const fallbackText = await extractTextWithTextract(filePath);
-        const cleaned = cleanExtractedText(fallbackText);
-        if (cleaned && cleaned.length > 20) {
-          console.log(`[EXTRACT] ✅ Fallback succeeded via textract`);
-          return cleaned;
-        }
-      } catch (textractErr: any) {
-        console.error(`[EXTRACT] ❌ Textract fallback failed: ${textractErr.message}`);
+      } catch (ocrErr: any) {
+        console.error(`[EXTRACT] OCR fallback failed: ${ocrErr.message}`);
       }
     }
 
@@ -78,27 +108,22 @@ export async function extractTextFromFile(filePath: string, mimeType?: string): 
 
 /* --------------------------------- HELPERS --------------------------------- */
 
-/**
- * Extract text using pdf-parse (simple fallback, no external deps)
- */
-async function extractWithPdfParse(filePath: string): Promise<string> {
-  const { PDFParse } = require("pdf-parse");
-  const dataBuffer = await fs.readFile(filePath);
-  const parser = new PDFParse({ data: dataBuffer });
-  await parser.load();
-  const text = await parser.getText();
-  return text;
-}
-
 
 /**
  * Extract text using textract (handles DOCX, TXT, images with OCR, etc.)
  */
 function extractTextWithTextract(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    textract.fromFileWithPath(filePath, (error: Error | null, text: string | undefined) => {
-      if (error) return reject(error);
-      resolve(text || "");
+    textract.fromFileWithPath(filePath, (error: Error | null, text: any) => {
+      if (error) {
+        console.error(`[TEXTRACT] Error: ${error.message}`);
+        return reject(error);
+      }
+      
+      // Ensure we return a string
+      const textString = text ? String(text) : "";
+      console.log(`[TEXTRACT] Extracted ${textString.length} characters`);
+      resolve(textString);
     });
   });
 }
@@ -106,7 +131,13 @@ function extractTextWithTextract(filePath: string): Promise<string> {
 /**
  * Normalize and clean extracted text for LLM-ready consumption
  */
-function cleanExtractedText(raw: string): string {
+function cleanExtractedText(raw: any): string {
+  // Handle non-string values
+  if (!raw || typeof raw !== "string") {
+    console.warn(`[EXTRACT] cleanExtractedText received non-string value: ${typeof raw}`);
+    return "";
+  }
+  
   return raw
     .replace(/\s+/g, " ") // collapse whitespace
     .replace(/[^\S\r\n]+/g, " ") // remove stray tabs
