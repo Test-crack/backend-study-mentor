@@ -14,6 +14,7 @@ export interface CreateConceptWithContentInput {
 export interface CreateConceptWithContentResult {
   success: boolean;
   conceptId?: string;
+  contentId?: string;
   fullConceptId?: string;
   error?: string;
 }
@@ -71,6 +72,7 @@ export async function createConceptWithContent(
     return {
       success: true,
       conceptId: result.concept.id,
+      contentId: result.content.id,
       fullConceptId,
     };
   } catch (error: any) {

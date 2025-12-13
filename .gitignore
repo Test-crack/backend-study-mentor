@@ -141,3 +141,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 /src/generated/prisma
+
+# Uploads directory (cached study materials)
+uploads/

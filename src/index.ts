@@ -9,6 +9,7 @@ import cors from 'cors';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
+import { initializeStorage } from './services/youtubeNotes/fileStorageService';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -65,10 +66,24 @@ app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
 
-app.listen(Number(PORT), '0.0.0.0', () => {
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`📁 Upload directory: ${process.cwd()}/uploads`);
-  console.log(`🔍 Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// Initialize storage directories and start server
+async function startServer() {
+  try {
+    // Initialize file storage
+    await initializeStorage();
+    console.log('✅ File storage initialized');
+
+    app.listen(Number(PORT), '0.0.0.0', () => {
+      console.log(`✅ Server running on port ${PORT}`);
+      console.log(`📁 Upload directory: ${process.cwd()}/uploads`);
+      console.log(`🔍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 

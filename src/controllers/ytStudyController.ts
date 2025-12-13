@@ -3,6 +3,8 @@ import { Request, Response } from "express";
 import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/youtubeNotes/transcriptService";
 import { summarizeTranscript } from "../services/youtubeNotes/summarizeService";
 import { createConceptWithContent, linkUserToConcept } from "../services/conceptDbService";
+import { getCachedYouTubeContent, updateContentPath } from "../services/youtubeNotes/contentCacheService";
+import { saveStudyMaterial, loadStudyMaterial, studyMaterialExists } from "../services/youtubeNotes/fileStorageService";
 import { ContentType } from "@prisma/client";
 import { AuthRequest } from "../middleware/auth";
 
@@ -101,7 +103,53 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    // Step 1: Generate study material + extract concept metadata in ONE LLM call
+    // ===== STEP 0: CHECK CACHE =====
+    console.log(`[YTStudy] Checking cache for videoId: ${videoId}`);
+    const cachedContent = await getCachedYouTubeContent(videoId);
+
+    if (cachedContent) {
+      // Cache hit - verify file exists
+      const fileExists = await studyMaterialExists(cachedContent.path);
+      
+      if (fileExists) {
+        console.log(`[YTStudy] Cache HIT - Loading from file: ${cachedContent.path}`);
+        
+        try {
+          // Load markdown from file system
+          const markdown = await loadStudyMaterial(cachedContent.path);
+          
+          // Link user to existing concept
+          const linkSuccess = await linkUserToConcept(userId, cachedContent.conceptId);
+          console.log(`✅ User ${userId} linked to cached concept: ${linkSuccess}`);
+          
+          return res.json({
+            status: 200,
+            videoId,
+            markdown,
+            concept: {
+              conceptId: cachedContent.fullConceptId,
+              domain: cachedContent.domain,
+              conceptSlug: cachedContent.conceptSlug,
+              keywords: cachedContent.keywords,
+              learningObjective: cachedContent.learningObjective,
+              userLinked: linkSuccess,
+            },
+            message: "Study material loaded from cache.",
+            cached: true,
+          });
+        } catch (loadError: any) {
+          console.error(`[YTStudy] Failed to load cached file: ${loadError.message}`);
+          // Fall through to regenerate
+        }
+      } else {
+        console.warn(`[YTStudy] Cache entry exists but file missing: ${cachedContent.path}`);
+        // Fall through to regenerate
+      }
+    }
+
+    console.log(`[YTStudy] Cache MISS - Generating new study material`);
+
+    // ===== STEP 1: GENERATE STUDY MATERIAL + EXTRACT CONCEPT METADATA =====
     const result = await summarizeTranscript({ videoId, transcript, language });
     if (!result.success) {
       return res.status(502).json({ error: result.error });
@@ -109,8 +157,10 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
 
     const { markdown, conceptMetadata } = result;
 
-    // Step 2: Save concept and content to database
+    // ===== STEP 2: SAVE TO DATABASE =====
     let conceptResult = null;
+    let contentId: string | null = null;
+
     try {
       const dbResult = await createConceptWithContent({
         analysisResult: {
@@ -123,11 +173,25 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
         contentType: ContentType.YOUTUBE,
         title: title || `YouTube Video ${videoId}`,
         ytLink: videoId,
-        path: undefined,
+        path: undefined, // Will be updated after file save
       });
 
-      if (dbResult.success && dbResult.conceptId) {
-        // Step 3: Link user to the concept
+      if (dbResult.success && dbResult.conceptId && dbResult.contentId) {
+        contentId = dbResult.contentId;
+        
+        // ===== STEP 2.5: SAVE TO FILE SYSTEM =====
+        try {
+          const savedPath = await saveStudyMaterial(videoId, markdown);
+          
+          // Update content path in database
+          await updateContentPath(contentId, savedPath);
+          console.log(`✅ Study material cached to: ${savedPath}`);
+        } catch (fileError: any) {
+          console.error(`[YTStudy] Failed to cache file: ${fileError.message}`);
+          // Non-critical - continue without caching
+        }
+
+        // ===== STEP 3: LINK USER TO CONCEPT =====
         const linkSuccess = await linkUserToConcept(userId, dbResult.conceptId);
         
         conceptResult = {
@@ -138,7 +202,8 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
           learningObjective: conceptMetadata.learningObjective,
           userLinked: linkSuccess,
         };
-        console.log(`✅ Concept extracted and saved: ${dbResult.fullConceptId}`);
+        
+        console.log(`✅ Concept created and saved: ${dbResult.fullConceptId}`);
         console.log(`✅ User ${userId} linked to concept: ${linkSuccess}`);
       } else {
         console.error("Failed to save concept to database:", dbResult.error);
@@ -153,7 +218,8 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
       videoId, 
       markdown,
       concept: conceptResult,
-      message: "Study material generated successfully."
+      message: "Study material generated successfully.",
+      cached: false,
     });
   } catch (e) {
     console.error("generateStudyMaterial error", e);
