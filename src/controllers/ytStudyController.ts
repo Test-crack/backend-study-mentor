@@ -136,8 +136,6 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
           conceptSlug: conceptMetadata.conceptSlug,
           keywords: conceptMetadata.keywords,
           learningObjective: conceptMetadata.learningObjective,
-          importantKeywords: conceptMetadata.importantKeywords,
-          criticalKeywords: conceptMetadata.criticalKeywords,
           userLinked: linkSuccess,
         };
         console.log(`✅ Concept extracted and saved: ${dbResult.fullConceptId}`);

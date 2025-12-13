@@ -26,20 +26,19 @@ Renamed from `summarizeTranscript()` (old name still works for backward compatib
     conceptSlug: string,         // e.g., "hybrid-power-systems"
     keywords: string[],          // General keywords (5-8)
     learningObjective: string,   // "Students will be able to..."
-    baseConceptId: string,       // e.g., "SCIENCE.HYBRID-POWER-SYSTEMS"
-    importantKeywords: string[], // Terms to highlight in YELLOW (3-5)
-    criticalKeywords: string[]   // Terms to highlight in RED/ORANGE (2-3)
+    baseConceptId: string        // e.g., "SCIENCE.HYBRID-POWER-SYSTEMS"
   }
 }
 ```
 
-### 3. Keyword Highlighting Feature
-Added support for highlighting important terms in the study material:
+### 3. Concept Metadata Extraction
+Extracts key metadata from the content in a single LLM call:
 
-- **importantKeywords**: Terms that are IMPORTANT for understanding (highlight in yellow)
-- **criticalKeywords**: Terms that are CRITICAL/ESSENTIAL (highlight in orange/red)
-
-Frontend should apply these highlights when rendering the markdown.
+- **domain**: High-level subject area
+- **conceptSlug**: Short identifier for the main concept
+- **keywords**: 5-8 relevant keywords from the content
+- **learningObjective**: Educational goal statement
+- **baseConceptId**: Unique identifier for the concept
 
 ### 4. API Response Structure
 **Endpoint:** `POST /api/yt-study/summarize`
@@ -54,59 +53,11 @@ Frontend should apply these highlights when rendering the markdown.
     "conceptId": "SCIENCE.HYBRID-POWER-SYSTEMS.001",
     "domain": "science",
     "conceptSlug": "hybrid-power-systems",
-    "keywords": ["hybrid", "power", "electric", "combustion"],
+    "keywords": ["hybrid", "power", "electric", "combustion", "MGUK", "regulations"],
     "learningObjective": "Students will be able to...",
-    "importantKeywords": ["MGUK", "50/50 split", "power unit"],
-    "criticalKeywords": ["hybrid power", "2026 regulations"],
     "userLinked": true
   },
   "message": "Study material generated successfully."
-}
-```
-
-## Frontend Integration
-
-### Rendering Highlighted Keywords
-When displaying the markdown, apply highlights:
-
-```javascript
-// Pseudo-code for highlighting
-function highlightKeywords(markdown, importantKeywords, criticalKeywords) {
-  let highlighted = markdown;
-  
-  // Highlight critical keywords (red/orange)
-  criticalKeywords.forEach(keyword => {
-    highlighted = highlighted.replace(
-      new RegExp(`\\b${keyword}\\b`, 'gi'),
-      `<mark class="critical">$&</mark>`
-    );
-  });
-  
-  // Highlight important keywords (yellow)
-  importantKeywords.forEach(keyword => {
-    highlighted = highlighted.replace(
-      new RegExp(`\\b${keyword}\\b`, 'gi'),
-      `<mark class="important">$&</mark>`
-    );
-  });
-  
-  return highlighted;
-}
-```
-
-### CSS Styling
-```css
-mark.important {
-  background-color: #fff3cd; /* Yellow */
-  padding: 2px 4px;
-  border-radius: 2px;
-}
-
-mark.critical {
-  background-color: #f8d7da; /* Light red/orange */
-  padding: 2px 4px;
-  border-radius: 2px;
-  font-weight: 600;
 }
 ```
 
@@ -115,11 +66,11 @@ mark.critical {
 1. **Cost Reduction**: ~50% reduction in LLM API costs (1 call instead of 2)
 2. **Latency Improvement**: ~50% faster response time
 3. **Better Consistency**: Concept metadata extracted from same context as study material
-4. **Enhanced UX**: Keyword highlighting helps students identify key terms
-5. **Simplified Flow**: Cleaner code with single LLM interaction
+4. **Simplified Flow**: Cleaner code with single LLM interaction
+5. **Better Data Structure**: All concept metadata available in one response
 
 ## Migration Notes
 
 - Old function name `summarizeTranscript()` still works (aliased to new function)
 - No breaking changes to existing API contracts
-- Frontend needs update to support keyword highlighting (optional enhancement)
+- Keywords can be used by frontend for search, tagging, or highlighting features

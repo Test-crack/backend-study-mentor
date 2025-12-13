@@ -34,8 +34,6 @@ export type SummarizeResult = {
     keywords: string[];
     learningObjective: string;
     baseConceptId: string;
-    importantKeywords: string[];  // Keywords to highlight in yellow
-    criticalKeywords: string[];   // Keywords to highlight in red/orange
   };
 } | {
   success: false;
@@ -86,9 +84,7 @@ export async function generateYouTubeStudyMaterial(req: SummarizeRequest): Promi
           conceptSlug: "demo-content",
           keywords: ["demo"],
           learningObjective: "Students will be able to understand the demo content.",
-          baseConceptId: "GENERAL.DEMO-CONTENT",
-          importantKeywords: [],
-          criticalKeywords: []
+          baseConceptId: "GENERAL.DEMO-CONTENT"
         }
       };
     }
@@ -126,8 +122,6 @@ function extractMarkdownAndMetadata(fullResponse: string): {
     keywords: string[];
     learningObjective: string;
     baseConceptId: string;
-    importantKeywords: string[];
-    criticalKeywords: string[];
   };
 } {
   // Try to find JSON block at the end
@@ -138,9 +132,7 @@ function extractMarkdownAndMetadata(fullResponse: string): {
     conceptSlug: "concept",
     keywords: [] as string[],
     learningObjective: "Students will be able to understand the key concepts.",
-    baseConceptId: "GENERAL.CONCEPT",
-    importantKeywords: [] as string[],
-    criticalKeywords: [] as string[]
+    baseConceptId: "GENERAL.CONCEPT"
   };
 
   let markdown = fullResponse;
@@ -160,9 +152,7 @@ function extractMarkdownAndMetadata(fullResponse: string): {
         conceptSlug,
         keywords: parsed.keywords || [],
         learningObjective: parsed.learningObjective || "Students will be able to understand the key concepts.",
-        baseConceptId,
-        importantKeywords: parsed.importantKeywords || [],
-        criticalKeywords: parsed.criticalKeywords || []
+        baseConceptId
       };
 
       // Remove JSON block from markdown
