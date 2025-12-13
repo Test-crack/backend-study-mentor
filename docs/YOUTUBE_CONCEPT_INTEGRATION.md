@@ -92,8 +92,7 @@ npx prisma migrate dev --name add_content_table
 
 ## Environment Variables Required
 
-- `GEMINI_API_KEY` - For concept extraction
-- `OPENROUTER_API_KEY` - For study material generation
+- `GEMINI_API_KEY` - For concept extraction and study material generation
 
 ## Error Handling
 

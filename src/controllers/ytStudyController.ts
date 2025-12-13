@@ -1,7 +1,7 @@
 // This controller is for youtube video transcripts and study material generation
 import { Request, Response } from "express";
-import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/transcriptService";
-import { summarizeTranscript } from "../services/summarizeService";
+import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/youtubeNotes/transcriptService";
+import { summarizeTranscript } from "../services/youtubeNotes/summarizeService";
 import { analyzeContentToConcept } from "../services/conceptService";
 import { createConceptWithContent, linkUserToConcept } from "../services/conceptDbService";
 import { ContentType } from "@prisma/client";

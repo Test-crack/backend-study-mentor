@@ -1,6 +1,17 @@
 import type { TranscriptSegment } from "./transcriptService";
-import OpenAI from "openai";
-import { YOUTUBE_TRANSCRIPT_PROMPT, MATERIAL_PROMPTS, type MaterialType } from "../data/prompts";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { YOUTUBE_TRANSCRIPT_PROMPT, MATERIAL_PROMPTS, type MaterialType } from "../../data/prompts";
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  console.warn(
+    "[SummarizeService] GEMINI_API_KEY is not set. Summarization will use fallback mode."
+  );
+}
+
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "");
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 export type SummarizeRequest = {
   videoId: string;
@@ -42,36 +53,19 @@ export async function summarizeTranscript(req: SummarizeRequest): Promise<Summar
       return { success: false, error: "Transcript is empty." };
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY ;
     const prompt = buildPrompt(transcript, language);
 
-    if (!apiKey) {
+    if (!GEMINI_API_KEY) {
       // Fallback naive summary if no API key available
       const first = transcript.slice(0, 8).map(s => `- ${s.text}`).join("\n");
-      const md = `# Summary\n\n> (Demo summary: set OPENROUTER_API_KEY for AI-generated content)\n\n## Key Points\n${first}\n\n## Notes\nThis is a local fallback summary.`;
+      const md = `# Summary\n\n> (Demo summary: set GEMINI_API_KEY for AI-generated content)\n\n## Key Points\n${first}\n\n## Notes\nThis is a local fallback summary.`;
       return { success: true, markdown: md };
     }
 
-    // Use official OpenAI SDK, configured for OpenRouter endpoint
-    const client = new OpenAI({
-      apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
-      defaultHeaders: {
-        "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
-        "X-Title": process.env.APP_NAME || "Study Material Generator",
-      },
-    });
+    // Use Gemini AI to generate study material
+    const result = await geminiModel.generateContent(prompt);
+    const md = result.response.text();
 
-    const completion = await client.chat.completions.create({
-      model: "openai/gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a helpful assistant for summarizing educational content." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-    });
-
-    const md = completion?.choices?.[0]?.message?.content;
     if (!md) return { success: false, error: "Failed to generate summary." };
 
     return { success: true, markdown: removeTopLevelMarkdownBlock(md) };
@@ -98,7 +92,7 @@ function removeTopLevelMarkdownBlock(md: string): string {
 
 // ===== GENERATE MATERIAL FROM EXTRACTED TEXT =====
 
-export type { MaterialType } from "../data/prompts";
+export type { MaterialType } from "../../data/prompts";
 
 export type GenerateMaterialRequest = {
   content: string;
@@ -125,36 +119,18 @@ export async function generateMaterial(req: GenerateMaterialRequest): Promise<Ge
       return { success: false, error: "Invalid material type." };
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-
-    if (!apiKey) {
+    if (!GEMINI_API_KEY) {
       // Fallback response if no API key
-      const md = `# ${materialType.charAt(0).toUpperCase() + materialType.slice(1)} Material\n\n> (Demo: set OPENROUTER_API_KEY for AI-generated content)\n\n## Content Preview\n${content.slice(0, 500)}...\n\n## Notes\nThis is a local fallback. Configure your API key to generate AI-powered study materials.`;
+      const md = `# ${materialType.charAt(0).toUpperCase() + materialType.slice(1)} Material\n\n> (Demo: set GEMINI_API_KEY for AI-generated content)\n\n## Content Preview\n${content.slice(0, 500)}...\n\n## Notes\nThis is a local fallback. Configure your API key to generate AI-powered study materials.`;
       return { success: true, markdown: md };
     }
 
     const prompt = `${MATERIAL_PROMPTS[materialType]}\n\nContent to process:\n${content}`;
 
-    // Use OpenAI SDK configured for OpenRouter
-    const client = new OpenAI({
-      apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
-      defaultHeaders: {
-        "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
-        "X-Title": process.env.APP_NAME || "Study Material Generator",
-      },
-    });
+    // Use Gemini AI to generate study material
+    const result = await geminiModel.generateContent(prompt);
+    const md = result.response.text();
 
-    const completion = await client.chat.completions.create({
-      model: "openai/gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a helpful assistant for creating educational study materials." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-    });
-
-    const md = completion?.choices?.[0]?.message?.content;
     if (!md) return { success: false, error: "Failed to generate material." };
 
     return { success: true, markdown: removeTopLevelMarkdownBlock(md) };

@@ -5,7 +5,7 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { extractTextFromFile } from "../services/textExtractor.service";
-import { generateMaterial } from "../services/summarizeService";
+import { generateMaterial } from "../services/youtubeNotes/summarizeService";
 
 
 // === Ensure uploads directory exists ===
