@@ -1,5 +1,6 @@
 // src/services/conceptService.ts
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { slugify, smartTruncate } from "../helper";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -199,39 +200,4 @@ function validateConceptResult(parsed: RawConceptResponse): void {
   if (!parsed.learningObjective || parsed.learningObjective.length < 10) {
     console.warn("[ConceptService] Learning objective is too short or missing");
   }
-}
-
-/**
- * Smart truncation that preserves context by breaking at natural boundaries
- */
-function smartTruncate(text: string, maxChars: number = 6000): string {
-  if (text.length <= maxChars) return text;
-  
-  // Try to break at paragraph
-  const truncated = text.slice(0, maxChars);
-  const lastParagraph = truncated.lastIndexOf('\n\n');
-  
-  if (lastParagraph > maxChars * 0.7) {
-    return truncated.slice(0, lastParagraph) + "\n\n[TRUNCATED]";
-  }
-  
-  // Fallback: break at sentence
-  const lastSentence = truncated.lastIndexOf('. ');
-  if (lastSentence > maxChars * 0.7) {
-    return truncated.slice(0, lastSentence + 1) + "\n\n[TRUNCATED]";
-  }
-  
-  return truncated + "\n\n[TRUNCATED]";
-}
-
-/**
- * Basic slugify: "Water Cycle" -> "water-cycle"
- */
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[\s_]+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-");
 }

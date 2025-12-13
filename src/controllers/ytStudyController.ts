@@ -2,7 +2,6 @@
 import { Request, Response } from "express";
 import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/youtubeNotes/transcriptService";
 import { summarizeTranscript } from "../services/youtubeNotes/summarizeService";
-import { analyzeContentToConcept } from "../services/conceptService";
 import { createConceptWithContent, linkUserToConcept } from "../services/conceptDbService";
 import { ContentType } from "@prisma/client";
 import { AuthRequest } from "../middleware/auth";
@@ -102,39 +101,43 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    // Step 1: Generate study material (summary)
-    const summaryResult = await summarizeTranscript({ videoId, transcript, language });
-    if (!summaryResult.success) {
-      return res.status(502).json({ error: summaryResult.error });
+    // Step 1: Generate study material + extract concept metadata in ONE LLM call
+    const result = await summarizeTranscript({ videoId, transcript, language });
+    if (!result.success) {
+      return res.status(502).json({ error: result.error });
     }
 
-    // Step 2: Extract concepts from the generated study material
+    const { markdown, conceptMetadata } = result;
+
+    // Step 2: Save concept and content to database
     let conceptResult = null;
     try {
-      const conceptAnalysis = await analyzeContentToConcept({
-        text: summaryResult.markdown,
-        title: title || `YouTube Video ${videoId}`,
-        sourceType: "youtube",
-      });
-
-      // Step 3: Save concept and content to database
       const dbResult = await createConceptWithContent({
-        analysisResult: conceptAnalysis,
+        analysisResult: {
+          domain: conceptMetadata.domain,
+          conceptSlug: conceptMetadata.conceptSlug,
+          keywords: conceptMetadata.keywords,
+          learningObjective: conceptMetadata.learningObjective,
+          baseConceptId: conceptMetadata.baseConceptId,
+        },
         contentType: ContentType.YOUTUBE,
         title: title || `YouTube Video ${videoId}`,
-        ytLink: videoId, // Store videoId in ytLink field
-        path: undefined, // path is undefined for YouTube content
+        ytLink: videoId,
+        path: undefined,
       });
 
       if (dbResult.success && dbResult.conceptId) {
-        // Step 4: Link user to the concept
+        // Step 3: Link user to the concept
         const linkSuccess = await linkUserToConcept(userId, dbResult.conceptId);
         
         conceptResult = {
           conceptId: dbResult.fullConceptId,
-          domain: conceptAnalysis.domain,
-          keywords: conceptAnalysis.keywords,
-          learningObjective: conceptAnalysis.learningObjective,
+          domain: conceptMetadata.domain,
+          conceptSlug: conceptMetadata.conceptSlug,
+          keywords: conceptMetadata.keywords,
+          learningObjective: conceptMetadata.learningObjective,
+          importantKeywords: conceptMetadata.importantKeywords,
+          criticalKeywords: conceptMetadata.criticalKeywords,
           userLinked: linkSuccess,
         };
         console.log(`✅ Concept extracted and saved: ${dbResult.fullConceptId}`);
@@ -150,7 +153,7 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
     return res.json({ 
       status: 200, 
       videoId, 
-      markdown: summaryResult.markdown,
+      markdown,
       concept: conceptResult,
       message: "Study material generated successfully."
     });

@@ -58,6 +58,39 @@ Structure the output as follows:
 7. Make it study-friendly with clear structure and actionable insights
 8. Use only Markdown syntax, no code blocks or special formatting`;
 
+// ===== CONCEPT METADATA EXTRACTION PROMPT =====
+
+export const CONCEPT_METADATA_EXTRACTION_PROMPT = `
+
+**ADDITIONAL TASK - CONCEPT METADATA EXTRACTION:**
+
+After generating the study material, you MUST also extract concept metadata. At the very end of your response, add a JSON block with the following structure:
+
+\`\`\`json
+{
+  "domain": "string (e.g., 'science', 'math', 'engineering', 'business', 'computer-science')",
+  "subConcept": "string (2-5 words describing the main concept, e.g., 'hybrid-power-systems', 'neural-networks')",
+  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "importantKeywords": ["term1", "term2", "term3"],
+  "criticalKeywords": ["critical1", "critical2"],
+  "learningObjective": "Students will be able to..."
+}
+\`\`\`
+
+**KEYWORD HIGHLIGHTING INSTRUCTIONS:**
+- **keywords**: 5-8 general keywords from the content
+- **importantKeywords**: 3-5 terms that are IMPORTANT for understanding (will be highlighted in yellow)
+- **criticalKeywords**: 2-3 terms that are CRITICAL/ESSENTIAL concepts (will be highlighted in orange/red)
+
+**RULES:**
+1. Focus on HIGH-LEVEL conceptual grouping
+2. Domain should be a single word or hyphenated
+3. Sub-concept should be short but meaningful (2-5 words)
+4. Learning objective must start with "Students will be able to..."
+5. Separate important vs critical keywords carefully
+6. The JSON block MUST be at the very end, after all the markdown content
+`;
+
 // ===== STUDY MATERIAL GENERATION PROMPTS =====
 
 export type MaterialType = "overview" | "standard" | "detailed" | "quiz";
