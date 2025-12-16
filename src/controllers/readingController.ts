@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import assessmentData from '../data/assessmentData.json';
 import { getPassageById, getPassageByModuleAndDifficulty, Passage } from '../data/passagesIndex';
 import { getModulesList } from '../data/modules';
+import { saveAssessmentResults, getUserReadingProfile, getUserAssessmentHistory } from '../services/readingAssessment';
+import { AuthRequest } from '../middleware/auth';
 
 
 // Types
@@ -274,13 +276,19 @@ export const getRandomPassageController = (req: Request, res: Response) => {
  * POST /api/submit - Enhanced version
  * Calculate metrics and return detailed results including answer review
  */
-export const submitAssessment = (req: Request, res: Response) => {
+export const submitAssessment = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
   try {
     if (!req.body) {
       return res.status(400).json({ error: 'Invalid request data' });
     }
     console.log(req.body);
     const { passageId, readingTimeSeconds, answers, focusData } = req.body as SubmitRequest;
+    
+    // Get userId from authenticated request
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
 
     // Validate request
     if (!passageId || typeof readingTimeSeconds !== 'number' || !Array.isArray(answers) || !focusData) {
@@ -399,6 +407,30 @@ export const submitAssessment = (req: Request, res: Response) => {
     const performanceFeedback = generateFeedback(adjustedMetrics, idealWPM, wpm);
     const integrityFeedback = generateIntegrityFeedback(integrityFlags);
 
+    // Save to database
+    const dbResult = await saveAssessmentResults({
+      userId,
+      passageInfo: {
+        passageId,
+        difficulty: data.difficulty,
+        category: 'category' in data ? data.category : 'general',
+        wordCount
+      },
+      readingTimeSeconds,
+      actualWPM: wpm,
+      metrics: adjustedMetrics,
+      integrity: {
+        focusRatio: focusData.focusRatio,
+        integrityScore: integrityFlags.integrityScore,
+        tabSwitches: focusData.tabSwitches
+      }
+    });
+
+    if (!dbResult.success) {
+      console.error('Failed to save assessment to database:', dbResult.error);
+      // Continue with response even if DB save fails
+    }
+
     res.json({
       metrics: adjustedMetrics,
       baseMetrics, // Original metrics before integrity adjustment
@@ -416,7 +448,9 @@ export const submitAssessment = (req: Request, res: Response) => {
         tabSwitches: focusData.tabSwitches,
         focusTime: focusData.focusTime,
         totalSessionTime: focusData.totalSessionTime
-      }
+      },
+      // Include new record flags if available
+      ...(dbResult.isNewRecord && { isNewRecord: dbResult.isNewRecord })
     });
   } catch (error) {
     console.error('Error processing submission:', error);
@@ -424,3 +458,95 @@ export const submitAssessment = (req: Request, res: Response) => {
   }
 };
 
+
+
+/**
+ * GET /api/profile
+ * Get user's reading profile with current and best stats
+ */
+export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+  try {
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const profile = await getUserReadingProfile(userId);
+
+    if (!profile) {
+      return res.status(404).json({ 
+        error: 'No reading profile found',
+        message: 'Complete your first assessment to create a profile'
+      });
+    }
+
+    res.json({
+      profile: {
+        current: {
+          weightedWPM: profile.currentWeightedWPM,
+          retention: profile.currentRetention,
+          speedLearning: profile.currentSpeedLearning,
+          focusRatio: profile.currentFocusRatio,
+          integrityScore: profile.currentIntegrityScore
+        },
+        best: {
+          weightedWPM: profile.highestWeightedWPM,
+          retention: profile.highestRetention,
+          speedLearning: profile.highestSpeedLearning
+        },
+        stats: {
+          totalAssessments: profile.totalAssessments,
+          lastAssessmentAt: profile.lastAssessmentAt
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    res.status(500).json({ error: 'Failed to fetch user profile' });
+  }
+};
+
+/**
+ * GET /api/history
+ * Get user's assessment history with optional filters
+ * Query params: limit, difficulty, days (for date range)
+ */
+export const getAssessmentHistory = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+  try {
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const difficulty = req.query.difficulty as string | undefined;
+    const days = req.query.days ? parseInt(req.query.days as string) : undefined;
+
+    const options: any = { limit };
+    
+    if (difficulty && ['easy', 'medium', 'hard'].includes(difficulty)) {
+      options.difficulty = difficulty;
+    }
+
+    if (days) {
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+      options.fromDate = fromDate;
+    }
+
+    const history = await getUserAssessmentHistory(userId, options);
+
+    res.json({
+      history,
+      total: history.length,
+      filters: {
+        limit,
+        difficulty: difficulty || 'all',
+        days: days || 'all'
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching assessment history:', error);
+    res.status(500).json({ error: 'Failed to fetch assessment history' });
+  }
+};

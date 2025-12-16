@@ -2,7 +2,9 @@ import { Router } from 'express';
 import {
   getModules,
   getRandomPassageController,
-  submitAssessment
+  submitAssessment,
+  getUserProfile,
+  getAssessmentHistory
 } from '../controllers/readingController';
 
 const router = Router();
@@ -15,14 +17,11 @@ router.use((req, res, next) => {
 });
 
 // Route definitions
-router.get('/modules', getModules);                      // Get list of available modules
+router.get('/modules', getModules);                          // Get list of available modules
 router.post('/passage/random', getRandomPassageController);  // Get random passage by module + difficulty
-router.post('/submit', submitAssessment);                // Submit assessment answers
+router.post('/submit', submitAssessment);                    // Submit assessment answers
+router.get('/profile', getUserProfile);                      // Get user's reading profile
+router.get('/history', getAssessmentHistory);                // Get user's assessment history
 
-// Test route
-router.get('/test', (req, res) => {
-  console.log('Test route called');
-  res.json({ message: 'Reading routes working!' });
-});
 
 export default router;
