@@ -106,10 +106,10 @@ function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFl
   if (suspiciousBehavior) {
     // Heavy penalty for suspicious behavior
     return {
-      weightedWPM: metrics.weightedWPM * 0.5,
-      accuracy: Math.max(0, metrics.accuracy - 20),
-      retention: Math.max(0, metrics.retention - 25),
-      speedLearningScore: Math.max(0, metrics.speedLearningScore - 30)
+      weightedWPM: parseFloat((metrics.weightedWPM * 0.5).toFixed(2)),
+      accuracy: parseFloat(Math.max(0, metrics.accuracy - 20).toFixed(2)),
+      retention: parseFloat(Math.max(0, metrics.retention - 25).toFixed(2)),
+      speedLearningScore: parseFloat(Math.max(0, metrics.speedLearningScore - 30).toFixed(2))
     };
   }
   
@@ -117,10 +117,10 @@ function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFl
     // Moderate penalty for low integrity
     const penalty = (70 - integrityScore) / 100;
     return {
-      weightedWPM: metrics.weightedWPM * (1 - penalty * 0.3),
-      accuracy: Math.max(0, metrics.accuracy - penalty * 10),
-      retention: Math.max(0, metrics.retention - penalty * 15),
-      speedLearningScore: Math.max(0, metrics.speedLearningScore - penalty * 20)
+      weightedWPM: parseFloat((metrics.weightedWPM * (1 - penalty * 0.3)).toFixed(2)),
+      accuracy: parseFloat(Math.max(0, metrics.accuracy - penalty * 10).toFixed(2)),
+      retention: parseFloat(Math.max(0, metrics.retention - penalty * 15).toFixed(2)),
+      speedLearningScore: parseFloat(Math.max(0, metrics.speedLearningScore - penalty * 20).toFixed(2))
     };
   }
   
@@ -377,21 +377,21 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
     }
 
     // 1. Reading Speed (WPM)
-    const wpm = Math.round(wordCount / (readingTimeSeconds / 60));
+    const wpm = parseFloat((wordCount / (readingTimeSeconds / 60)).toFixed(2));
     
     // 2. Accuracy (%)
-    const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
+    const accuracy = parseFloat(((correctAnswers / totalQuestions) * 100).toFixed(2));
     
     // 3. Retention Score (%)
     const speedFactor = Math.min(1, wpm / idealWPM);
-    const retention = Math.round((accuracy / 100) * speedFactor * 100);
+    const retention = parseFloat(((accuracy / 100) * speedFactor * 100).toFixed(2));
     
     // 4. Overall Speed Learning Score (out of 100)
     const speedComponent = Math.min(100, (wpm / idealWPM) * 100);
-    const speedLearningScore = Math.round((0.6 * accuracy) + (0.4 * speedComponent));
+    const speedLearningScore = parseFloat(((0.6 * accuracy) + (0.4 * speedComponent)).toFixed(2));
     
     // accuracy - weighted WPM  
-    const weightedWPM = wpm * accuracy / 100;
+    const weightedWPM = parseFloat((wpm * accuracy / 100).toFixed(2));
     
     const baseMetrics: Metrics = {
       weightedWPM,
@@ -444,10 +444,10 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
         difficulty: data.difficulty
       },
       focusData: {
-        focusRatio: focusData.focusRatio,
+        focusRatio: parseFloat(focusData.focusRatio.toFixed(2)),
         tabSwitches: focusData.tabSwitches,
-        focusTime: focusData.focusTime,
-        totalSessionTime: focusData.totalSessionTime
+        focusTime: parseFloat(focusData.focusTime.toFixed(2)),
+        totalSessionTime: parseFloat(focusData.totalSessionTime.toFixed(2))
       },
       // Include new record flags if available
       ...(dbResult.isNewRecord && { isNewRecord: dbResult.isNewRecord })
@@ -461,7 +461,7 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
 
 
 /**
- * GET /api/profile
+ * GET /api/reading/profile
  * Get user's reading profile with current and best stats
  */
 export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
@@ -507,7 +507,7 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
 };
 
 /**
- * GET /api/history
+ * GET /api/reading/history
  * Get user's assessment history with optional filters
  * Query params: limit, difficulty, days (for date range)
  */
