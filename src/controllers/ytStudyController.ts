@@ -1,6 +1,6 @@
 // This controller is for youtube video transcripts and study material generation
 import { Request, Response } from "express";
-import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, TranscriptSegment } from "../services/youtubeNotes/transcriptService";
+import { getVideoIdFromUrl, fetchTranscript, mergeShortSegments, cleanTranscriptSegments, TranscriptSegment } from "../services/youtubeNotes/transcriptService";
 import { summarizeTranscript } from "../services/youtubeNotes/summarizeService";
 import { createConceptWithContent, linkUserToConcept } from "../services/conceptDbService";
 import { getCachedYouTubeContent, updateContentPath } from "../services/youtubeNotes/contentCacheService";
@@ -61,17 +61,21 @@ export async function extractTranscript(req: Request, res: Response) {
     
     result.transcript.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
     
+    // Clean transcript text (remove HTML entities, music notations, etc.)
+    const cleanedTranscript = cleanTranscriptSegments(result.transcript);
+    
     // Merge adjacent segments with total duration < 5 seconds
-    const mergedTranscript = mergeShortSegments(result.transcript, 5);
+    const mergedTranscript = mergeShortSegments(cleanedTranscript, 5);
     
     console.log(`Transcript fetched successfully for videoId: ${result.videoId}, segments: ${mergedTranscript.length}`);
     
-    // Return raw transcript to frontend for testing/display
+    // Return cleaned and merged transcript to frontend
     return res.json({
       status: 200,
       videoId: result.videoId,
-      transcript: mergedTranscript, // array of { text, offset, duration } (merged)
+      transcript: mergedTranscript, // array of { text, offset, duration } (cleaned & merged)
       message: "Transcript fetched successfully.",
+      method: result.method // Which method was used to fetch
     });
   } catch (err) {
     console.error("extractTranscript unexpected error:", err);
@@ -149,15 +153,20 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
 
     console.log(`[YTStudy] Cache MISS - Generating new study material`);
 
-    // ===== STEP 1: GENERATE STUDY MATERIAL + EXTRACT CONCEPT METADATA =====
-    const result = await summarizeTranscript({ videoId, transcript, language });
+    // ===== STEP 1: CLEAN AND PREPARE TRANSCRIPT =====
+    // Clean transcript before sending to AI (remove HTML entities, music notations, etc.)
+    const cleanedTranscript = cleanTranscriptSegments(transcript);
+    console.log(`[YTStudy] Cleaned transcript: ${cleanedTranscript.length} segments`);
+
+    // ===== STEP 2: GENERATE STUDY MATERIAL + EXTRACT CONCEPT METADATA =====
+    const result = await summarizeTranscript({ videoId, transcript: cleanedTranscript, language });
     if (!result.success) {
       return res.status(502).json({ error: result.error });
     }
 
     const { markdown, conceptMetadata } = result;
 
-    // ===== STEP 2: SAVE TO DATABASE =====
+    // ===== STEP 3: SAVE TO DATABASE =====
     let conceptResult = null;
     let contentId: string | null = null;
 
@@ -179,7 +188,7 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
       if (dbResult.success && dbResult.conceptId && dbResult.contentId) {
         contentId = dbResult.contentId;
         
-        // ===== STEP 2.5: SAVE TO FILE SYSTEM =====
+        // ===== STEP 3.5: SAVE TO FILE SYSTEM =====
         try {
           const savedPath = await saveStudyMaterial(videoId, markdown);
           
@@ -191,7 +200,7 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
           // Non-critical - continue without caching
         }
 
-        // ===== STEP 3: LINK USER TO CONCEPT =====
+        // ===== STEP 4: LINK USER TO CONCEPT =====
         const linkSuccess = await linkUserToConcept(userId, dbResult.conceptId);
         
         conceptResult = {
