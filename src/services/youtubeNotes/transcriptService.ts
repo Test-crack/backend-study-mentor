@@ -91,26 +91,30 @@ async function fetchTranscriptMethod1(videoId: string, language: string = "en"):
     console.log(`[Method 1] Step 1: Extracted API key: ${apiKey.substring(0, 10)}...`);
     
     // Step 2: Get player data with captions info
-    console.log(`[Method 1] Step 2: Fetching player data...`);
-    const playerResponse = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${apiKey}`, {
+    // Try WEB client first (most reliable for captions)
+    console.log(`[Method 1] Step 2: Fetching player data with WEB client...`);
+    let playerResponse = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${apiKey}`, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
         "User-Agent": headers['User-Agent'],
         "Origin": "https://www.youtube.com",
-        "Referer": videoUrl
+        "Referer": videoUrl,
+        "X-YouTube-Client-Name": "1",
+        "X-YouTube-Client-Version": "2.20231219.04.00"
       },
       body: JSON.stringify({
         context: {
           client: {
-            clientName: "ANDROID",
-            clientVersion: "20.10.38",
-            androidSdkVersion: 30,
+            clientName: "WEB",
+            clientVersion: "2.20231219.04.00",
             hl: "en",
-            gl: "US"
+            gl: "US",
+            userAgent: headers['User-Agent']
           }
         },
-        videoId
+        videoId,
+        params: "CgIQAQ%3D%3D" // Enable captions
       })
     });
     
@@ -120,15 +124,46 @@ async function fetchTranscriptMethod1(videoId: string, language: string = "en"):
       throw new Error(`Player API request failed: ${playerResponse.status} ${playerResponse.statusText}`);
     }
     
-    const playerData = await playerResponse.json();
+    let playerData = await playerResponse.json();
     console.log(`[Method 1] Step 2: Player data received`);
     
     // Step 3: Extract caption tracks
     console.log(`[Method 1] Step 3: Extracting caption tracks...`);
-    const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    let tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    
+    // If WEB client didn't return captions, try ANDROID client as fallback
+    if (!tracks || tracks.length === 0) {
+      console.log(`[Method 1] Step 3: WEB client returned no captions, trying ANDROID client...`);
+      
+      const androidResponse = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${apiKey}`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "User-Agent": headers['User-Agent']
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: "ANDROID",
+              clientVersion: "19.09.37",
+              androidSdkVersion: 30,
+              hl: "en",
+              gl: "US"
+            }
+          },
+          videoId
+        })
+      });
+      
+      if (androidResponse.ok) {
+        playerData = await androidResponse.json();
+        tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        console.log(`[Method 1] Step 3: ANDROID client returned ${tracks?.length || 0} tracks`);
+      }
+    }
     
     if (!tracks || tracks.length === 0) {
-      console.error(`[Method 1] Step 3: No caption tracks found. Player data structure:`, JSON.stringify(playerData?.captions || {}, null, 2));
+      console.error(`[Method 1] Step 3: No caption tracks found in either client. Player data structure:`, JSON.stringify(playerData?.captions || {}, null, 2));
       throw new Error("No captions found in player data");
     }
     
