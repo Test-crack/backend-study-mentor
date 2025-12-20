@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Uploads directory (cached study materials)
 uploads/
+
+# YouTube cookies (contains sensitive session tokens)
+cookies/
