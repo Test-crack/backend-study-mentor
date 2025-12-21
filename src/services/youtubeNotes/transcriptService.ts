@@ -57,8 +57,8 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
   const language = process.env.YT_LANG || 'en';
   const methods = [
     { name: 'Database Cache', fn: () => fetchTranscriptMethod0(videoId) },
-    { name: 'Direct YouTube API', fn: () => fetchTranscriptMethod1(videoId, language) },
-    { name: 'yt-dlp', fn: () => fetchTranscriptMethod2(videoId, language) },
+    // { name: 'Direct YouTube API', fn: () => fetchTranscriptMethod1(videoId, language) },
+    // { name: 'yt-dlp', fn: () => fetchTranscriptMethod2(videoId, language) },
   ];
   
   let lastError: Error | null = null;
