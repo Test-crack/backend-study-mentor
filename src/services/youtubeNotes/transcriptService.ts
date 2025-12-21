@@ -59,7 +59,6 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
     { name: 'Database Cache', fn: () => fetchTranscriptMethod0(videoId) },
     { name: 'Direct YouTube API', fn: () => fetchTranscriptMethod1(videoId, language) },
     { name: 'yt-dlp', fn: () => fetchTranscriptMethod2(videoId, language) },
-    // { name: 'Client-Assisted Fallback', fn: () => fetchTranscriptMethod4(videoId) },
   ];
   
   let lastError: Error | null = null;
@@ -106,23 +105,14 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
       
     } catch (err: any) {
       console.log(`❌ [Transcript] ${method.name} failed: ${err.message}`);
-      
-      // Check if this is the client fallback signal
-      if (err.message === 'CLIENT_FALLBACK_REQUIRED') {
-        console.log(`[Transcript] 🔄 Requesting client-side assistance`);
-        return {
-          success: false,
-          error: 'Server cannot fetch transcript. Client assistance required.',
-          code: 'CLIENT_FALLBACK_REQUIRED'
-        };
-      }
-      
       lastError = err;
     }
   }
   
+  // All methods failed - determine appropriate error response
   console.error(`[Transcript] All methods failed for ${videoId}`);
   
+  // Check for specific error types first
   if (lastError?.message?.includes('Video unavailable') || 
       lastError?.message?.includes('not found') ||
       lastError?.message?.includes('Invalid video')) {
@@ -142,10 +132,13 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
     };
   }
   
+  // If all server methods failed but video seems valid, request client assistance
+  // This handles cases like rate limiting, network issues, or server restrictions
+  console.log(`[Transcript] 🔄 All server methods exhausted - requesting client-side assistance`);
   return {
     success: false,
-    error: `Failed to fetch transcript: ${lastError?.message || 'All methods exhausted'}`,
-    code: 'FETCH_ERROR'
+    error: 'Server cannot fetch transcript. Client assistance required.',
+    code: 'CLIENT_FALLBACK_REQUIRED'
   };
 }
 

@@ -8,6 +8,69 @@ import { saveStudyMaterial, loadStudyMaterial, studyMaterialExists } from "../se
 import { ContentType } from "@prisma/client";
 import { AuthRequest } from "../middleware/auth";
 
+
+
+/**
+ * Submit client-fetched transcript
+ * Used when server methods fail and client successfully fetches transcript
+ */
+export async function submitClientTranscript(req: Request, res: Response) {
+  try {
+    console.log("submitClientTranscript request received:", req.body);
+    const { videoId, transcript } = req.body as { 
+      videoId?: string; 
+      transcript?: TranscriptSegment[];
+    };
+
+    if (!videoId || typeof videoId !== "string") {
+      return res.status(400).json({ error: "Missing videoId in request body" });
+    }
+
+    if (!Array.isArray(transcript) || transcript.length === 0) {
+      return res.status(400).json({ error: "Missing or empty transcript array" });
+    }
+
+    // Validate transcript format
+    const isValidTranscript = transcript.every(seg => 
+      typeof seg.text === 'string' && 
+      (seg.offset === undefined || typeof seg.offset === 'number') &&
+      (seg.duration === undefined || typeof seg.duration === 'number')
+    );
+
+    if (!isValidTranscript) {
+      return res.status(400).json({ error: "Invalid transcript format" });
+    }
+
+    console.log(`[ClientTranscript] Received ${transcript.length} segments for videoId: ${videoId}`);
+
+    // Clean and merge the client-provided transcript
+    const cleanedTranscript = cleanTranscriptSegments(transcript);
+    const mergedTranscript = mergeShortSegments(cleanedTranscript, 5);
+
+    // Save to cache asynchronously (don't wait)
+    const { saveTranscriptToCache } = await import('../services/youtubeNotes/transcriptMethods/method0-caching.js');
+    saveTranscriptToCache(videoId, mergedTranscript, 'Client-Assisted').catch((err: any) => {
+      console.error(`[ClientTranscript] Failed to cache:`, err);
+    });
+
+    console.log(`✅ [ClientTranscript] Accepted and cached ${mergedTranscript.length} segments`);
+
+    return res.json({
+      status: 200,
+      videoId,
+      transcript: mergedTranscript,
+      message: "Client transcript received and cached successfully.",
+      method: "Client-Assisted"
+    });
+
+  } catch (err) {
+    console.error("submitClientTranscript unexpected error:", err);
+    return res.status(500).json({ error: "Unexpected server error" });
+  }
+}
+
+
+
 /**
  * Extract transcript from YouTube video
  */
@@ -47,6 +110,14 @@ export async function extractTranscript(req: Request, res: Response) {
     if (!result.success) {
       // Handle different error types with appropriate status codes
       switch (result.code) {
+        case 'CLIENT_FALLBACK_REQUIRED':
+          // Special case: Server methods failed, request client-side assistance
+          return res.status(206).json({ 
+            error: result.error,
+            code: 'CLIENT_FALLBACK_REQUIRED',
+            videoId: videoId,
+            message: 'Server transcript methods failed. Please fetch transcript on client-side and resubmit.'
+          });
         case 'NO_TRANSCRIPT':
           return res.status(404).json({ error: result.error });
         case 'INVALID_VIDEO':
@@ -235,3 +306,4 @@ export async function generateStudyMaterial(req: AuthRequest & { appUserId?: str
     return res.status(500).json({ error: "Unexpected server error" });
   }
 }
+
