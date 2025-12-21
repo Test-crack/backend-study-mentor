@@ -112,6 +112,25 @@ model UserReadingProfile {
   @@index([userId])
 }
 
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model YouTubeTranscript {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  videoId      String   @unique @db.VarChar(20)
+  title        String?  @db.VarChar(500)
+  transcript   Json
+  method       String?  @db.VarChar(50)
+  language     String   @default("en") @db.VarChar(10)
+  duration     Int?
+  accessCount  Int      @default(0)
+  lastAccessed DateTime @default(now()) @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([accessCount])
+  @@index([lastAccessed])
+  @@index([videoId])
+}
+
 enum ContentType {
   YOUTUBE
   NOTES

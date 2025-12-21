@@ -1,3 +1,4 @@
+import { fetchTranscriptMethod0, saveTranscriptToCache } from './transcriptMethods/method0-caching';
 import { fetchTranscriptMethod1 } from './transcriptMethods/method1-direct-api';
 import { fetchTranscriptMethod2 } from './transcriptMethods/method2-ytdlp';
 
@@ -55,12 +56,14 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
   
   const language = process.env.YT_LANG || 'en';
   const methods = [
+    { name: 'Database Cache', fn: () => fetchTranscriptMethod0(videoId) },
     { name: 'Direct YouTube API', fn: () => fetchTranscriptMethod1(videoId, language) },
     { name: 'yt-dlp', fn: () => fetchTranscriptMethod2(videoId, language) },
     // { name: 'Client-Assisted Fallback', fn: () => fetchTranscriptMethod4(videoId) },
   ];
   
   let lastError: Error | null = null;
+  let usedMethod: string | null = null;
   
   for (const method of methods) {
     try {
@@ -84,6 +87,15 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
       }
       
       console.log(`✅ [Transcript] Success with ${method.name}: ${transcript.length} segments`);
+      
+      usedMethod = method.name;
+      
+      // Save to cache if not from cache (async, don't wait)
+      if (method.name !== 'Database Cache') {
+        saveTranscriptToCache(videoId, transcript, method.name).catch(err => {
+          console.error(`[Transcript] Failed to cache transcript:`, err);
+        });
+      }
       
       return {
         success: true,
