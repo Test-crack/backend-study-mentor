@@ -13,6 +13,9 @@ model User {
   email                    String                     @unique @db.VarChar(255)
   createdAt                DateTime                   @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime                   @default(now()) @db.Timestamptz(6)
+  name                     String?                    @db.VarChar(255)
+  countryCode              String?                    @db.VarChar(5)
+  phoneNo                  String?                    @db.VarChar(20)
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]
   UserReadingProfile       UserReadingProfile?

@@ -5,6 +5,7 @@ import ytStudyRoutes from './routes/ytStudyRoutes';
 import readingRoutes from './routes/readingRoutes';
 import smartNotesRoutes from './routes/smartNotesRoutes';
 import conceptRoutes from './routes/conceptRoutes';
+import userProfileRoutes from './routes/userProfileRoutes';
 import cors from 'cors';
 
 import { requireAuth } from './middleware/auth';
@@ -37,7 +38,7 @@ const corsOptions: cors.CorsOptions = {
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true, // enable if you plan to use cookies or JWT via headers
 };
@@ -65,6 +66,7 @@ app.use('/api/yt-study',requireAuth, ensureUser, ytStudyRoutes);
 app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
+app.use('/api/profile', requireAuth, ensureUser, userProfileRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {
