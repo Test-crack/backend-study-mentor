@@ -1,6 +1,7 @@
 import { fetchTranscriptMethod0, saveTranscriptToCache } from './transcriptMethods/method0-caching';
 import { fetchTranscriptMethod1 } from './transcriptMethods/method1-direct-api';
 import { fetchTranscriptMethod2 } from './transcriptMethods/method2-ytdlp';
+import {fetchTranscriptMethod3} from './transcriptMethods/method3-gemini';
 
 /**
  * Transcript segment shape
@@ -59,6 +60,7 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
     { name: 'Database Cache', fn: () => fetchTranscriptMethod0(videoId) },
     { name: 'Direct YouTube API', fn: () => fetchTranscriptMethod1(videoId, language) },
     { name: 'yt-dlp', fn: () => fetchTranscriptMethod2(videoId, language) },
+    { name: 'Gemini', fn: () => fetchTranscriptMethod3(videoId, language) }
   ];
   
   let lastError: Error | null = null;
