@@ -1,4 +1,5 @@
-# Handwriting OCR - Current Status & Improvements
+
+ Handwriting OCR - Current Status & Improvements
 
 ## The Problem
 Tesseract OCR (the library we're using) is **primarily designed for printed text**, not handwritten text. This is why you're seeing garbage output like:
