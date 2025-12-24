@@ -8,12 +8,19 @@ export const getCourses = async (req: Request, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        const { difficulty, domain, sortBy, sortOrder } = req.query;
+        const { difficulty, domain, sortBy, sortOrder, search } = req.query;
 
         // Build filter conditions
         const where: Prisma.CourseWhereInput = {
             is_published: true, // Only show published courses
         };
+
+        if (search) {
+            where.OR = [
+                { title: { contains: search as string, mode: 'insensitive' } },
+                { description: { contains: search as string, mode: 'insensitive' } },
+            ];
+        }
 
         if (difficulty) {
             // Validate difficulty enum
