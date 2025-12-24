@@ -64,6 +64,7 @@ export const getCourses = async (req: Request, res: Response) => {
                 select: {
                     id: true,
                     title: true,
+                    slug: true,
                     description: true,
                     // Select new Domain relation
                     Domain: {
@@ -103,5 +104,90 @@ export const getCourses = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[getCourses] Error:', error);
         res.status(500).json({ error: 'Failed to fetch courses' });
+    }
+};
+
+export const getCourseById = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+
+        // Validate UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(id)) {
+            return res.status(400).json({ error: 'Invalid course ID format' });
+        }
+
+        const course = await prisma.course.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                title: true,
+                slug: true,
+                description: true,
+                Domain: {
+                    select: {
+                        id: true,
+                        name: true,
+                        slug: true,
+                    }
+                },
+                difficulty: true,
+                duration_minutes: true,
+                price: true,
+                is_published: true,
+                created_at: true,
+                updated_at: true,
+                CourseModule: {
+                    select: {
+                        id: true,
+                        order_index: true,
+                        Module: {
+                            select: {
+                                id: true,
+                                title: true,
+                                description: true,
+                                domain: true,
+                                created_at: true,
+                                updated_at: true,
+                                _count: {
+                                    select: {
+                                        ModuleConcept: true,
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    orderBy: {
+                        order_index: 'asc'
+                    }
+                },
+                _count: {
+                    select: {
+                        CourseModule: true,
+                        UserCourseEnrollment: true,
+                    }
+                }
+            }
+        });
+
+        if (!course) {
+            return res.status(404).json({ error: 'Course not found' });
+        }
+
+        // Transform the response to flatten the module structure
+        const transformedCourse = {
+            ...course,
+            modules: course.CourseModule.map(cm => ({
+                ...cm.Module,
+                order_index: cm.order_index,
+                courseModuleId: cm.id,
+            })),
+            CourseModule: undefined, // Remove the original nested structure
+        };
+
+        res.json({ data: transformedCourse });
+    } catch (error) {
+        console.error('[getCourseById] Error:', error);
+        res.status(500).json({ error: 'Failed to fetch course details' });
     }
 };
