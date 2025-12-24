@@ -127,6 +127,20 @@ enum ProgressStatus {
 // CORE COURSE MODELS
 // --------------------
 
+model Domain {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name        String    @unique @db.VarChar(100)
+  slug        String    @unique @db.VarChar(100)
+  description String?
+  
+  // Relations
+  Courses     Course[]
+  Modules     Module[]
+  Concepts    Concept[]
+
+  @@index([slug])
+}
+
 model Course {
   id                   String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   title                String                 @db.VarChar(500)
@@ -138,8 +152,10 @@ model Course {
   is_published         Boolean?               @default(false)
   created_at           DateTime?              @default(now()) @db.Timestamptz(6)
   updated_at           DateTime?              @default(now()) @db.Timestamptz(6)
+  domainId             String?                @db.Uuid
   
   // Relations
+  Domain               Domain?                @relation(fields: [domainId], references: [id], onDelete: SetNull)
   CourseModule         CourseModule[]
   UserCourseEnrollment UserCourseEnrollment[]
   UserModuleProgress   UserModuleProgress[]
@@ -156,8 +172,10 @@ model Module {
   domain             String?              @db.VarChar(100)
   created_at         DateTime?            @default(now()) @db.Timestamptz(6)
   updated_at         DateTime?            @default(now()) @db.Timestamptz(6)
+  domainId           String?              @db.Uuid
   
   // Relations
+  Domain             Domain?              @relation(fields: [domainId], references: [id], onDelete: SetNull)
   CourseModule       CourseModule[]
   ModuleConcept      ModuleConcept[]
   UserModuleProgress UserModuleProgress[]

@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config(); 
+dotenv.config();
 import express, { Request, Response } from 'express';
 import ytStudyRoutes from './routes/ytStudyRoutes';
 import readingRoutes from './routes/readingRoutes';
@@ -7,6 +7,7 @@ import smartNotesRoutes from './routes/smartNotesRoutes';
 import conceptRoutes from './routes/conceptRoutes';
 import userProfileRoutes from './routes/userProfileRoutes';
 import cors from 'cors';
+import coursesRoutes from './routes/courseRoutes';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
@@ -62,11 +63,12 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 
-app.use('/api/yt-study',requireAuth, ensureUser, ytStudyRoutes);
-app.use('/api/reading',requireAuth, ensureUser, readingRoutes);
+app.use('/api/yt-study', requireAuth, ensureUser, ytStudyRoutes);
+app.use('/api/reading', requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
 app.use('/api/profile', requireAuth, ensureUser, userProfileRoutes);
+app.use('/api/courses', requireAuth, ensureUser, coursesRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {
