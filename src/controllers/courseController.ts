@@ -387,7 +387,8 @@ export const getModuleContent = async (req: Request, res: Response) => {
                                                         question: true,
                                                         options: true,
                                                         difficulty: true,
-                                                        // Explicitly excluding correct_answer and explanation
+                                                        correct_answer: true,
+                                                        explanation: true,
                                                     }
                                                 }
                                             }
