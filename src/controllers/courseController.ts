@@ -188,6 +188,7 @@ export const getCourseById = async (req: Request, res: Response) => {
         let isEnrolled = false;
         let enrollmentStatus = null;
         let progressPercent = 0;
+        let moduleIndex = 0;
 
         if (activeUserId) {
             const enrollment = await prisma.userCourseEnrollment.findUnique({
@@ -200,6 +201,7 @@ export const getCourseById = async (req: Request, res: Response) => {
                 select: {
                     status: true,
                     progress_percent: true,
+                    module_index: true,
                 }
             });
 
@@ -207,6 +209,7 @@ export const getCourseById = async (req: Request, res: Response) => {
                 isEnrolled = true;
                 enrollmentStatus = enrollment.status;
                 progressPercent = enrollment.progress_percent || 0;
+                moduleIndex = enrollment.module_index || 0;
             }
         }
 
@@ -216,6 +219,7 @@ export const getCourseById = async (req: Request, res: Response) => {
             isEnrolled,
             enrollmentStatus,
             progressPercent,
+            moduleIndex,
             modules: course.CourseModule.map(cm => ({
                 ...cm.Module,
                 order_index: cm.order_index,
@@ -322,5 +326,113 @@ export const enrollUserInCourse = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[enrollUserInCourse] Error:', error);
         res.status(500).json({ error: 'Failed to enroll user in course' });
+    }
+};
+
+export const getModuleContent = async (req: Request, res: Response) => {
+    try {
+        const { courseId, orderIndex } = req.params;
+        const userId = (req as any).appUserId;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const idx = orderIndex ? parseInt(orderIndex) : null;
+        if (orderIndex && isNaN(idx as number)) {
+            return res.status(400).json({ error: 'orderIndex must be a number' });
+        }
+
+        // 1. Verify Enrollment
+        const enrollment = await prisma.userCourseEnrollment.findUnique({
+            where: {
+                user_id_course_id: {
+                    user_id: userId,
+                    course_id: courseId,
+                }
+            }
+        });
+
+        if (!enrollment) {
+            return res.status(403).json({ error: 'Access denied. You are not enrolled in this course.' });
+        }
+
+        // Use enrollment.module_index if orderIndex is not provided
+        const targetIdx = idx !== null ? idx : (enrollment.module_index || 0);
+
+        // 2. Fetch Module, Concepts, and Content
+        const courseModule = await prisma.courseModule.findUnique({
+            where: {
+                course_id_order_index: {
+                    course_id: courseId,
+                    order_index: targetIdx,
+                }
+            },
+            include: {
+                Module: {
+                    include: {
+                        ModuleConcept: {
+                            orderBy: { order_index: 'asc' },
+                            include: {
+                                Concept: {
+                                    include: {
+                                        CourseContentItem: {
+                                            orderBy: { sequence_order: 'asc' },
+                                            include: {
+                                                Note: true,
+                                                MCQ: {
+                                                    select: {
+                                                        id: true,
+                                                        question: true,
+                                                        options: true,
+                                                        difficulty: true,
+                                                        // Explicitly excluding correct_answer and explanation
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!courseModule) {
+            return res.status(404).json({ error: 'Module not found at this index for the specified course' });
+        }
+
+        // 3. Transform data into an organized structure
+        const result = {
+            courseId,
+            module: {
+                id: courseModule.Module.id,
+                title: courseModule.Module.title,
+                description: courseModule.Module.description,
+                order_index: courseModule.order_index,
+                concepts: courseModule.Module.ModuleConcept.map(mc => ({
+                    id: mc.Concept.id,
+                    learningObjective: mc.Concept.learningObjective, // Using learningObjective or we could use a title if Concept had one
+                    slug: mc.Concept.conceptSlug,
+                    order_index: mc.order_index,
+                    contentItems: mc.Concept.CourseContentItem.map(item => ({
+                        id: item.id,
+                        type: item.content_kind,
+                        title: item.title,
+                        is_required: item.is_required,
+                        sequence_order: item.sequence_order,
+                        content: item.content_kind === 'NOTES' ? item.Note : item.MCQ
+                    }))
+                }))
+            }
+        };
+        console.log(result.module.concepts);
+        res.json({ data: result });
+    } catch (error) {
+        console.error('[getModuleContent] Error:', error);
+        res.status(500).json({ error: 'Failed to fetch module content' });
     }
 };
