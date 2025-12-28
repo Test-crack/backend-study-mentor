@@ -110,11 +110,21 @@ export const getCourses = async (req: Request, res: Response) => {
 export const getCourseById = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const { userId: queryUserId } = req.query;
+        const appUserId = (req as any).appUserId;
 
-        // Validate UUID format
+        // Use appUserId as primary, queryUserId as optional override
+        const activeUserId = queryUserId || appUserId;
+
+        // Validate UUID format for course ID
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (!uuidRegex.test(id)) {
             return res.status(400).json({ error: 'Invalid course ID format' });
+        }
+
+        // Validate activeUserId if provided
+        if (activeUserId && !uuidRegex.test(activeUserId as string)) {
+            return res.status(400).json({ error: 'Invalid user ID format' });
         }
 
         const course = await prisma.course.findUnique({
@@ -174,9 +184,38 @@ export const getCourseById = async (req: Request, res: Response) => {
             return res.status(404).json({ error: 'Course not found' });
         }
 
+        // Check enrollment if userId is available
+        let isEnrolled = false;
+        let enrollmentStatus = null;
+        let progressPercent = 0;
+
+        if (activeUserId) {
+            const enrollment = await prisma.userCourseEnrollment.findUnique({
+                where: {
+                    user_id_course_id: {
+                        user_id: activeUserId as string,
+                        course_id: id,
+                    }
+                },
+                select: {
+                    status: true,
+                    progress_percent: true,
+                }
+            });
+
+            if (enrollment) {
+                isEnrolled = true;
+                enrollmentStatus = enrollment.status;
+                progressPercent = enrollment.progress_percent || 0;
+            }
+        }
+
         // Transform the response to flatten the module structure
         const transformedCourse = {
             ...course,
+            isEnrolled,
+            enrollmentStatus,
+            progressPercent,
             modules: course.CourseModule.map(cm => ({
                 ...cm.Module,
                 order_index: cm.order_index,
@@ -189,5 +228,99 @@ export const getCourseById = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[getCourseById] Error:', error);
         res.status(500).json({ error: 'Failed to fetch course details' });
+    }
+};
+
+export const enrollUserInCourse = async (req: Request, res: Response) => {
+    try {
+        const { courseId } = req.body;
+        const userId = (req as any).appUserId;
+
+        // Validate required fields
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        if (!courseId) {
+            return res.status(400).json({ error: 'courseId is required' });
+        }
+
+        // Validate UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(courseId)) {
+            return res.status(400).json({ error: 'Invalid courseId format' });
+        }
+        console.log('userId:', userId);
+        console.log('courseId:', courseId);
+        // Check if user exists
+        const user = await prisma.user.findUnique({
+            where: { id: userId }
+        });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Check if course exists and is published
+        const course = await prisma.course.findUnique({
+            where: { id: courseId }
+        });
+        if (!course) {
+            return res.status(404).json({ error: 'Course not found' });
+        }
+        if (!course.is_published) {
+            return res.status(400).json({ error: 'Course is not published' });
+        }
+
+        // Check if user is already enrolled
+        const existingEnrollment = await prisma.userCourseEnrollment.findUnique({
+            where: {
+                user_id_course_id: {
+                    user_id: userId,
+                    course_id: courseId
+                }
+            }
+        });
+
+        if (existingEnrollment) {
+            return res.status(409).json({
+                error: 'User is already enrolled in this course',
+                enrollment: existingEnrollment
+            });
+        }
+
+        // Create enrollment
+        const enrollment = await prisma.userCourseEnrollment.create({
+            data: {
+                user_id: userId,
+                course_id: courseId,
+                status: 'NOT_STARTED',
+                progress_percent: 0
+            },
+            include: {
+                Course: {
+                    select: {
+                        id: true,
+                        title: true,
+                        slug: true,
+                        difficulty: true,
+                        duration_minutes: true
+                    }
+                },
+                User: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true
+                    }
+                }
+            }
+        });
+
+        res.status(201).json({
+            message: 'Successfully enrolled in course',
+            data: enrollment
+        });
+    } catch (error) {
+        console.error('[enrollUserInCourse] Error:', error);
+        res.status(500).json({ error: 'Failed to enroll user in course' });
     }
 };
