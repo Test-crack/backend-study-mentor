@@ -68,7 +68,7 @@ app.use('/api/reading', requireAuth, ensureUser, readingRoutes);
 app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
 app.use('/api/profile', requireAuth, ensureUser, userProfileRoutes);
-app.use('/api/courses', requireAuth, ensureUser, coursesRoutes);
+app.use('/api/courses', coursesRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {
