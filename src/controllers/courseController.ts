@@ -1,6 +1,11 @@
 import { Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { DifficultyType, Prisma } from '@prisma/client';
+import {
+  markContentAsCompleted,
+  trackContentAccess,
+  getResumeData,
+} from '../services/progressService';
 
 export const getCourses = async (req: Request, res: Response) => {
     try {
@@ -200,7 +205,6 @@ export const getCourseById = async (req: Request, res: Response) => {
                 },
                 select: {
                     status: true,
-                    progress_percent: true,
                     module_index: true,
                 }
             });
@@ -208,7 +212,7 @@ export const getCourseById = async (req: Request, res: Response) => {
             if (enrollment) {
                 isEnrolled = true;
                 enrollmentStatus = enrollment.status;
-                progressPercent = enrollment.progress_percent || 0;
+                progressPercent =  0;
                 moduleIndex = enrollment.module_index || 0;
             }
         }
@@ -297,7 +301,6 @@ export const enrollUserInCourse = async (req: Request, res: Response) => {
                 user_id: userId,
                 course_id: courseId,
                 status: 'NOT_STARTED',
-                progress_percent: 0
             },
             include: {
                 Course: {
@@ -435,5 +438,241 @@ export const getModuleContent = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[getModuleContent] Error:', error);
         res.status(500).json({ error: 'Failed to fetch module content' });
+    }
+};
+
+/**
+ * Mark a content item as completed and update progress at all levels
+ * POST /api/courses/:courseId/modules/:moduleIndex/content/:contentItemId/complete
+ */
+export const markContentComplete = async (req: Request, res: Response) => {
+    try {
+        const { courseId, moduleIndex, contentItemId } = req.params;
+        const userId = (req as any).appUserId;
+
+        // Validation
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(courseId) || !uuidRegex.test(contentItemId)) {
+            return res.status(400).json({ error: 'Invalid ID format' });
+        }
+
+        const idx = parseInt(moduleIndex);
+        if (isNaN(idx)) {
+            return res.status(400).json({ error: 'moduleIndex must be a number' });
+        }
+
+        // 1. Verify user is enrolled in course
+        const enrollment = await prisma.userCourseEnrollment.findUnique({
+            where: {
+                user_id_course_id: {
+                    user_id: userId,
+                    course_id: courseId,
+                }
+            }
+        });
+
+        if (!enrollment) {
+            return res.status(403).json({ error: 'User is not enrolled in this course' });
+        }
+
+        // 2. Get module ID from course module
+        const courseModule = await prisma.courseModule.findUnique({
+            where: {
+                course_id_order_index: {
+                    course_id: courseId,
+                    order_index: idx,
+                }
+            },
+            select: { module_id: true }
+        });
+
+        if (!courseModule) {
+            return res.status(404).json({ error: 'Module not found at this index' });
+        }
+
+        // 3. Verify content item exists and belongs to this module
+        const contentItem = await prisma.courseContentItem.findUnique({
+            where: { id: contentItemId },
+            select: {
+                id: true,
+                concept_id: true,
+                is_required: true,
+            }
+        });
+
+        if (!contentItem) {
+            return res.status(404).json({ error: 'Content item not found' });
+        }
+
+        // Verify content item belongs to a concept in this module
+        const conceptInModule = await prisma.moduleConcept.findFirst({
+            where: {
+                module_id: courseModule.module_id,
+                concept_id: contentItem.concept_id,
+            }
+        });
+
+        if (!conceptInModule) {
+            return res.status(403).json({ error: 'Content item does not belong to this module' });
+        }
+
+        // 4. Mark content as completed and update all progress levels
+        const result = await markContentAsCompleted(
+            userId,
+            contentItemId,
+            courseId,
+            courseModule.module_id
+        );
+
+        // 5. Prepare response with detailed progress info
+        const response = {
+            message: 'Content marked as completed',
+            data: {
+                contentProgress: {
+                    status: result.contentProgress.status,
+                    completed_at: result.contentProgress.completed_at,
+                },
+                moduleProgress: {
+                    progress_percent: result.moduleProgress.progress_percent,
+                    status: result.moduleProgress.status,
+                    completed_items: result.moduleProgress.completed_items,
+                    total_required_items: result.moduleProgress.total_required_items,
+                },
+                courseProgress: {
+                    progress_percent: result.courseProgress.progress_percent,
+                    status: result.courseProgress.status,
+                },
+                moduleAdvanced: result.moduleAdvanced,
+                nextModuleIndex: result.nextModuleIndex,
+            }
+        };
+
+        res.json(response);
+    } catch (error) {
+        console.error('[markContentComplete] Error:', error);
+        res.status(500).json({ error: 'Failed to mark content as completed' });
+    }
+};
+
+
+
+/**
+ * Track content access (mark as IN_PROGRESS)
+ * POST /api/courses/:courseId/modules/:moduleIndex/content/:contentItemId/access
+ */
+export const trackContentAccessEndpoint = async (req: Request, res: Response) => {
+    try {
+        const { courseId, moduleIndex, contentItemId } = req.params;
+        const userId = (req as any).appUserId;
+
+        // Validation
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(courseId) || !uuidRegex.test(contentItemId)) {
+            return res.status(400).json({ error: 'Invalid ID format' });
+        }
+
+        const idx = parseInt(moduleIndex);
+        if (isNaN(idx)) {
+            return res.status(400).json({ error: 'moduleIndex must be a number' });
+        }
+
+        // 1. Verify user is enrolled
+        const enrollment = await prisma.userCourseEnrollment.findUnique({
+            where: {
+                user_id_course_id: {
+                    user_id: userId,
+                    course_id: courseId,
+                }
+            }
+        });
+
+        if (!enrollment) {
+            return res.status(403).json({ error: 'User is not enrolled in this course' });
+        }
+
+        // 2. Get module ID
+        const courseModule = await prisma.courseModule.findUnique({
+            where: {
+                course_id_order_index: {
+                    course_id: courseId,
+                    order_index: idx,
+                }
+            },
+            select: { module_id: true }
+        });
+
+        if (!courseModule) {
+            return res.status(404).json({ error: 'Module not found at this index' });
+        }
+
+        // 3. Verify content item exists
+        const contentItem = await prisma.courseContentItem.findUnique({
+            where: { id: contentItemId },
+            select: { concept_id: true }
+        });
+
+        if (!contentItem) {
+            return res.status(404).json({ error: 'Content item not found' });
+        }
+
+        // 4. Track access
+        const contentProgress = await trackContentAccess(
+            userId,
+            contentItemId,
+            courseId,
+            courseModule.module_id
+        );
+
+        res.json({
+            message: 'Content access tracked',
+            data: {
+                status: contentProgress.status,
+                last_accessed_at: contentProgress.last_accessed_at,
+            }
+        });
+    } catch (error) {
+        console.error('[trackContentAccessEndpoint] Error:', error);
+        res.status(500).json({ error: 'Failed to track content access' });
+    }
+};
+
+/**
+ * Get resume data for a course
+ * GET /api/courses/:courseId/resume
+ */
+export const getCourseResumeData = async (req: Request, res: Response) => {
+    try {
+        const { courseId } = req.params;
+        const userId = (req as any).appUserId;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(courseId)) {
+            return res.status(400).json({ error: 'Invalid course ID format' });
+        }
+
+        const resumeData = await getResumeData(userId, courseId);
+
+        if (!resumeData) {
+            return res.status(404).json({ error: 'No enrollment found for this course' });
+        }
+
+        res.json({
+            data: resumeData
+        });
+    } catch (error) {
+        console.error('[getCourseResumeData] Error:', error);
+        res.status(500).json({ error: 'Failed to fetch resume data' });
     }
 };

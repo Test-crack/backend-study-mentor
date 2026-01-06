@@ -7,18 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Domain {
-  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  name        String    @unique @db.VarChar(100)
-  slug        String    @unique @db.VarChar(100)
-  description String?
-  createdAt   DateTime? @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime? @default(now()) @db.Timestamptz(6)
-  Courses     Course[]
-
-  @@index([slug], map: "idx_domain_slug")
-}
-
 model Concept {
   id                String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   conceptId         String              @unique @db.VarChar(100)
@@ -38,8 +26,8 @@ model Concept {
   @@unique([baseConceptId, sequence])
   @@index([baseConceptId])
   @@index([conceptSlug])
-  @@index([keywords], type: Gin)
   @@index([domain])
+  @@index([keywords], type: Gin)
 }
 
 model Content {
@@ -71,6 +59,7 @@ model Course {
   slug                 String?                @unique @db.VarChar(200)
   Domain               Domain                 @relation(fields: [domainId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_course_domain")
   CourseModule         CourseModule[]
+  UserContentProgress  UserContentProgress[]
   UserCourseEnrollment UserCourseEnrollment[]
   UserModuleProgress   UserModuleProgress[]
 
@@ -81,17 +70,18 @@ model Course {
 }
 
 model CourseContentItem {
-  id             String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  concept_id     String            @db.Uuid
-  content_kind   CourseContentType
-  title          String?           @db.VarChar(300)
-  sequence_order Int?              @default(0)
-  is_required    Boolean?          @default(true)
-  created_at     DateTime?         @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime?         @default(now()) @db.Timestamptz(6)
-  Concept        Concept           @relation(fields: [concept_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_concept")
-  MCQ            MCQ?
-  Note           Note?
+  id                  String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  concept_id          String                @db.Uuid
+  content_kind        CourseContentType
+  title               String?               @db.VarChar(300)
+  sequence_order      Int?                  @default(0)
+  is_required         Boolean?              @default(true)
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  Concept             Concept               @relation(fields: [concept_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_concept")
+  MCQ                 MCQ?
+  Note                Note?
+  UserContentProgress UserContentProgress[]
 
   @@index([concept_id], map: "idx_content_concept")
   @@index([content_kind], map: "idx_content_kind")
@@ -111,6 +101,18 @@ model CourseModule {
   @@index([course_id, order_index], map: "idx_course_module_composite")
 }
 
+model Domain {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name        String    @unique @db.VarChar(100)
+  slug        String    @unique @db.VarChar(100)
+  description String?
+  createdAt   DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime? @default(now()) @db.Timestamptz(6)
+  Course      Course[]
+
+  @@index([slug], map: "idx_domain_slug")
+}
+
 model MCQ {
   id                String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   content_item_id   String            @unique @db.Uuid
@@ -123,15 +125,16 @@ model MCQ {
 }
 
 model Module {
-  id                 String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  title              String               @db.VarChar(300)
-  description        String?
-  domain             String?              @db.VarChar(100)
-  created_at         DateTime?            @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime?            @default(now()) @db.Timestamptz(6)
-  CourseModule       CourseModule[]
-  ModuleConcept      ModuleConcept[]
-  UserModuleProgress UserModuleProgress[]
+  id                  String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title               String                @db.VarChar(300)
+  description         String?
+  domain              String?               @db.VarChar(100)
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  CourseModule        CourseModule[]
+  ModuleConcept       ModuleConcept[]
+  UserContentProgress UserContentProgress[]
+  UserModuleProgress  UserModuleProgress[]
 
   @@index([domain], map: "idx_module_domain")
 }
@@ -193,6 +196,7 @@ model User {
   phoneNo                  String?                    @db.VarChar(20)
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]
+  UserContentProgress      UserContentProgress[]
   UserCourseEnrollment     UserCourseEnrollment[]
   UserModuleProgress       UserModuleProgress[]
   UserReadingProfile       UserReadingProfile?
@@ -213,6 +217,29 @@ model UserConcept {
   @@index([userId])
 }
 
+model UserContentProgress {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String            @db.Uuid
+  course_id         String            @db.Uuid
+  module_id         String            @db.Uuid
+  content_item_id   String            @db.Uuid
+  status            String            @default("NOT_STARTED") @db.VarChar(50)
+  completed_at      DateTime?         @db.Timestamptz(6)
+  last_accessed_at  DateTime          @default(now()) @db.Timestamptz(6)
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @default(now()) @db.Timestamptz(6)
+  CourseContentItem CourseContentItem @relation(fields: [content_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_content_item")
+  Course            Course            @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_course")
+  Module            Module            @relation(fields: [module_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_module")
+  User              User              @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_user")
+
+  @@unique([user_id, content_item_id], map: "unique_user_content_progress")
+  @@index([last_accessed_at], map: "idx_content_last_accessed")
+  @@index([user_id, course_id, module_id], map: "idx_user_content_lookup")
+  @@index([user_id, status], map: "idx_user_content_status")
+  @@index([user_id, module_id, last_accessed_at(sort: Desc)], map: "idx_user_module_content")
+}
+
 model UserCourseEnrollment {
   id               String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   user_id          String          @db.Uuid
@@ -221,7 +248,6 @@ model UserCourseEnrollment {
   last_accessed_at DateTime?       @default(now()) @db.Timestamptz(6)
   completed_at     DateTime?       @db.Timestamptz(6)
   status           ProgressStatus? @default(NOT_STARTED)
-  progress_percent Int?            @default(0)
   module_index     Int?            @default(0)
   Course           Course          @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_course")
   User             User            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user")
