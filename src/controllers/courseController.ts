@@ -200,7 +200,6 @@ export const getCourseById = async (req: Request, res: Response) => {
                 },
                 select: {
                     status: true,
-                    progress_percent: true,
                     module_index: true,
                 }
             });
@@ -208,7 +207,7 @@ export const getCourseById = async (req: Request, res: Response) => {
             if (enrollment) {
                 isEnrolled = true;
                 enrollmentStatus = enrollment.status;
-                progressPercent = enrollment.progress_percent || 0;
+                progressPercent = 0; // Will be calculated from module progress
                 moduleIndex = enrollment.module_index || 0;
             }
         }
@@ -297,7 +296,6 @@ export const enrollUserInCourse = async (req: Request, res: Response) => {
                 user_id: userId,
                 course_id: courseId,
                 status: 'NOT_STARTED',
-                progress_percent: 0
             },
             include: {
                 Course: {
