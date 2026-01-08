@@ -4,6 +4,7 @@ import {
   markContentComplete,
   trackContentAccessEndpoint,
   getCourseResumeData,
+  completeCourse,
 } from '../controllers/courseController';
 import { requireAuth } from '../middleware/auth';
 import { ensureUser } from '../middleware/ensureUser';
@@ -51,5 +52,11 @@ router.post(
   ensureUser,
   trackContentAccessEndpoint
 );
+
+/**
+ * Mark course as completed
+ * POST /api/courses/:courseId/complete
+ */
+router.post('/:courseId/complete', requireAuth, ensureUser, completeCourse);
 
 export default router;

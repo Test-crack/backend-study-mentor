@@ -77,6 +77,7 @@ export const calculateCourseProgress = async (
     FROM "CourseModule" cm
     LEFT JOIN "UserModuleProgress" ump ON cm."module_id" = ump."module_id" 
       AND ump."user_id" = ${userId}::uuid
+      AND ump."course_id" = ${courseId}::uuid
     WHERE cm."course_id" = ${courseId}::uuid
   `;
 
@@ -286,7 +287,9 @@ export const updateCourseProgress = async (
 
 /**
  * Mark content item as completed and update all progress levels
- * Uses transaction for atomicity
+ * Updates: UserContentProgress (status, completed_at, updatedAt)
+ *          UserModuleProgress (status, progress_percent, completed_at if finished)
+ *          UserCourseEnrollment (module_index after completing a module)
  */
 export const markContentAsCompleted = async (
   userId: string,
@@ -297,7 +300,7 @@ export const markContentAsCompleted = async (
   // Ensure module progress exists
   await ensureModuleProgress(userId, moduleId, courseId);
 
-  // Update content progress
+  // Update UserContentProgress - status, completed_at, updatedAt
   const contentProgress = await prisma.userContentProgress.upsert({
     where: {
       user_id_content_item_id: {
@@ -322,10 +325,10 @@ export const markContentAsCompleted = async (
     },
   });
 
-  // Update module progress
+  // Update UserModuleProgress - status, progress_percent, completed_at (if finished)
   const moduleResult = await updateModuleProgress(userId, moduleId, courseId);
 
-  // Update course progress
+  // Update UserCourseEnrollment - module_index (after completing a module)
   const courseResult = await updateCourseProgress(userId, courseId);
 
   return {
@@ -339,6 +342,8 @@ export const markContentAsCompleted = async (
 
 /**
  * Track content access (mark as IN_PROGRESS if not already completed)
+ * Updates: UserContentProgress (status, last_accessed_at)
+ *          UserModuleProgress (status, last_accessed_at)
  */
 export const trackContentAccess = async (
   userId: string,
@@ -349,7 +354,7 @@ export const trackContentAccess = async (
   // Ensure module progress exists
   await ensureModuleProgress(userId, moduleId, courseId);
 
-  // Check current status
+  // Check current content status
   const existing = await prisma.userContentProgress.findUnique({
     where: {
       user_id_content_item_id: {
@@ -363,6 +368,7 @@ export const trackContentAccess = async (
   // Don't downgrade COMPLETED to IN_PROGRESS
   const newStatus = existing?.status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS';
 
+  // Update UserContentProgress - status, last_accessed_at
   const contentProgress = await prisma.userContentProgress.upsert({
     where: {
       user_id_content_item_id: {
@@ -385,7 +391,7 @@ export const trackContentAccess = async (
     },
   });
 
-  // Update module status if not completed
+  // Update UserModuleProgress - status (if not completed), last_accessed_at
   const moduleProgress = await prisma.userModuleProgress.findUnique({
     where: {
       user_id_module_id_course_id: {
@@ -413,7 +419,7 @@ export const trackContentAccess = async (
     });
   }
 
-  // Update course status if not completed
+  // Update UserCourseEnrollment - status (if not completed), last_accessed_at
   const enrollment = await prisma.userCourseEnrollment.findUnique({
     where: {
       user_id_course_id: {
@@ -444,6 +450,7 @@ export const trackContentAccess = async (
 
 /**
  * Get resume data for a course
+ * Updates course status to IN_PROGRESS if NOT_STARTED
  */
 export const getResumeData = async (userId: string, courseId: string) => {
   const enrollment = await prisma.userCourseEnrollment.findUnique({
@@ -462,6 +469,23 @@ export const getResumeData = async (userId: string, courseId: string) => {
 
   if (!enrollment) {
     return null;
+  }
+
+  // Update course status to IN_PROGRESS if NOT_STARTED
+  if (enrollment.status === ProgressStatus.NOT_STARTED) {
+    await prisma.userCourseEnrollment.update({
+      where: {
+        user_id_course_id: {
+          user_id: userId,
+          course_id: courseId,
+        },
+      },
+      data: {
+        status: ProgressStatus.IN_PROGRESS,
+        last_accessed_at: new Date(),
+      },
+    });
+    enrollment.status = ProgressStatus.IN_PROGRESS;
   }
 
   const currentModuleIndex = enrollment.module_index || 0;
@@ -554,5 +578,43 @@ export const getResumeData = async (userId: string, courseId: string) => {
     lastAccessedContentItemId: progress?.last_accessed_content_id || null,
     lastAccessedContentStatus: progress?.last_accessed_status || null,
     lastAccessedAt: enrollment.last_accessed_at,
+  };
+};
+
+/**
+ * Mark course as completed
+ * Updates: UserCourseEnrollment (status, completed_at)
+ */
+export const markCourseAsCompleted = async (userId: string, courseId: string) => {
+  // Verify all modules are completed
+  const courseProgress = await calculateCourseProgress(userId, courseId);
+
+  if (courseProgress.status !== 'COMPLETED') {
+    return {
+      success: false,
+      message: 'Cannot complete course - not all modules are finished',
+      courseProgress,
+    };
+  }
+
+  // Update UserCourseEnrollment - status, completed_at
+  const enrollment = await prisma.userCourseEnrollment.update({
+    where: {
+      user_id_course_id: {
+        user_id: userId,
+        course_id: courseId,
+      },
+    },
+    data: {
+      status: ProgressStatus.COMPLETED,
+      completed_at: new Date(),
+    },
+  });
+
+  return {
+    success: true,
+    message: 'Course completed successfully',
+    enrollment,
+    courseProgress,
   };
 };

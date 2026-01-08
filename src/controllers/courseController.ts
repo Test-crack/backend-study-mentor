@@ -5,6 +5,7 @@ import {
   markContentAsCompleted,
   trackContentAccess,
   getResumeData,
+  markCourseAsCompleted,
 } from '../services/courseProgressService';
 
 export const getCourses = async (req: Request, res: Response) => {
@@ -688,5 +689,61 @@ export const getCourseResumeData = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[getCourseResumeData] Error:', error);
         res.status(500).json({ error: 'Failed to fetch resume data' });
+    }
+};
+
+/**
+ * Mark course as completed
+ * POST /api/courses/:courseId/complete
+ */
+export const completeCourse = async (req: Request, res: Response) => {
+    try {
+        const { courseId } = req.params;
+        const userId = (req as any).appUserId;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(courseId)) {
+            return res.status(400).json({ error: 'Invalid course ID format' });
+        }
+
+        // Verify user is enrolled
+        const enrollment = await prisma.userCourseEnrollment.findUnique({
+            where: {
+                user_id_course_id: {
+                    user_id: userId,
+                    course_id: courseId,
+                }
+            }
+        });
+
+        if (!enrollment) {
+            return res.status(403).json({ error: 'User is not enrolled in this course' });
+        }
+
+        const result = await markCourseAsCompleted(userId, courseId);
+
+        if (!result.success) {
+            return res.status(400).json({
+                error: result.message,
+                data: {
+                    courseProgress: result.courseProgress,
+                }
+            });
+        }
+
+        res.json({
+            message: result.message,
+            data: {
+                courseProgress: result.courseProgress,
+                completed_at: result.enrollment?.completed_at,
+            }
+        });
+    } catch (error) {
+        console.error('[completeCourse] Error:', error);
+        res.status(500).json({ error: 'Failed to complete course' });
     }
 };
