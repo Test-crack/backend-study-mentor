@@ -34,8 +34,12 @@ export interface ResumeData {
   courseStatus: ProgressStatus | null;
   moduleProgress: number;
   moduleStatus: ProgressStatus | null;
-  lastContentItemId: string | null;
-  lastContentStatus: ProgressStatus | null;
+  // Furthest point in the module (by sequence order)
+  furthestContentItemId: string | null;
+  furthestContentStatus: string | null;
+  // Last accessed content (for "continue where you left off")
+  lastAccessedContentItemId: string | null;
+  lastAccessedContentStatus: string | null;
   lastAccessedAt: Date | null;
 }
 

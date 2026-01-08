@@ -20,8 +20,11 @@ router.get('/:id', getCourseById);
 // POST /api/courses/enroll
 router.post('/enroll', requireAuth, ensureUser, enrollUserInCourse);
 
-// GET /api/courses/:courseId/module (Resumes at current module_index)
-router.get('/:courseId/module', requireAuth, ensureUser, getModuleContent);
+/**
+ * Get resume data for a course
+ * GET /api/courses/:courseId/resume
+ */
+router.get('/:courseId/resume', requireAuth, ensureUser, getCourseResumeData);
 
 // GET /api/courses/:courseId/module/:orderIndex (Fetches specific module)
 router.get('/:courseId/module/:orderIndex', requireAuth, ensureUser, getModuleContent);
@@ -48,13 +51,5 @@ router.post(
   ensureUser,
   trackContentAccessEndpoint
 );
-
-/**
- * Get resume data for a course
- * GET /api/courses/:courseId/resume
- */
-router.get('/:courseId/resume', requireAuth, ensureUser, getCourseResumeData);
-
-
 
 export default router;

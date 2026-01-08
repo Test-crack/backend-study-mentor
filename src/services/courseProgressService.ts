@@ -494,27 +494,65 @@ export const getResumeData = async (userId: string, courseId: string) => {
     },
   });
 
-  const lastContentItem = await prisma.userContentProgress.findFirst({
-    where: {
-      user_id: userId,
-      module_id: courseModule.module_id,
-    },
-    orderBy: {
-      last_accessed_at: 'desc',
-    },
-    select: {
-      content_item_id: true,
-      status: true,
-    },
-  });
+  // Get the furthest content item user has reached (highest sequence_order)
+  // Also get the last accessed one for reference
+  const contentProgress = await prisma.$queryRaw<
+    Array<{
+      furthest_content_id: string | null;
+      furthest_sequence: number | null;
+      furthest_status: string | null;
+      last_accessed_content_id: string | null;
+      last_accessed_status: string | null;
+    }>
+  >`
+    WITH user_content AS (
+      SELECT 
+        ucp.content_item_id,
+        ucp.status,
+        ucp.last_accessed_at,
+        cci.sequence_order,
+        mc.order_index as concept_order
+      FROM "UserContentProgress" ucp
+      JOIN "CourseContentItem" cci ON ucp.content_item_id = cci.id
+      JOIN "ModuleConcept" mc ON cci.concept_id = mc.concept_id AND mc.module_id = ${courseModule.module_id}::uuid
+      WHERE ucp.user_id = ${userId}::uuid
+        AND ucp.module_id = ${courseModule.module_id}::uuid
+    ),
+    furthest AS (
+      SELECT content_item_id, status
+      FROM user_content
+      ORDER BY concept_order DESC, sequence_order DESC
+      LIMIT 1
+    ),
+    last_accessed AS (
+      SELECT content_item_id, status
+      FROM user_content
+      ORDER BY last_accessed_at DESC
+      LIMIT 1
+    )
+    SELECT 
+      f.content_item_id as furthest_content_id,
+      f.status as furthest_status,
+      la.content_item_id as last_accessed_content_id,
+      la.status as last_accessed_status
+    FROM (SELECT 1) dummy
+    LEFT JOIN furthest f ON true
+    LEFT JOIN last_accessed la ON true
+  `;
+
+  const progress = contentProgress[0];
 
   return {
     currentModuleIndex,
     courseStatus: enrollment.status,
     moduleProgress: moduleProgress?.progress_percent || 0,
     moduleStatus: moduleProgress?.status || null,
-    lastContentItemId: lastContentItem?.content_item_id || null,
-    lastContentStatus: lastContentItem?.status || null,
+    // Furthest point in the course (by sequence)
+    furthestContentItemId: progress?.furthest_content_id || null,
+    furthestContentStatus: progress?.furthest_status || null,
+    // Last accessed (for "continue where you left off")
+    lastAccessedContentItemId: progress?.last_accessed_content_id || null,
+    lastAccessedContentStatus: progress?.last_accessed_status || null,
     lastAccessedAt: enrollment.last_accessed_at,
   };
 };

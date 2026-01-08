@@ -90,11 +90,17 @@ GET /api/courses/:courseId/resume
     "courseStatus": "IN_PROGRESS",
     "moduleProgress": 50,
     "moduleStatus": "IN_PROGRESS",
-    "lastContentItemId": "770e8400-e29b-41d4-a716-446655440000",
-    "lastContentStatus": "IN_PROGRESS",
+    "furthestContentItemId": "770e8400-e29b-41d4-a716-446655440000",
+    "furthestContentStatus": "COMPLETED",
+    "lastAccessedContentItemId": "660e8400-e29b-41d4-a716-446655440000",
+    "lastAccessedContentStatus": "IN_PROGRESS",
     "lastAccessedAt": "2024-01-15T10:25:00Z"
   }
 }
+```
+
+- `furthestContentItemId`: The content item with highest sequence order user has reached
+- `lastAccessedContentItemId`: The most recently accessed content item
 ```
 
 ---
@@ -151,13 +157,18 @@ async function handleComplete() {
   }
 }
 
-// Resume course
+// Resume course - navigate to last accessed or furthest point
 async function resumeCourse() {
   const res = await fetch(`/api/courses/${courseId}/resume`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   const { data } = await res.json();
   
-  navigate(`/courses/${courseId}/modules/${data.currentModuleIndex}/content/${data.lastContentItemId}`);
+  // Use lastAccessedContentItemId to continue where user left off
+  // Or use furthestContentItemId to go to the furthest point reached
+  const contentId = data.lastAccessedContentItemId || data.furthestContentItemId;
+  if (contentId) {
+    navigate(`/courses/${courseId}/modules/${data.currentModuleIndex}/content/${contentId}`);
+  }
 }
 ```

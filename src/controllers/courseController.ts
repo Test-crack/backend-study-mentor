@@ -5,7 +5,7 @@ import {
   markContentAsCompleted,
   trackContentAccess,
   getResumeData,
-} from '../services/progressService';
+} from '../services/courseProgressService';
 
 export const getCourses = async (req: Request, res: Response) => {
     try {
@@ -342,12 +342,16 @@ export const getModuleContent = async (req: Request, res: Response) => {
         }
 
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const idx = orderIndex ? parseInt(orderIndex) : null;
-        if (orderIndex && isNaN(idx as number)) {
+        if (!uuidRegex.test(courseId)) {
+            return res.status(400).json({ error: 'Invalid courseId format' });
+        }
+
+        const idx = parseInt(orderIndex);
+        if (isNaN(idx)) {
             return res.status(400).json({ error: 'orderIndex must be a number' });
         }
 
-        // 1. Verify Enrollment
+        // 1. Verify Enrollment and update last_accessed_at
         const enrollment = await prisma.userCourseEnrollment.findUnique({
             where: {
                 user_id_course_id: {
@@ -361,15 +365,25 @@ export const getModuleContent = async (req: Request, res: Response) => {
             return res.status(403).json({ error: 'Access denied. You are not enrolled in this course.' });
         }
 
-        // Use enrollment.module_index if orderIndex is not provided
-        const targetIdx = idx !== null ? idx : (enrollment.module_index || 0);
+        // Update last_accessed_at
+        await prisma.userCourseEnrollment.update({
+            where: {
+                user_id_course_id: {
+                    user_id: userId,
+                    course_id: courseId,
+                }
+            },
+            data: {
+                last_accessed_at: new Date(),
+            }
+        });
 
         // 2. Fetch Module, Concepts, and Content
         const courseModule = await prisma.courseModule.findUnique({
             where: {
                 course_id_order_index: {
                     course_id: courseId,
-                    order_index: targetIdx,
+                    order_index: idx,
                 }
             },
             include: {
@@ -419,7 +433,7 @@ export const getModuleContent = async (req: Request, res: Response) => {
                 order_index: courseModule.order_index,
                 concepts: courseModule.Module.ModuleConcept.map(mc => ({
                     id: mc.Concept.id,
-                    learningObjective: mc.Concept.learningObjective, // Using learningObjective or we could use a title if Concept had one
+                    learningObjective: mc.Concept.learningObjective,
                     slug: mc.Concept.conceptSlug,
                     order_index: mc.order_index,
                     contentItems: mc.Concept.CourseContentItem.map(item => ({
@@ -433,7 +447,7 @@ export const getModuleContent = async (req: Request, res: Response) => {
                 }))
             }
         };
-        console.log(result.module.concepts);
+
         res.json({ data: result });
     } catch (error) {
         console.error('[getModuleContent] Error:', error);
