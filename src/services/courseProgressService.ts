@@ -106,6 +106,44 @@ export const calculateCourseProgress = async (
 };
 
 /**
+ * Calculate overall course progress including partial module progress
+ * Calculates each module's progress on-the-fly based on content completion
+ * Formula: sum of all module progress percentages / total modules
+ */
+export const calculateOverallCourseProgress = async (
+  userId: string,
+  courseId: string
+): Promise<number> => {
+  // Get all modules for this course
+  const modules = await prisma.$queryRaw<
+    Array<{
+      module_id: string;
+      order_index: number;
+    }>
+  >`
+    SELECT 
+      cm."module_id",
+      cm."order_index"
+    FROM "CourseModule" cm
+    WHERE cm."course_id" = ${courseId}::uuid
+    ORDER BY cm."order_index" ASC
+  `;
+
+  if (modules.length === 0) return 0;
+
+  // Calculate progress for each module on-the-fly
+  let totalProgress = 0;
+  
+  for (const module of modules) {
+    const moduleProgress = await calculateModuleProgress(userId, module.module_id, courseId);
+    totalProgress += moduleProgress.progress_percent;
+  }
+
+  // Overall progress = average of all module progress
+  return Math.round(totalProgress / modules.length);
+};
+
+/**
  * Ensure UserModuleProgress exists, create if not
  */
 const ensureModuleProgress = async (
@@ -126,7 +164,6 @@ const ensureModuleProgress = async (
       module_id: moduleId,
       course_id: courseId,
       status: ProgressStatus.NOT_STARTED,
-      progress_percent: 0,
     },
     update: {},
   });
@@ -165,7 +202,6 @@ export const updateModuleProgress = async (
       },
     },
     data: {
-      progress_percent: newProgress.progress_percent,
       status: newProgress.status,
       completed_at: newProgress.status === 'COMPLETED' ? new Date() : null,
       last_accessed_at: new Date(),
@@ -201,6 +237,27 @@ export const updateCourseProgress = async (
     throw new Error('User is not enrolled in this course');
   }
 
+  // Determine the correct status:
+  // - COMPLETED if all modules are done
+  // - IN_PROGRESS if any module has progress (even if no modules are fully completed)
+  // - NOT_STARTED only if no progress at all
+  let enrollmentStatus = newProgress.status;
+  
+  // If calculateCourseProgress says NOT_STARTED, check if any module is IN_PROGRESS
+  if (newProgress.status === 'NOT_STARTED') {
+    const anyModuleInProgress = await prisma.userModuleProgress.findFirst({
+      where: {
+        user_id: userId,
+        course_id: courseId,
+        status: { in: ['IN_PROGRESS', 'COMPLETED'] },
+      },
+    });
+    
+    if (anyModuleInProgress) {
+      enrollmentStatus = ProgressStatus.IN_PROGRESS;
+    }
+  }
+
   await prisma.userCourseEnrollment.update({
     where: {
       user_id_course_id: {
@@ -209,8 +266,8 @@ export const updateCourseProgress = async (
       },
     },
     data: {
-      status: newProgress.status,
-      completed_at: newProgress.status === 'COMPLETED' ? new Date() : null,
+      status: enrollmentStatus,
+      completed_at: enrollmentStatus === 'COMPLETED' ? new Date() : null,
       last_accessed_at: new Date(),
     },
   });
@@ -278,8 +335,11 @@ export const updateCourseProgress = async (
   }
 
   return {
-    courseProgress: newProgress,
-    courseUpdated: currentEnrollment.status !== newProgress.status,
+    courseProgress: {
+      ...newProgress,
+      status: enrollmentStatus,
+    },
+    courseUpdated: currentEnrollment.status !== enrollmentStatus,
     moduleAdvanced,
     nextModuleIndex,
   };
@@ -288,7 +348,7 @@ export const updateCourseProgress = async (
 /**
  * Mark content item as completed and update all progress levels
  * Updates: UserContentProgress (status, completed_at, updatedAt)
- *          UserModuleProgress (status, progress_percent, completed_at if finished)
+ *          UserModuleProgress (status, completed_at if finished)
  *          UserCourseEnrollment (module_index after completing a module)
  */
 export const markContentAsCompleted = async (
@@ -344,6 +404,7 @@ export const markContentAsCompleted = async (
  * Track content access (mark as IN_PROGRESS if not already completed)
  * Updates: UserContentProgress (status, last_accessed_at)
  *          UserModuleProgress (status, last_accessed_at)
+ *          UserCourseEnrollment (module_index if accessing higher module)
  */
 export const trackContentAccess = async (
   userId: string,
@@ -419,30 +480,48 @@ export const trackContentAccess = async (
     });
   }
 
-  // Update UserCourseEnrollment - status (if not completed), last_accessed_at
-  const enrollment = await prisma.userCourseEnrollment.findUnique({
-    where: {
-      user_id_course_id: {
-        user_id: userId,
-        course_id: courseId,
-      },
-    },
-    select: { status: true },
-  });
-
-  if (enrollment?.status !== ProgressStatus.COMPLETED) {
-    await prisma.userCourseEnrollment.update({
+  // Get current enrollment and the order_index of accessed module
+  const [enrollment, accessedModule] = await Promise.all([
+    prisma.userCourseEnrollment.findUnique({
       where: {
         user_id_course_id: {
           user_id: userId,
           course_id: courseId,
         },
       },
-      data: {
-        status: ProgressStatus.IN_PROGRESS,
-        last_accessed_at: new Date(),
+      select: { status: true, module_index: true },
+    }),
+    prisma.courseModule.findFirst({
+      where: {
+        course_id: courseId,
+        module_id: moduleId,
       },
-    });
+      select: { order_index: true },
+    }),
+  ]);
+
+  if (enrollment && accessedModule) {
+    const currentModuleIndex = enrollment.module_index || 0;
+    const accessedModuleIndex = accessedModule.order_index;
+
+    // Update module_index if accessing a higher module
+    const shouldUpdateModuleIndex = accessedModuleIndex > currentModuleIndex;
+
+    if (enrollment.status !== ProgressStatus.COMPLETED || shouldUpdateModuleIndex) {
+      await prisma.userCourseEnrollment.update({
+        where: {
+          user_id_course_id: {
+            user_id: userId,
+            course_id: courseId,
+          },
+        },
+        data: {
+          status: enrollment.status !== ProgressStatus.COMPLETED ? ProgressStatus.IN_PROGRESS : enrollment.status,
+          last_accessed_at: new Date(),
+          ...(shouldUpdateModuleIndex && { module_index: accessedModuleIndex }),
+        },
+      });
+    }
   }
 
   return contentProgress;
@@ -504,7 +583,7 @@ export const getResumeData = async (userId: string, courseId: string) => {
     return null;
   }
 
-  const moduleProgress = await prisma.userModuleProgress.findUnique({
+  const moduleProgressRecord = await prisma.userModuleProgress.findUnique({
     where: {
       user_id_module_id_course_id: {
         user_id: userId,
@@ -513,10 +592,16 @@ export const getResumeData = async (userId: string, courseId: string) => {
       },
     },
     select: {
-      progress_percent: true,
       status: true,
     },
   });
+
+  // Calculate module progress on-the-fly
+  const calculatedModuleProgress = await calculateModuleProgress(
+    userId,
+    courseModule.module_id,
+    courseId
+  );
 
   // Get the furthest content item user has reached (highest sequence_order)
   // Also get the last accessed one for reference
@@ -569,8 +654,8 @@ export const getResumeData = async (userId: string, courseId: string) => {
   return {
     currentModuleIndex,
     courseStatus: enrollment.status,
-    moduleProgress: moduleProgress?.progress_percent || 0,
-    moduleStatus: moduleProgress?.status || null,
+    moduleProgress: calculatedModuleProgress.progress_percent,
+    moduleStatus: moduleProgressRecord?.status || calculatedModuleProgress.status,
     // Furthest point in the course (by sequence)
     furthestContentItemId: progress?.furthest_content_id || null,
     furthestContentStatus: progress?.furthest_status || null,

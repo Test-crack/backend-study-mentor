@@ -6,6 +6,7 @@ import {
   trackContentAccess,
   getResumeData,
   markCourseAsCompleted,
+  calculateOverallCourseProgress,
 } from '../services/courseProgressService';
 
 export const getCourses = async (req: Request, res: Response) => {
@@ -213,8 +214,10 @@ export const getCourseById = async (req: Request, res: Response) => {
             if (enrollment) {
                 isEnrolled = true;
                 enrollmentStatus = enrollment.status;
-                progressPercent =  0;
                 moduleIndex = enrollment.module_index || 0;
+                
+                // Calculate overall progress including partial module completion
+                progressPercent = await calculateOverallCourseProgress(activeUserId as string, id);
             }
         }
 
@@ -424,7 +427,83 @@ export const getModuleContent = async (req: Request, res: Response) => {
             return res.status(404).json({ error: 'Module not found at this index for the specified course' });
         }
 
-        // 3. Transform data into an organized structure
+        // 3. Collect all content item IDs from this module
+        const allContentItemIds: string[] = [];
+        courseModule.Module.ModuleConcept.forEach(mc => {
+            mc.Concept.CourseContentItem.forEach(item => {
+                allContentItemIds.push(item.id);
+            });
+        });
+
+        // 4. Fetch user's content progress by content_item_id (more reliable than module_id)
+        const contentProgressMap = new Map<string, { status: string; completed_at: Date | null }>();
+        
+        if (allContentItemIds.length > 0) {
+            const userContentProgress = await prisma.userContentProgress.findMany({
+                where: {
+                    user_id: userId,
+                    content_item_id: { in: allContentItemIds },
+                },
+                select: {
+                    content_item_id: true,
+                    status: true,
+                    completed_at: true,
+                }
+            });
+
+            userContentProgress.forEach(cp => {
+                contentProgressMap.set(cp.content_item_id, {
+                    status: cp.status,
+                    completed_at: cp.completed_at,
+                });
+            });
+        }
+
+        // 5. Build flat ordered content list with global index
+        // Order: concepts by order_index, then content items by sequence_order within each concept
+        let globalIndex = 0;
+        const contentItems: Array<{
+            index: number;
+            id: string;
+            type: string;
+            title: string | null;
+            is_required: boolean | null;
+            concept_order: number;
+            sequence_order: number | null;
+            status: string;
+            completed_at: Date | null;
+            concept: {
+                id: string;
+                slug: string;
+                learningObjective: string;
+            };
+            content: any;
+        }> = [];
+
+        // Iterate in order: concepts sorted by order_index, items sorted by sequence_order
+        for (const mc of courseModule.Module.ModuleConcept) {
+            for (const item of mc.Concept.CourseContentItem) {
+                const progress = contentProgressMap.get(item.id);
+                contentItems.push({
+                    index: globalIndex++,
+                    id: item.id,
+                    type: item.content_kind,
+                    title: item.title,
+                    is_required: item.is_required,
+                    concept_order: mc.order_index,
+                    sequence_order: item.sequence_order,
+                    status: progress?.status || 'NOT_STARTED',
+                    completed_at: progress?.completed_at || null,
+                    concept: {
+                        id: mc.Concept.id,
+                        slug: mc.Concept.conceptSlug,
+                        learningObjective: mc.Concept.learningObjective,
+                    },
+                    content: item.content_kind === 'NOTES' ? item.Note : item.MCQ
+                });
+            }
+        }
+
         const result = {
             courseId,
             module: {
@@ -432,21 +511,10 @@ export const getModuleContent = async (req: Request, res: Response) => {
                 title: courseModule.Module.title,
                 description: courseModule.Module.description,
                 order_index: courseModule.order_index,
-                concepts: courseModule.Module.ModuleConcept.map(mc => ({
-                    id: mc.Concept.id,
-                    learningObjective: mc.Concept.learningObjective,
-                    slug: mc.Concept.conceptSlug,
-                    order_index: mc.order_index,
-                    contentItems: mc.Concept.CourseContentItem.map(item => ({
-                        id: item.id,
-                        type: item.content_kind,
-                        title: item.title,
-                        is_required: item.is_required,
-                        sequence_order: item.sequence_order,
-                        content: item.content_kind === 'NOTES' ? item.Note : item.MCQ
-                    }))
-                }))
-            }
+                total_items: contentItems.length,
+            },
+            // Flat ordered list - frontend just iterates index 0, 1, 2...
+            contentItems,
         };
 
         res.json({ data: result });
