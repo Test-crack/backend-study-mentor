@@ -8,6 +8,7 @@ import conceptRoutes from './routes/conceptRoutes';
 import userProfileRoutes from './routes/userProfileRoutes';
 import cors from 'cors';
 import coursesRoutes from './routes/courseRoutes';
+import instructorRoutes from './routes/instructorRoutes';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
@@ -69,6 +70,7 @@ app.use('/api/smartNotes', smartNotesRoutes);
 app.use('/api/concept', conceptRoutes); // Test endpoint - remove later
 app.use('/api/profile', requireAuth, ensureUser, userProfileRoutes);
 app.use('/api/courses', coursesRoutes);
+app.use('/api/instructor', instructorRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {

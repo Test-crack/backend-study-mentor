@@ -57,7 +57,9 @@ model Course {
   updated_at           DateTime?              @default(now()) @db.Timestamptz(6)
   domainId             String                 @db.Uuid
   slug                 String?                @unique @db.VarChar(200)
+  instructorId         String?                @db.Uuid
   Domain               Domain                 @relation(fields: [domainId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_course_domain")
+  Instructor           Instructor?            @relation(fields: [instructorId], references: [id], onUpdate: NoAction, map: "fk_course_instructor")
   CourseModule         CourseModule[]
   UserContentProgress  UserContentProgress[]
   UserCourseEnrollment UserCourseEnrollment[]
@@ -67,6 +69,7 @@ model Course {
   @@index([difficulty], map: "idx_course_difficulty")
   @@index([is_published], map: "idx_course_published")
   @@index([slug], map: "idx_course_slug")
+  @@index([instructorId], map: "idx_course_instructor")
 }
 
 model CourseContentItem {
@@ -194,6 +197,8 @@ model User {
   name                     String?                    @db.VarChar(255)
   countryCode              String?                    @db.VarChar(5)
   phoneNo                  String?                    @db.VarChar(20)
+  role                     UserRoleType               @default(STUDENT)
+  Instructor               Instructor?
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]
   UserContentProgress      UserContentProgress[]
@@ -202,6 +207,21 @@ model User {
   UserReadingProfile       UserReadingProfile?
 
   @@index([email])
+}
+
+model Instructor {
+  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId         String   @unique @db.Uuid
+  bio            String?
+  specialization String?  @db.VarChar(255)
+  rating         Float?   @default(0.0)
+  socialLinks    Json?    @default("{}")
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @db.Timestamptz(6)
+  Courses        Course[]
+  User           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model UserConcept {
@@ -311,27 +331,10 @@ model YouTubeTranscript {
   @@index([videoId])
 }
 
-model UserContentProgress {
-  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id           String            @db.Uuid
-  course_id         String            @db.Uuid
-  module_id         String            @db.Uuid
-  content_item_id   String            @db.Uuid
-  status            String            @default("NOT_STARTED") @db.VarChar(50)
-  completed_at      DateTime?         @db.Timestamptz(6)
-  last_accessed_at  DateTime          @default(now()) @db.Timestamptz(6)
-  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime          @default(now()) @db.Timestamptz(6)
-  CourseContentItem CourseContentItem @relation(fields: [content_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_content_item")
-  Course            Course            @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_course")
-  Module            Module            @relation(fields: [module_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_module")
-  User              User              @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_content_progress_user")
-
-  @@unique([user_id, content_item_id], map: "unique_user_content_progress")
-  @@index([last_accessed_at], map: "idx_content_last_accessed")
-  @@index([user_id, course_id, module_id], map: "idx_user_content_lookup")
-  @@index([user_id, status], map: "idx_user_content_status")
-  @@index([user_id, module_id, last_accessed_at(sort: Desc)], map: "idx_user_module_content")
+enum UserRoleType {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
 }
 
 enum ContentType {

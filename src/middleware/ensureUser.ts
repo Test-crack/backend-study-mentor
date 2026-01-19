@@ -24,12 +24,13 @@ export async function ensureUser(
       user = await prisma.user.create({
         data: {
           supabaseuserid: supabaseUserId,
-          email: email ?? `no-email-${supabaseUserId}@placeholder.local`,  
+          email: email ?? `no-email-${supabaseUserId}@placeholder.local`,
         },
       });
     }
 
     (req as any).appUserId = user.id;
+    req.userRole = user.role;
     next();
   } catch (err) {
     console.error('ensureUser error:', err);
