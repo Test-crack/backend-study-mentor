@@ -13,8 +13,12 @@ router.use(requireAuth);
 router.use(ensureUser);
 router.use(authorize(UserRoleType.INSTRUCTOR, UserRoleType.ADMIN));
 
+router.put('/profile', instructorController.updateInstructorProfile);
+
+
 router.get('/courses', instructorController.getInstructorCourses);
 router.post('/courses', instructorController.createInstructorCourse);
-router.put('/profile', instructorController.updateInstructorProfile);
+router.put('/courses/:id', instructorController.updateInstructorCourse);
+router.delete('/courses/:id', instructorController.deleteInstructorCourse);
 
 export default router;
