@@ -51,7 +51,9 @@ export async function getInstructorCourses(req: AuthRequest, res: Response) {
                 orderBy: { [String(sortBy)]: sortOrder },
                 include: {
                     _count: {
-                        select: { CourseModule: true }
+                        select: {
+                            UserCourseEnrollment: true
+                        }
                     }
                 }
             }),
@@ -78,10 +80,20 @@ export async function getInstructorCourses(req: AuthRequest, res: Response) {
 export async function createInstructorCourse(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { title, description, domainId, difficulty, price } = req.body;
+        const {
+            title,
+            Name,
+            description,
+            domainId,
+            difficulty,
+            price,
+            duration_minutes
+        } = req.body;
 
-        if (!title || !domainId) {
-            return res.status(400).json({ message: 'Title and domainId are required' });
+        const courseTitle = title || Name;
+
+        if (!courseTitle || !domainId) {
+            return res.status(400).json({ message: 'Title (or Name) and domainId are required' });
         }
 
         const course = await prisma.$transaction(async (tx) => {
@@ -98,17 +110,20 @@ export async function createInstructorCourse(req: AuthRequest, res: Response) {
                 });
             }
 
-            const slug = `${slugify(title)}-${Math.random().toString(36).substring(2, 7)}`;
+            // Generate a unique slug in the backend
+            const slug = `${slugify(courseTitle)}-${Math.random().toString(36).substring(2, 7)}`;
 
             return await tx.course.create({
                 data: {
-                    title,
+                    title: courseTitle,
                     description,
                     domainId,
-                    difficulty,
+                    difficulty: difficulty?.toUpperCase(), // Ensure uppercase for enum
+                    duration_minutes: duration_minutes ? Number(duration_minutes) : null,
                     price,
                     slug,
-                    instructorId: instructor.id,
+                    is_published: false, // Default to false for new courses
+                    instructorId: instructor.id, // Correct instructor profile ID logic
                 },
             });
         });
