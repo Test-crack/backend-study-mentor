@@ -60,3 +60,48 @@ export async function createInstructorCourse(req: AuthRequest, res: Response) {
         res.status(500).json({ message: 'Internal server error' });
     }
 }
+
+export async function updateInstructorProfile(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { name, countryCode, phoneNo, bio, specialization, socialLinks } = req.body;
+
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Update User table
+            const user = await tx.user.update({
+                where: { id: appUserId },
+                data: {
+                    name,
+                    countryCode,
+                    phoneNo,
+                },
+            });
+
+            // 2. Update Instructor table
+            const instructor = await tx.instructor.upsert({
+                where: { userId: appUserId },
+                update: {
+                    bio,
+                    specialization,
+                    socialLinks,
+                },
+                create: {
+                    userId: appUserId,
+                    bio,
+                    specialization,
+                    socialLinks,
+                },
+            });
+
+            return { user, instructor };
+        });
+
+        res.json({
+            message: 'Instructor profile updated successfully',
+            data: result,
+        });
+    } catch (error) {
+        console.error('updateInstructorProfile error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+}

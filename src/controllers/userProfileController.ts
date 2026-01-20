@@ -22,13 +22,28 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
         name: true,
         countryCode: true,
         phoneNo: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
+        Instructor: {
+          select: {
+            id: true,
+            bio: true,
+            specialization: true,
+            rating: true,
+            socialLinks: true,
+          }
+        }
       },
     });
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Filter out Instructor object if the user is not an instructor
+    if (user.role !== 'INSTRUCTOR') {
+      delete (user as any).Instructor;
     }
 
     res.json({ user });
@@ -68,6 +83,7 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
         name: true,
         countryCode: true,
         phoneNo: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
       },

@@ -15,5 +15,6 @@ router.use(authorize(UserRoleType.INSTRUCTOR, UserRoleType.ADMIN));
 
 router.get('/courses', instructorController.getInstructorCourses);
 router.post('/courses', instructorController.createInstructorCourse);
+router.put('/profile', instructorController.updateInstructorProfile);
 
 export default router;
