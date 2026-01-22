@@ -21,4 +21,11 @@ router.post('/courses', instructorController.createInstructorCourse);
 router.put('/courses/:id', instructorController.updateInstructorCourse);
 router.delete('/courses/:id', instructorController.deleteInstructorCourse);
 
+// Module management routes
+router.get('/courses/:courseId/modules', instructorController.getCourseModules);
+router.post('/courses/:courseId/modules', instructorController.addCourseModule);
+router.put('/courses/:courseId/modules/:moduleId', instructorController.updateCourseModule);
+router.delete('/courses/:courseId/modules/:moduleId', instructorController.deleteCourseModule);
+
 export default router;
+
