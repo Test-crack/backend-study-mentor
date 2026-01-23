@@ -27,5 +27,11 @@ router.post('/courses/:courseId/modules', instructorController.addCourseModule);
 router.put('/courses/:courseId/modules/:moduleId', instructorController.updateCourseModule);
 router.delete('/courses/:courseId/modules/:moduleId', instructorController.deleteCourseModule);
 
+// Content management routes
+router.get('/courses/:courseId/modules/:moduleId', instructorController.getInstructorModuleContent);
+router.post('/courses/:courseId/modules/:moduleId/content', instructorController.addModuleContent);
+router.put('/courses/:courseId/modules/:moduleId/content/:contentId', instructorController.updateModuleContent);
+router.delete('/courses/:courseId/modules/:moduleId/content/:contentId', instructorController.deleteModuleContent);
+
 export default router;
 
