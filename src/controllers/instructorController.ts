@@ -664,6 +664,19 @@ export async function deleteCourseModule(req: AuthRequest, res: Response) {
 // CONTENT MANAGEMENT APIs
 // ============================================================================
 
+// Helper to normalize MCQ options to Array format
+function normalizeOptions(options: any): any[] | undefined {
+    if (!options) return undefined;
+    if (Array.isArray(options)) return options;
+    if (typeof options === 'object') {
+        return Object.entries(options).map(([id, text]) => ({
+            id,
+            text: String(text)
+        }));
+    }
+    return [];
+}
+
 /**
  * Add content (Note/MCQ) to a module
  * POST /api/instructor/courses/:courseId/modules/:moduleId/content
@@ -674,8 +687,14 @@ export async function addModuleContent(req: AuthRequest, res: Response) {
         const { courseId, moduleId } = req.params;
         const {
             type, title, sequence_order, is_required,
-            body, question, options, correct_answer, explanation, difficulty
+            body, question, correct_answer, explanation, difficulty
         } = req.body;
+
+        // Normalize options here
+        let options = req.body.options;
+        if (type === 'MCQ') {
+            options = normalizeOptions(options);
+        }
 
         // Validations
         if (!Object.values(CourseContentType).includes(type)) {
@@ -705,12 +724,19 @@ export async function addModuleContent(req: AuthRequest, res: Response) {
 
         // Analyze content for concept generation
         let textToAnalyze = "";
-        if (type === "NOTES") textToAnalyze = body || "";
-        else if (type === "MCQ") textToAnalyze = question || "";
+        if (type === "NOTES") {
+            textToAnalyze = body || "";
+        } else if (type === "MCQ") {
+            // Combine question, options, and explanation for better context
+            const optionsText = Array.isArray(options)
+                ? options.map((o: any) => o.text).join(" ")
+                : "";
+            textToAnalyze = `${question || ""} ${optionsText} ${explanation || ""}`;
+        }
 
-        if (!textToAnalyze || textToAnalyze.length < 10) {
-            // Fallback if content is too short, rely on title
-            textToAnalyze = `${title} ${title} ${title}`;
+        if (!textToAnalyze || textToAnalyze.trim().length < 20) {
+            // Fallback: repeat title and include description if available to ensure enough context
+            textToAnalyze = `${title} ${title} ${title} ${textToAnalyze}`;
         }
 
         const analysisResult = await analyzeContentToConcept({
@@ -775,6 +801,11 @@ export async function updateModuleContent(req: AuthRequest, res: Response) {
         // But verifying module linkage is safer.
 
         // TODO: Strict chain verification if needed.
+
+        // Normalize options if present
+        if (updates.options) {
+            updates.options = normalizeOptions(updates.options);
+        }
 
         const result = await updateModuleContentService(contentId, updates);
 
@@ -917,7 +948,9 @@ export async function getInstructorModuleContent(req: AuthRequest, res: Response
                         domain: mc.Concept.domain,
                         baseConceptId: mc.Concept.baseConceptId
                     },
-                    content: item.content_kind === 'NOTES' ? item.Note : item.MCQ
+                    content: item.content_kind === 'NOTES'
+                        ? item.Note
+                        : (item.MCQ ? { ...item.MCQ, options: normalizeOptions(item.MCQ.options) } : null)
                 });
             }
         }

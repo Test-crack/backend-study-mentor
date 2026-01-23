@@ -68,9 +68,10 @@ export async function analyzeContentToConcept(
 ): Promise<ConceptAnalysisResult> {
   const { text, title, sourceType } = input;
 
-  if (!text || text.trim().length < 50) {
+  // Relaxed constraint to support shorter content (e.g. simple MCQs)
+  if (!text || text.trim().length < 15) {
     throw new Error(
-      "Content too short to analyze. Provide at least ~50 characters."
+      "Content too short to analyze. Provide at least ~15 characters."
     );
   }
 
@@ -82,7 +83,7 @@ export async function analyzeContentToConcept(
   const responseText = result.response.text();
 
   const parsed = safeParseConceptResponse(responseText);
-  
+
   // Validate the AI response quality
   validateConceptResult(parsed);
 
@@ -188,15 +189,15 @@ function validateConceptResult(parsed: RawConceptResponse): void {
   if (!parsed.domain || parsed.domain.length < 2) {
     throw new Error("Invalid domain returned by AI");
   }
-  
+
   if (!parsed.subConcept && !parsed.concept) {
     throw new Error("No concept identified by AI");
   }
-  
+
   if (!parsed.keywords || parsed.keywords.length === 0) {
     console.warn("[ConceptService] No keywords extracted, using empty array");
   }
-  
+
   if (!parsed.learningObjective || parsed.learningObjective.length < 10) {
     console.warn("[ConceptService] Learning objective is too short or missing");
   }
