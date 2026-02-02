@@ -193,7 +193,12 @@ export async function deleteInstructorCourse(req: AuthRequest, res: Response) {
 
         const course = await prisma.course.findUnique({
             where: { id },
-            include: { Instructor: true }
+            include: {
+                Instructor: true,
+                _count: {
+                    select: { UserCourseEnrollment: true }
+                }
+            }
         });
 
         if (!course) {
@@ -202,6 +207,12 @@ export async function deleteInstructorCourse(req: AuthRequest, res: Response) {
 
         if (course.Instructor?.userId !== appUserId) {
             return res.status(403).json({ message: 'Not authorized to delete this course' });
+        }
+
+        if (course._count.UserCourseEnrollment > 0) {
+            return res.status(400).json({
+                message: `Cannot delete course with ${course._count.UserCourseEnrollment} active student enrollments.`
+            });
         }
 
         await prisma.course.delete({
@@ -679,7 +690,7 @@ function normalizeOptions(options: any): any[] | undefined {
 
 /**
  * Add content (Note/MCQ) to a module
- * POST /api/instructor/courses/:courseId/modules/:moduleId/content
+ * POST /api/instructor/courses/:courseId/modules/:moduleId/contentN
  */
 export async function addModuleContent(req: AuthRequest, res: Response) {
     try {
