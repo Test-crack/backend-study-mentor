@@ -2,11 +2,11 @@ import { Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { DifficultyType, Prisma } from '@prisma/client';
 import {
-  markContentAsCompleted,
-  trackContentAccess,
-  getResumeData,
-  markCourseAsCompleted,
-  calculateOverallCourseProgress,
+    markContentAsCompleted,
+    trackContentAccess,
+    getResumeData,
+    markCourseAsCompleted,
+    calculateOverallCourseProgress,
 } from '../services/courseProgressService';
 
 export const getCourses = async (req: Request, res: Response) => {
@@ -72,6 +72,7 @@ export const getCourses = async (req: Request, res: Response) => {
                     id: true,
                     title: true,
                     slug: true,
+                    thumbnail: true,
                     description: true,
                     // Select new Domain relation
                     Domain: {
@@ -140,6 +141,7 @@ export const getCourseById = async (req: Request, res: Response) => {
                 id: true,
                 title: true,
                 slug: true,
+                thumbnail: true,
                 description: true,
                 Domain: {
                     select: {
@@ -215,7 +217,7 @@ export const getCourseById = async (req: Request, res: Response) => {
                 isEnrolled = true;
                 enrollmentStatus = enrollment.status;
                 moduleIndex = enrollment.module_index || 0;
-                
+
                 // Calculate overall progress including partial module completion
                 progressPercent = await calculateOverallCourseProgress(activeUserId as string, id);
             }
@@ -437,7 +439,7 @@ export const getModuleContent = async (req: Request, res: Response) => {
 
         // 4. Fetch user's content progress by content_item_id (more reliable than module_id)
         const contentProgressMap = new Map<string, { status: string; completed_at: Date | null }>();
-        
+
         if (allContentItemIds.length > 0) {
             const userContentProgress = await prisma.userContentProgress.findMany({
                 where: {

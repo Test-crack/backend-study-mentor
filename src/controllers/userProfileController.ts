@@ -23,6 +23,7 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
         countryCode: true,
         phoneNo: true,
         role: true,
+        profileImage: true,
         createdAt: true,
         updatedAt: true,
         Instructor: {
@@ -84,6 +85,7 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
         countryCode: true,
         phoneNo: true,
         role: true,
+        profileImage: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -99,5 +101,126 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
     }
 
     res.status(500).json({ error: 'Failed to update user profile' });
+  }
+};
+
+// PUT /api/profile/image - Upload profile image
+import { uploadImage, deleteImage, getPublicIdFromUrl } from '../services/cloudinaryService';
+
+export const uploadProfileImage = async (req: AuthRequest & { appUserId?: string; file?: Express.Multer.File }, res: Response) => {
+  try {
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    // 1. Get current user to check for existing image
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { profileImage: true },
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 2. Upload new image to Cloudinary
+    console.log(`[ProfileUpload] Uploading file for user ${userId}...`);
+    const { url } = await uploadImage(req.file.path);
+    console.log(`[ProfileUpload] Upload success: ${url}`);
+
+    // 3. Update User record
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        profileImage: url,
+        updatedAt: new Date(),
+      },
+      select: {
+        id: true,
+        profileImage: true,
+        updatedAt: true,
+      },
+    });
+
+    // 4. Cleanup old image (async, non-blocking)
+    if (currentUser.profileImage) {
+      const publicId = getPublicIdFromUrl(currentUser.profileImage);
+      if (publicId) {
+        console.log(`[ProfileUpload] Deleting old image: ${publicId}`);
+        deleteImage(publicId).catch(err =>
+          console.error('[ProfileUpload] Failed to delete old image:', err)
+        );
+      }
+    }
+
+    res.json({
+      message: 'Profile image updated successfully',
+      user: updatedUser
+    });
+
+  } catch (error: any) {
+    console.error('[uploadProfileImage] Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to upload profile image' });
+  }
+};
+
+// DELETE /api/profile/image - Remove profile image
+export const removeProfileImage = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+  try {
+    const userId = req.appUserId;
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    // 1. Get current user
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { profileImage: true },
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!currentUser.profileImage) {
+      return res.status(400).json({ error: 'No profile image to remove' });
+    }
+
+    // 2. Delete from Cloudinary
+    const publicId = getPublicIdFromUrl(currentUser.profileImage);
+    if (publicId) {
+      console.log(`[ProfileRemove] Deleting image: ${publicId}`);
+      await deleteImage(publicId);
+    } else {
+      console.warn(`[ProfileRemove] Could not extract publicId from URL: ${currentUser.profileImage}`);
+    }
+
+    // 3. Update User record (set to null)
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        profileImage: null,
+        updatedAt: new Date(),
+      },
+      select: {
+        id: true,
+        profileImage: true,
+        updatedAt: true,
+      },
+    });
+
+    res.json({
+      message: 'Profile image removed successfully',
+      user: updatedUser
+    });
+
+  } catch (error: any) {
+    console.error('[removeProfileImage] Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to remove profile image' });
   }
 };

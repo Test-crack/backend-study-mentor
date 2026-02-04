@@ -6,7 +6,33 @@ import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import * as instructorController from '../controllers/instructorController';
 
+import multer from 'multer';
+import path from 'path';
+
 const router = Router();
+
+// Configure local temporary storage
+const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+        cb(null, 'uploads/');
+    },
+    filename: (_req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    },
+});
+
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    fileFilter: (_req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed!'));
+        }
+    }
+});
 
 // All instructor routes require authentication, existence check, and INSTRUCTOR role
 router.use(requireAuth);
@@ -32,6 +58,10 @@ router.get('/courses/:courseId/modules/:moduleId', instructorController.getInstr
 router.post('/courses/:courseId/modules/:moduleId/content', instructorController.addModuleContent);
 router.put('/courses/:courseId/modules/:moduleId/content/:contentId', instructorController.updateModuleContent);
 router.delete('/courses/:courseId/modules/:moduleId/content/:contentId', instructorController.deleteModuleContent);
+
+// Thumbnail management routes
+router.put('/courses/:id/thumbnail', upload.single('thumbnail'), instructorController.uploadCourseThumbnail);
+router.delete('/courses/:id/thumbnail', instructorController.removeCourseThumbnail);
 
 export default router;
 

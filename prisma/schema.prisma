@@ -58,6 +58,7 @@ model Course {
   domainId             String                 @db.Uuid
   slug                 String?                @unique @db.VarChar(200)
   instructorId         String?                @db.Uuid
+  thumbnail            String?
   Domain               Domain                 @relation(fields: [domainId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_course_domain")
   Instructor           Instructor?            @relation(fields: [instructorId], references: [id], onUpdate: NoAction, map: "fk_course_instructor")
   CourseModule         CourseModule[]
@@ -198,6 +199,7 @@ model User {
   countryCode              String?                    @db.VarChar(5)
   phoneNo                  String?                    @db.VarChar(20)
   role                     UserRoleType               @default(STUDENT)
+  profileImage             String?
   Instructor               Instructor?
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]

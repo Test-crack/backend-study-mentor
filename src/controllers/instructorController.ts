@@ -5,6 +5,7 @@ import { slugify } from '../helper/stringUtils';
 import { CourseContentType } from '@prisma/client';
 import { analyzeContentToConcept, ConceptAnalysisInput } from '../services/conceptService';
 import { createModuleContent, updateModuleContent as updateModuleContentService, deleteModuleContent as deleteModuleContentService } from '../services/conceptDbService';
+import { uploadImage, deleteImage, getPublicIdFromUrl } from '../services/cloudinaryService';
 
 export async function getInstructorCourses(req: AuthRequest, res: Response) {
     try {
@@ -818,6 +819,11 @@ export async function updateModuleContent(req: AuthRequest, res: Response) {
             updates.options = normalizeOptions(updates.options);
         }
 
+        // The original code had a redundant check here. Removed it.
+        // if (course.Instructor?.userId !== appUserId) {
+        //     return res.status(403).json({ message: 'Not authorized to modify this course' });
+        // }
+
         const result = await updateModuleContentService(contentId, updates);
 
         if (!result.success) {
@@ -826,7 +832,7 @@ export async function updateModuleContent(req: AuthRequest, res: Response) {
 
         res.json({
             message: 'Content updated successfully',
-            data: result
+            data: result.data
         });
 
     } catch (error) {
@@ -982,5 +988,121 @@ export async function getInstructorModuleContent(req: AuthRequest, res: Response
     } catch (error) {
         console.error('getInstructorModuleContent error:', error);
         res.status(500).json({ message: 'Internal server error' });
+    }
+}
+
+// ============================================================================
+// COURSE THUMBNAIL APIs
+// ============================================================================
+
+/**
+ * Upload course thumbnail
+ * PUT /api/instructor/courses/:id/thumbnail
+ */
+export async function uploadCourseThumbnail(req: AuthRequest & { file?: Express.Multer.File }, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { id } = req.params;
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'No image file provided' });
+        }
+
+        const course = await prisma.course.findUnique({
+            where: { id },
+            include: { Instructor: true }
+        });
+
+        if (!course) {
+            return res.status(404).json({ message: 'Course not found' });
+        }
+
+        if (course.Instructor?.userId !== appUserId) {
+            return res.status(403).json({ message: 'Not authorized to modify this course' });
+        }
+
+        // Upload to Cloudinary
+        console.log(`[ThumbnailUpload] Uploading for course ${id}`);
+        // Use specific folder for course thumbnails
+        const { url } = await uploadImage(req.file.path, 'Testcrack/courses/thumbnails');
+
+        // Update course
+        const updatedCourse = await prisma.course.update({
+            where: { id },
+            data: {
+                thumbnail: url,
+                updated_at: new Date()
+            }
+        });
+
+        // Clean up old thumbnail
+        if (course.thumbnail) {
+            const publicId = getPublicIdFromUrl(course.thumbnail);
+            if (publicId) {
+                deleteImage(publicId).catch(console.error);
+            }
+        }
+
+        res.json({
+            message: 'Thumbnail uploaded successfully',
+            thumbnail: url,
+            course: updatedCourse
+        });
+
+    } catch (error: any) {
+        console.error('uploadCourseThumbnail error:', error);
+        res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+}
+
+/**
+ * Remove course thumbnail
+ * DELETE /api/instructor/courses/:id/thumbnail
+ */
+export async function removeCourseThumbnail(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { id } = req.params;
+
+        const course = await prisma.course.findUnique({
+            where: { id },
+            include: { Instructor: true }
+        });
+
+        if (!course) {
+            return res.status(404).json({ message: 'Course not found' });
+        }
+
+        if (course.Instructor?.userId !== appUserId) {
+            return res.status(403).json({ message: 'Not authorized to modify this course' });
+        }
+
+        if (!course.thumbnail) {
+            return res.status(400).json({ message: 'No thumbnail to remove' });
+        }
+
+        // Delete from Cloudinary
+        const publicId = getPublicIdFromUrl(course.thumbnail);
+        if (publicId) {
+            await deleteImage(publicId);
+        }
+
+        // Update course
+        const updatedCourse = await prisma.course.update({
+            where: { id },
+            data: {
+                thumbnail: null,
+                updated_at: new Date()
+            }
+        });
+
+        res.json({
+            message: 'Thumbnail removed successfully',
+            course: updatedCourse
+        });
+
+    } catch (error: any) {
+        console.error('removeCourseThumbnail error:', error);
+        res.status(500).json({ message: error.message || 'Internal server error' });
     }
 }
