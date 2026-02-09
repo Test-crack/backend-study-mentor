@@ -24,8 +24,8 @@ app.use(express.json());
 // Define allowed origins
 const allowedOrigins = [
   'http://localhost:8080',              // Dev client
-  'https://myedtech.com',               // Production site
-  'https://www.myedtech.com',           // Optional: www variant
+  'https://testcrack.com',               // Production site
+  'https://www.testcrack.com',           // Optional: www variant
   'http://72.60.221.118:5000',   // Frontend served via VPS
 ];
 
