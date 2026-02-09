@@ -1,13 +1,13 @@
 // src/middleware/auth.ts
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
-
 import { UserRoleType } from '@prisma/client';
 
 export interface AuthRequest extends Request {
   supabaseUserId?: string;
   userEmail?: string;
   userRole?: UserRoleType;
+  userMetadata?: any;
 }
 
 export async function requireAuth(
@@ -31,6 +31,7 @@ export async function requireAuth(
 
     req.supabaseUserId = data.user.id;
     req.userEmail = data.user.email ?? undefined;
+    req.userMetadata = data.user.user_metadata;
 
     next();
   } catch (err) {

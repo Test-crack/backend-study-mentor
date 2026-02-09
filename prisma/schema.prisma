@@ -65,12 +65,13 @@ model Course {
   UserContentProgress  UserContentProgress[]
   UserCourseEnrollment UserCourseEnrollment[]
   UserModuleProgress   UserModuleProgress[]
+  CourseOrder          CourseOrder[]
 
   @@index([created_at], map: "idx_course_created_at")
   @@index([difficulty], map: "idx_course_difficulty")
+  @@index([instructorId], map: "idx_course_instructor")
   @@index([is_published], map: "idx_course_published")
   @@index([slug], map: "idx_course_slug")
-  @@index([instructorId], map: "idx_course_instructor")
 }
 
 model CourseContentItem {
@@ -115,6 +116,21 @@ model Domain {
   Course      Course[]
 
   @@index([slug], map: "idx_domain_slug")
+}
+
+model Instructor {
+  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId         String   @unique @db.Uuid
+  bio            String?
+  specialization String?  @db.VarChar(255)
+  rating         Float?   @default(0.0)
+  socialLinks    Json?    @default("{}")
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @db.Timestamptz(6)
+  Course         Course[]
+  User           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model MCQ {
@@ -207,23 +223,9 @@ model User {
   UserCourseEnrollment     UserCourseEnrollment[]
   UserModuleProgress       UserModuleProgress[]
   UserReadingProfile       UserReadingProfile?
+  CourseOrder              CourseOrder[]
 
   @@index([email])
-}
-
-model Instructor {
-  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId         String   @unique @db.Uuid
-  bio            String?
-  specialization String?  @db.VarChar(255)
-  rating         Float?   @default(0.0)
-  socialLinks    Json?    @default("{}")
-  createdAt      DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime @default(now()) @db.Timestamptz(6)
-  Courses        Course[]
-  User           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
 }
 
 model UserConcept {
@@ -333,12 +335,6 @@ model YouTubeTranscript {
   @@index([videoId])
 }
 
-enum UserRoleType {
-  STUDENT
-  INSTRUCTOR
-  ADMIN
-}
-
 enum ContentType {
   YOUTUBE
   NOTES
@@ -364,4 +360,35 @@ enum ProgressStatus {
   NOT_STARTED
   IN_PROGRESS
   COMPLETED
+}
+
+model CourseOrder {
+  id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId            String         @db.Uuid
+  courseId          String         @db.Uuid
+  amount            Decimal        @db.Decimal(10, 2)
+  currency          String         @default("INR") @db.VarChar(10)
+  status            PurchaseStatus @default(PENDING)
+  razorpayOrderId   String         @unique @db.VarChar(100)
+  razorpayPaymentId String?        @unique @db.VarChar(100)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @db.Timestamptz(6)
+
+  User   User   @relation(fields: [userId], references: [id])
+  Course Course @relation(fields: [courseId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
+enum PurchaseStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum UserRoleType {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
 }
