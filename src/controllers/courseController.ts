@@ -115,6 +115,92 @@ export const getCourses = async (req: Request, res: Response) => {
     }
 };
 
+export const getEnrolledCourses = async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).appUserId;
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 10;
+        const skip = (page - 1) * limit;
+
+        const { search } = req.query;
+
+        // Build filter conditions
+        const where: Prisma.CourseWhereInput = {
+            UserCourseEnrollment: {
+                some: {
+                    user_id: userId,
+                },
+            },
+        };
+
+        if (search) {
+            where.OR = [
+                { title: { contains: search as string, mode: 'insensitive' } },
+                { description: { contains: search as string, mode: 'insensitive' } },
+            ];
+        }
+
+        // Execute query
+        const [courses, total] = await Promise.all([
+            prisma.course.findMany({
+                where,
+                orderBy: {
+                    // Order by enrollment date if possible? 
+                    // Or specifically by when they enrolled.
+                    // For now, let's order by last accessed (from UserCourseEnrollment) which is more relevant for "My Courses"
+                    // But standard sort is fine too. Let's stick to standard created_at desc or maybe enrollment date?
+                    // The user asked for "same manner we provide all courses", checking getCourses it confirms orderBy.
+                    created_at: 'desc',
+                },
+                skip,
+                take: limit,
+                select: {
+                    id: true,
+                    title: true,
+                    slug: true,
+                    thumbnail: true,
+                    description: true,
+                    // Select new Domain relation
+                    Domain: {
+                        select: {
+                            id: true,
+                            name: true,
+                            slug: true
+                        }
+                    },
+                    difficulty: true,
+                    duration_minutes: true,
+                    price: true,
+                    created_at: true,
+                    updated_at: true,
+                    _count: {
+                        select: {
+                            CourseModule: true,
+                        }
+                    }
+                },
+            }),
+            prisma.course.count({ where }),
+        ]);
+
+        const totalPages = Math.ceil(total / limit);
+
+        res.json({
+            data: courses,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages,
+                hasMore: page < totalPages,
+            },
+        });
+    } catch (error) {
+        console.error('[getEnrolledCourses] Error:', error);
+        res.status(500).json({ error: 'Failed to fetch enrolled courses' });
+    }
+};
+
 export const getCourseById = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;

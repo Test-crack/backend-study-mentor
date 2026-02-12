@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getCourses, getCourseById, enrollUserInCourse, getModuleContent } from '../controllers/courseController';
+import { getCourses, getCourseById, enrollUserInCourse, getModuleContent, getEnrolledCourses } from '../controllers/courseController';
 import {
   markContentComplete,
   trackContentAccessEndpoint,
@@ -13,6 +13,9 @@ const router = Router();
 
 // GET /api/courses
 router.get('/', getCourses);
+
+// GET /api/courses/enrolled
+router.get('/enrolled', requireAuth, ensureUser, getEnrolledCourses);
 
 // GET /api/courses/:id
 router.get('/:id', getCourseById);
