@@ -34,7 +34,17 @@ export async function requireAuth(
     req.userMetadata = data.user.user_metadata;
 
     next();
-  } catch (err) {
+  } catch (err: any) {
+    // Handle specific Supabase auth errors as 401
+    // "Auth session missing!" is a common error when the session is invalid or expired
+    const isAuthError = err?.message?.includes('Auth session missing') ||
+      err?.name === 'AuthSessionMissingError';
+
+    if (isAuthError) {
+      console.warn('Auth session missing/invalid during check:', err.message);
+      return res.status(401).json({ message: 'Session expired or invalid. Please login again.' });
+    }
+
     console.error('requireAuth error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
