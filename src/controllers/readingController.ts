@@ -62,33 +62,33 @@ interface IntegrityFlags {
  */
 function validateFocusData(focusData: FocusData): IntegrityFlags {
   const { focusRatio, tabSwitches, totalSessionTime } = focusData;
-  
+
   // Thresholds for integrity validation
-  const MIN_FOCUS_RATIO = 0.7;        // 70% minimum focus ratio
+  const MIN_FOCUS_RATIO = 0.6;        // 60% minimum focus ratio
   const MAX_TAB_SWITCHES = 5;          // Maximum 5 tab switches
-  const MIN_SESSION_TIME = 20;        // Minimum 30 seconds session time
-  
+  const MIN_SESSION_TIME = 20;        // Minimum 20 seconds session time
+
   const lowFocusRatio = focusRatio < MIN_FOCUS_RATIO;
   const excessiveTabSwitches = tabSwitches > MAX_TAB_SWITCHES;
   const shortSession = totalSessionTime < MIN_SESSION_TIME;
-  
+
   // Calculate integrity score (0-100)
   let integrityScore = 100;
-  
+
   if (lowFocusRatio) integrityScore -= 30;
   if (excessiveTabSwitches) integrityScore -= 25;
   if (shortSession) integrityScore -= 20;
-  
+
   // Additional penalties for extreme cases
   if (focusRatio < 0.3) integrityScore -= 20;  // Very low focus
   if (tabSwitches > 10) integrityScore -= 15;  // Excessive tab switching
-  
+
   integrityScore = Math.max(0, integrityScore);
-  
-  const suspiciousBehavior = integrityScore < 50 || 
-                            (lowFocusRatio && excessiveTabSwitches) ||
-                            focusRatio < 0.2;
-  
+
+  const suspiciousBehavior = integrityScore < 50 ||
+    (lowFocusRatio && excessiveTabSwitches) ||
+    focusRatio < 0.2;
+
   return {
     lowFocusRatio,
     excessiveTabSwitches,
@@ -102,7 +102,7 @@ function validateFocusData(focusData: FocusData): IntegrityFlags {
  */
 function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFlags): Metrics {
   const { integrityScore, suspiciousBehavior } = integrityFlags;
-  
+
   if (suspiciousBehavior) {
     // Heavy penalty for suspicious behavior
     return {
@@ -112,7 +112,7 @@ function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFl
       speedLearningScore: parseFloat(Math.max(0, metrics.speedLearningScore - 30).toFixed(2))
     };
   }
-  
+
   if (integrityScore < 70) {
     // Moderate penalty for low integrity
     const penalty = (70 - integrityScore) / 100;
@@ -123,7 +123,7 @@ function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFl
       speedLearningScore: parseFloat(Math.max(0, metrics.speedLearningScore - penalty * 20).toFixed(2))
     };
   }
-  
+
   // No adjustment for good integrity
   return metrics;
 }
@@ -133,27 +133,27 @@ function adjustMetricsForIntegrity(metrics: Metrics, integrityFlags: IntegrityFl
  */
 function generateIntegrityFeedback(integrityFlags: IntegrityFlags): string {
   const { lowFocusRatio, excessiveTabSwitches, suspiciousBehavior, integrityScore } = integrityFlags;
-  
+
   if (suspiciousBehavior) {
     return "⚠️ Assessment integrity compromised. Please retake the assessment with proper focus and attention.";
   }
-  
+
   if (lowFocusRatio && excessiveTabSwitches) {
     return "⚠️ Low focus detected with frequent tab switching. Your results may not reflect your true abilities.";
   }
-  
+
   if (lowFocusRatio) {
     return "⚠️ Low focus ratio detected. Try to minimize distractions for better results.";
   }
-  
+
   if (excessiveTabSwitches) {
     return "⚠️ Frequent tab switching detected. Please stay focused on the assessment.";
   }
-  
+
   if (integrityScore < 80) {
     return "ℹ️ Good effort! Try to maintain better focus for optimal results.";
   }
-  
+
   return "✅ Excellent focus maintained throughout the assessment!";
 }
 
@@ -200,7 +200,7 @@ function generateFeedback(metrics: Metrics, idealWPM: number, actualWPM: number)
 export const getModules = (_req: Request, res: Response) => {
   try {
     const modules = getModulesList();
-    
+
     res.json({
       modules,
       total: modules.length
@@ -281,9 +281,8 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
     if (!req.body) {
       return res.status(400).json({ error: 'Invalid request data' });
     }
-    console.log(req.body);
     const { passageId, readingTimeSeconds, answers, focusData } = req.body as SubmitRequest;
-    
+
     // Get userId from authenticated request
     const userId = req.appUserId;
     if (!userId) {
@@ -296,10 +295,10 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
     }
 
     // Validate focus data structure
-    if (typeof focusData.focusRatio !== 'number' || 
-        typeof focusData.tabSwitches !== 'number' ||
-        typeof focusData.focusTime !== 'number' ||
-        typeof focusData.totalSessionTime !== 'number') {
+    if (typeof focusData.focusRatio !== 'number' ||
+      typeof focusData.tabSwitches !== 'number' ||
+      typeof focusData.focusTime !== 'number' ||
+      typeof focusData.totalSessionTime !== 'number') {
       return res.status(400).json({ error: 'Invalid focus data structure' });
     }
 
@@ -319,14 +318,14 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
 
     // Validate focus data and check for suspicious behavior
     const integrityFlags = validateFocusData(focusData);
-    
-    // If suspicious behavior detected, return early with warning
+
+    // If suspicious behavior detected, return early with warning (200 OK but success: false)
     if (integrityFlags.suspiciousBehavior) {
-      return res.status(400).json({
-        error: "Assessment integrity compromised",
-        flag: "suspicious_behavior",
-        integrityFlags,
-        integrityFeedback: generateIntegrityFeedback(integrityFlags)
+      return res.json({
+        success: false,
+        reason: "integrity_compromised",
+        message: generateIntegrityFeedback(integrityFlags),
+        integrityFlags
       });
     }
 
@@ -360,17 +359,17 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
     // We use 400 WPM as the maximum reasonable speed for comprehension
     const maxReasonableWPM = 400;
     const minTimeSec = Math.ceil((wordCount / maxReasonableWPM) * 60);
-    
+
     // Additional check: ensure minimum time is at least 20 seconds for any passage
     const absoluteMinTime = Math.max(minTimeSec, 20);
-    
+
     // Validate reading time
     if (readingTimeSeconds < absoluteMinTime) {
-      console.log('Reading time too short');
       const suggestedTime = Math.ceil(absoluteMinTime / 60);
-      return res.status(400).json({
-        error: `Reading time too short. Please read carefully for at least ${suggestedTime} minute${suggestedTime > 1 ? 's' : ''} to ensure proper comprehension.`,
-        flag: "too_fast",
+      return res.json({
+        success: false,
+        reason: "too_fast",
+        message: `Reading time too short. Please read carefully for at least ${suggestedTime} minute${suggestedTime > 1 ? 's' : ''} to ensure proper comprehension.`,
         suggestedMinTime: absoluteMinTime,
         actualTime: readingTimeSeconds
       });
@@ -378,21 +377,21 @@ export const submitAssessment = async (req: AuthRequest & { appUserId?: string }
 
     // 1. Reading Speed (WPM)
     const wpm = parseFloat((wordCount / (readingTimeSeconds / 60)).toFixed(2));
-    
+
     // 2. Accuracy (%)
     const accuracy = parseFloat(((correctAnswers / totalQuestions) * 100).toFixed(2));
-    
+
     // 3. Retention Score (%)
     const speedFactor = Math.min(1, wpm / idealWPM);
     const retention = parseFloat(((accuracy / 100) * speedFactor * 100).toFixed(2));
-    
+
     // 4. Overall Speed Learning Score (out of 100)
     const speedComponent = Math.min(100, (wpm / idealWPM) * 100);
     const speedLearningScore = parseFloat(((0.6 * accuracy) + (0.4 * speedComponent)).toFixed(2));
-    
+
     // accuracy - weighted WPM  
     const weightedWPM = parseFloat((wpm * accuracy / 100).toFixed(2));
-    
+
     const baseMetrics: Metrics = {
       weightedWPM,
       accuracy,
@@ -474,7 +473,7 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     const profile = await getUserReadingProfile(userId);
 
     if (!profile) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'No reading profile found',
         message: 'Complete your first assessment to create a profile'
       });
@@ -523,7 +522,7 @@ export const getAssessmentHistory = async (req: AuthRequest & { appUserId?: stri
     const days = req.query.days ? parseInt(req.query.days as string) : undefined;
 
     const options: any = { limit };
-    
+
     if (difficulty && ['easy', 'medium', 'hard'].includes(difficulty)) {
       options.difficulty = difficulty;
     }
