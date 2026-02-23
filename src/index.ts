@@ -10,6 +10,7 @@ import cors from 'cors';
 import coursesRoutes from './routes/courseRoutes';
 import instructorRoutes from './routes/instructorRoutes';
 import domainRoutes from './routes/domainRoutes';
+import ieltsReadingRoutes from './routes/ieltsReadingRoutes';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
@@ -73,6 +74,7 @@ app.use('/api/profile', requireAuth, ensureUser, userProfileRoutes);
 app.use('/api/courses', coursesRoutes);
 app.use('/api/domains', domainRoutes);
 app.use('/api/instructor', instructorRoutes);
+app.use('/api/ielts-reading', ieltsReadingRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {

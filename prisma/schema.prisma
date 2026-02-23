@@ -62,10 +62,10 @@ model Course {
   Domain               Domain                 @relation(fields: [domainId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_course_domain")
   Instructor           Instructor?            @relation(fields: [instructorId], references: [id], onUpdate: NoAction, map: "fk_course_instructor")
   CourseModule         CourseModule[]
+  CourseOrder          CourseOrder[]
   UserContentProgress  UserContentProgress[]
   UserCourseEnrollment UserCourseEnrollment[]
   UserModuleProgress   UserModuleProgress[]
-  CourseOrder          CourseOrder[]
 
   @@index([created_at], map: "idx_course_created_at")
   @@index([difficulty], map: "idx_course_difficulty")
@@ -216,6 +216,7 @@ model User {
   phoneNo                  String?                    @db.VarChar(20)
   role                     UserRoleType               @default(STUDENT)
   profileImage             String?
+  CourseOrder              CourseOrder[]
   Instructor               Instructor?
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]
@@ -223,7 +224,6 @@ model User {
   UserCourseEnrollment     UserCourseEnrollment[]
   UserModuleProgress       UserModuleProgress[]
   UserReadingProfile       UserReadingProfile?
-  CourseOrder              CourseOrder[]
 
   @@index([email])
 }
@@ -335,6 +335,41 @@ model YouTubeTranscript {
   @@index([videoId])
 }
 
+model CourseOrder {
+  id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId            String         @db.Uuid
+  courseId          String         @db.Uuid
+  amount            Decimal        @db.Decimal(10, 2)
+  currency          String         @default("INR") @db.VarChar(10)
+  status            PurchaseStatus @default(PENDING)
+  razorpayOrderId   String         @unique @db.VarChar(100)
+  razorpayPaymentId String?        @unique @db.VarChar(100)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @db.Timestamptz(6)
+  Course            Course         @relation(fields: [courseId], references: [id])
+  User              User           @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
+model IeltsReadingPractice {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title       String   @db.VarChar(500)
+  type        String   @db.VarChar(100)
+  words       Int
+  phrases     Int
+  band        String   @db.VarChar(50)
+  modelAnswer String
+  keywords    String[] @default([])
+  keywordMap  Json?
+  tips        String[] @default([])
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([band], map: "idx_ielts_reading_practice_band")
+}
+
 enum ContentType {
   YOUTUBE
   NOTES
@@ -360,25 +395,6 @@ enum ProgressStatus {
   NOT_STARTED
   IN_PROGRESS
   COMPLETED
-}
-
-model CourseOrder {
-  id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId            String         @db.Uuid
-  courseId          String         @db.Uuid
-  amount            Decimal        @db.Decimal(10, 2)
-  currency          String         @default("INR") @db.VarChar(10)
-  status            PurchaseStatus @default(PENDING)
-  razorpayOrderId   String         @unique @db.VarChar(100)
-  razorpayPaymentId String?        @unique @db.VarChar(100)
-  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime       @default(now()) @db.Timestamptz(6)
-
-  User   User   @relation(fields: [userId], references: [id])
-  Course Course @relation(fields: [courseId], references: [id])
-
-  @@index([userId])
-  @@index([status])
 }
 
 enum PurchaseStatus {
