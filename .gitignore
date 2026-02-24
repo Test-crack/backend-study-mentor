@@ -153,3 +153,6 @@ cookies/
 # Runtime SQLite DB
 .runtime.db
 
+# Google Cloud Credentials
+credentials/*.json
+
