@@ -11,6 +11,7 @@ import coursesRoutes from './routes/courseRoutes';
 import instructorRoutes from './routes/instructorRoutes';
 import domainRoutes from './routes/domainRoutes';
 import ieltsReadingRoutes from './routes/ieltsReadingRoutes';
+import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
@@ -93,6 +94,9 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// Start WebSocket server for real-time features
+startWSServer();
 
 startServer();
 

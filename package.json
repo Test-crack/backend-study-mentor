@@ -29,6 +29,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/pg": "^8.15.6",
     "@types/textract": "^2.4.5",
+    "@types/ws": "^8.18.1",
     "@types/xml2js": "^0.4.14",
     "nodemon": "^3.1.10",
     "prisma": "5.22.0",
@@ -59,6 +60,7 @@
     "tesseract.js": "^6.0.1",
     "textract": "^2.5.0",
     "uuid": "^13.0.0",
+    "ws": "^8.19.0",
     "xml2js": "^0.6.2",
     "youtubei.js": "^15.1.1",
     "ytdlp-nodejs": "^2.3.5"
