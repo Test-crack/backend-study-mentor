@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import express, { Request, Response } from 'express';
+import http from 'http';
 import ytStudyRoutes from './routes/ytStudyRoutes';
 import readingRoutes from './routes/readingRoutes';
 import smartNotesRoutes from './routes/smartNotesRoutes';
@@ -18,6 +19,7 @@ import { ensureUser } from './middleware/ensureUser';
 import { initializeStorage } from './services/youtubeNotes/fileStorageService';
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
 
 app.use(express.json());
@@ -84,7 +86,10 @@ async function startServer() {
     await initializeStorage();
     console.log('✅ File storage initialized');
 
-    app.listen(Number(PORT), '0.0.0.0', () => {
+    // Start WebSocket server sharing the HTTP server
+    startWSServer(server);
+
+    server.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`✅ Server running on port ${PORT}`);
       console.log(`📁 Upload directory: ${process.cwd()}/uploads`);
       console.log(`🔍 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -94,9 +99,6 @@ async function startServer() {
     process.exit(1);
   }
 }
-
-// Start WebSocket server for real-time features
-startWSServer();
 
 startServer();
 
