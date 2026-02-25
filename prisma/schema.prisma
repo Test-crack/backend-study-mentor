@@ -217,6 +217,7 @@ model User {
   role                     UserRoleType               @default(STUDENT)
   profileImage             String?
   CourseOrder              CourseOrder[]
+  IeltsReadingAssessment   IeltsReadingAssessment[]
   Instructor               Instructor?
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]
@@ -354,20 +355,40 @@ model CourseOrder {
 }
 
 model IeltsReadingPractice {
-  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  title       String   @db.VarChar(500)
-  type        String   @db.VarChar(100)
-  words       Int
-  phrases     Int
-  band        String   @db.VarChar(50)
-  modelAnswer String
-  keywords    String[] @default([])
-  keywordMap  Json?
-  tips        String[] @default([])
-  createdAt   DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime @default(now()) @db.Timestamptz(6)
+  id                     String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title                  String                   @db.VarChar(500)
+  type                   String                   @db.VarChar(100)
+  words                  Int
+  phrases                Int
+  band                   String                   @db.VarChar(50)
+  modelAnswer            String
+  keywords               String[]                 @default([])
+  keywordMap             Json?
+  tips                   String[]                 @default([])
+  createdAt              DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                 @default(now()) @db.Timestamptz(6)
+  IeltsReadingAssessment IeltsReadingAssessment[]
 
   @@index([band], map: "idx_ielts_reading_practice_band")
+}
+
+model IeltsReadingAssessment {
+  id            String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId        String               @db.Uuid
+  topicId       String               @db.Uuid
+  band          String               @db.VarChar(50)
+  weightedWpm   Float
+  fluencyScore  Float
+  keywordsHit   Int
+  totalKeywords Int
+  pass1Data     Json                 @db.Json
+  pass2Data     Json                 @db.Json
+  createdAt     DateTime             @default(now()) @db.Timestamptz(6)
+  Topic         IeltsReadingPractice @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  User          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([topicId])
 }
 
 enum ContentType {
