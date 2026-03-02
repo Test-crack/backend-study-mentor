@@ -391,6 +391,23 @@ model IeltsReadingAssessment {
   @@index([topicId])
 }
 
+model IeltsVoicePrompt {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  band         String   @db.VarChar(50)
+  feature      String   @default("anatomy") @db.VarChar(50)
+  question     String
+  hint         String?
+  targetWpmMin Int      @default(120)
+  targetWpmMax Int      @default(160)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([band], map: "idx_voice_prompt_band")
+  @@index([feature], map: "idx_voice_prompt_feature")
+  @@index([isActive], map: "idx_voice_prompt_active")
+}
+
 model IeltsSpeedReadingReport {
   id                        String                      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   category                  String                      @db.VarChar(50)

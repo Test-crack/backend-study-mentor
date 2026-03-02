@@ -12,6 +12,7 @@ import coursesRoutes from './routes/courseRoutes';
 import instructorRoutes from './routes/instructorRoutes';
 import domainRoutes from './routes/domainRoutes';
 import ieltsReadingRoutes from './routes/ieltsReadingRoutes';
+import voiceLabRoutes from './routes/voiceLabRoutes';
 import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
@@ -78,6 +79,7 @@ app.use('/api/courses', coursesRoutes);
 app.use('/api/domains', domainRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/ielts-reading', ieltsReadingRoutes);
+app.use('/api/voice-lab', voiceLabRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {
