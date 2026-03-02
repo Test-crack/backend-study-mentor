@@ -391,6 +391,35 @@ model IeltsReadingAssessment {
   @@index([topicId])
 }
 
+model IeltsSpeedReadingReport {
+  id                        String                      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  category                  String                      @db.VarChar(50)
+  title                     String                      @db.VarChar(255)
+  source                    String                      @db.VarChar(255)
+  text                      String
+  wordCount                 Int                         @default(0)
+  createdAt                 DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime                    @default(now()) @db.Timestamptz(6)
+  IeltsSpeedReadingExercise IeltsSpeedReadingExercise[]
+
+  @@index([category])
+}
+
+model IeltsSpeedReadingExercise {
+  id                      String                  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reportId                String                  @db.Uuid
+  type                    String                  @db.VarChar(50)
+  question                String
+  options                 Json?
+  correctAnswer           String
+  explanation             String?
+  createdAt               DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                @default(now()) @db.Timestamptz(6)
+  IeltsSpeedReadingReport IeltsSpeedReadingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+}
+
 enum ContentType {
   YOUTUBE
   NOTES

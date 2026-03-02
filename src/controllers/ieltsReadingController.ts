@@ -180,3 +180,218 @@ export const saveAssessment = async (req: Request, res: Response) => {
         });
     }
 };
+
+/**
+ * GET /api/ielts-reading/speed-reading/reports
+ * Fetch all speed reading reports - summary only (for main listing page)
+ * Returns: id, category, title, source, wordCount. No text or questions.
+ */
+export const getSpeedReadingReports = async (_req: Request, res: Response) => {
+    try {
+        const reports = await prisma.ieltsSpeedReadingReport.findMany({
+            select: {
+                id: true,
+                category: true,
+                title: true,
+                source: true,
+                wordCount: true,
+            },
+            orderBy: { category: 'asc' }
+        });
+
+        res.json({
+            success: true,
+            data: reports
+        });
+    } catch (error) {
+        console.error('Error fetching speed reading reports:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch speed reading reports'
+        });
+    }
+};
+
+/**
+ * GET /api/ielts-reading/speed-reading/reports/:id
+ * Fetch a single speed reading report with full text + related exercises
+ */
+export const getSpeedReadingReportById = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+
+        if (!id) {
+            return res.status(400).json({ success: false, error: 'Report ID is required' });
+        }
+
+        const report = await prisma.ieltsSpeedReadingReport.findUnique({
+            where: { id },
+            include: {
+                IeltsSpeedReadingExercise: {
+                    select: {
+                        id: true,
+                        type: true,
+                        question: true,
+                        options: true,
+                        correctAnswer: true,
+                        explanation: true,
+                    },
+                    orderBy: { createdAt: 'asc' },
+                },
+            },
+        });
+
+        if (!report) {
+            return res.status(404).json({ success: false, error: 'Speed reading report not found' });
+        }
+
+        // Map exercises to frontend-expected shape
+        const questions = report.IeltsSpeedReadingExercise.map(ex => ({
+            id: ex.id,
+            type: ex.type,
+            stem: ex.question,
+            options: Array.isArray(ex.options) ? ex.options : [],
+            answer: ex.correctAnswer,
+            explanation: ex.explanation ?? undefined,
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                id: report.id,
+                category: report.category,
+                title: report.title,
+                source: report.source,
+                wordCount: report.wordCount,
+                text: report.text,
+                questions,
+            },
+        });
+    } catch (error) {
+        console.error('Error fetching speed reading report by ID:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch speed reading report' });
+    }
+};
+/**
+ * POST /api/ielts-reading/speed-reading/submit
+ * Evaluate a completed speed-reading + quiz session.
+ * Computes metrics from submitted answers without writing to DB.
+ */
+export const submitSpeedReadingAssessment = async (req: Request, res: Response) => {
+    try {
+        const {
+            reportId,
+            readingTimeSeconds,
+            wpm,
+            answers,   // { questionId: string; selectedOption: string }[]
+        } = req.body as {
+            reportId: string;
+            readingTimeSeconds: number;
+            wpm: number;
+            answers: { questionId: string; selectedOption: string }[];
+        };
+
+        if (!reportId || !Array.isArray(answers)) {
+            return res.status(400).json({ success: false, error: 'reportId and answers are required' });
+        }
+
+        // Fetch the canonical exercises for this report
+        const exercises = await prisma.ieltsSpeedReadingExercise.findMany({
+            where: { reportId },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        if (exercises.length === 0) {
+            return res.status(404).json({ success: false, error: 'No exercises found for this report' });
+        }
+
+        // ── Score answers ─────────────────────────────────────────────────────
+        let correct = 0;
+        const scoredAnswers = exercises.map(ex => {
+            const userAnswer = answers.find(a => a.questionId === ex.id)?.selectedOption ?? '';
+            const isCorrect = userAnswer.trim() === ex.correctAnswer.trim();
+            if (isCorrect) correct++;
+            return {
+                questionId: ex.id,
+                type: ex.type,
+                stem: ex.question,
+                options: Array.isArray(ex.options) ? ex.options : [],
+                correctAnswer: ex.correctAnswer,
+                userAnswer,
+                isCorrect,
+                explanation: ex.explanation ?? null,
+            };
+        });
+
+        const total = exercises.length;
+        const retentionScore = Math.round((correct / total) * 100);
+
+        // ── Speed category (WPM bands) ────────────────────────────────────────
+        const speedCategory =
+            wpm < 250 ? 'Beginner' :
+                wpm < 400 ? 'Developing' :
+                    wpm < 550 ? 'Proficient' :
+                        wpm < 700 ? 'Advanced' : 'Elite';
+
+        // ── Letter grade from retention ───────────────────────────────────────
+        const grade =
+            retentionScore >= 90 ? 'A+' :
+                retentionScore >= 80 ? 'A' :
+                    retentionScore >= 70 ? 'B' :
+                        retentionScore >= 60 ? 'C' :
+                            retentionScore >= 50 ? 'D' : 'F';
+
+        // ── Actionable feedback ───────────────────────────────────────────────
+        const feedback: string[] = [];
+
+        // Comprehension feedback
+        if (retentionScore >= 80) {
+            feedback.push('Excellent comprehension — your retention is well above the average reader. Challenge yourself with higher WPM on your next session.');
+        } else if (retentionScore >= 60) {
+            feedback.push('Good comprehension. Review the highlighted missed questions; understanding patterns in errors is the fastest route to improvement.');
+        } else {
+            feedback.push('Your comprehension needs attention. Try reducing your WPM by 50–100 to let the content sink in before pushing speed.');
+        }
+
+        // Speed feedback
+        if (wpm >= 600) {
+            feedback.push('Elite reading pace! The key goal now is sustaining ≥ 80% retention at this speed — that combination is rare and highly valuable.');
+        } else if (wpm >= 400) {
+            feedback.push(`Good pace at ${wpm} WPM. Incrementally target ${wpm + 50} WPM on your next session while keeping retention above 70%.`);
+        } else {
+            feedback.push(`At ${wpm} WPM you have significant room to grow. Increase by 25–50 WPM per session with deliberate practice.`);
+        }
+
+        // Ideal WPM suggestion (push gently if doing well, pull back if not)
+        const idealWpmSuggestion =
+            retentionScore >= 70
+                ? Math.min(wpm + 50, 800)
+                : Math.max(wpm - 50, 200);
+
+        // ── Efficiency score (retention weighted by speed) ────────────────────
+        // Normalise WPM to 0–100 scale (200 = 0, 800 = 100)
+        const speedScore = Math.round(Math.min(Math.max((wpm - 200) / 6, 0), 100));
+        const efficiencyScore = Math.round((retentionScore * 0.6) + (speedScore * 0.4));
+
+        return res.json({
+            success: true,
+            data: {
+                retentionScore,
+                wpm,
+                readingTimeSeconds,
+                correct,
+                total,
+                grade,
+                speedCategory,
+                speedScore,
+                efficiencyScore,
+                feedback,
+                idealWpmSuggestion,
+                scoredAnswers,
+            },
+        });
+    } catch (error) {
+        console.error('Error evaluating speed reading session:', error);
+        return res.status(500).json({ success: false, error: 'Failed to evaluate session' });
+    }
+};
