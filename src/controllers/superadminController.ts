@@ -42,13 +42,34 @@ export async function getAllUsers(req: AuthRequest, res: Response) {
                 skip,
                 take: limitNum,
                 orderBy: { createdAt: 'desc' },
-                select: { id: true, name: true, email: true, role: true, createdAt: true, profileImage: true },
+                select: {
+                    id: true, name: true, email: true, role: true, createdAt: true, profileImage: true,
+                    institute_students: { select: { institutes: { select: { id: true, name: true } } } },
+                    institute_instructors: { select: { institutes: { select: { id: true, name: true } } } },
+                    institute_admins: { select: { institutes: { select: { id: true, name: true } } } },
+                    institute_owners: { select: { institutes: { select: { id: true, name: true } } } },
+                },
             }),
             prisma.user.count({ where }),
         ]);
 
+        const data = users.map((u) => {
+            const inst =
+                u.institute_students?.institutes ??
+                u.institute_instructors?.institutes ??
+                u.institute_admins?.institutes ??
+                u.institute_owners?.institutes ??
+                null;
+            return {
+                id: u.id, name: u.name, email: u.email, role: u.role,
+                createdAt: u.createdAt, profileImage: u.profileImage,
+                instituteId: inst?.id ?? null,
+                instituteName: inst?.name ?? null,
+            };
+        });
+
         return res.json({
-            data: users,
+            data,
             meta: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) },
         });
     } catch (err) {
