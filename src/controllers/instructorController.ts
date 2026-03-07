@@ -1106,3 +1106,63 @@ export async function removeCourseThumbnail(req: AuthRequest, res: Response) {
         res.status(500).json({ message: error.message || 'Internal server error' });
     }
 }
+
+// ============================================================================
+// STUDENT PROGRESS APIs
+// ============================================================================
+
+/**
+ * Get student reading assessment history for an instructor
+ * GET /api/instructor/students/:studentId/reading-history
+ */
+export async function getStudentReadingHistory(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { studentId } = req.params;
+
+        // 1. Verify the instructor is logged in and gets their profile
+        const instructor = await prisma.institute_instructors.findUnique({
+            where: { user_id: appUserId }
+        });
+
+        if (!instructor) {
+            return res.status(403).json({ message: 'Instructor profile not found' });
+        }
+
+        // 2. Verify the student belongs to one of the instructor's batches
+        const instructorBatches = await prisma.ielts_batch_instructors.findMany({
+            where: { user_id: appUserId },
+            select: { batch_id: true }
+        });
+
+        const batchIds = instructorBatches.map(b => b.batch_id);
+
+        const studentInBatch = await prisma.ielts_batch_students.findFirst({
+            where: {
+                user_id: studentId,
+                batch_id: { in: batchIds }
+            }
+        });
+
+        if (!studentInBatch) {
+            return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
+        }
+
+        // 3. Fetch the student's reading assessment history
+        const history = await prisma.readingAssessmentHistory.findMany({
+            where: { userId: studentId },
+            orderBy: { createdAt: 'desc' },
+            take: 50
+        });
+
+        res.json({
+            success: true,
+            data: history
+        });
+
+    } catch (error) {
+        console.error('getStudentReadingHistory error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+}
+

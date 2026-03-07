@@ -67,5 +67,8 @@ router.delete('/courses/:id/thumbnail', instructorController.removeCourseThumbna
 // Batch view — read only
 router.get('/batches', getInstructorBatches);
 
+// Student Progress
+router.get('/students/:studentId/reading-history', instructorController.getStudentReadingHistory);
+
 export default router;
 
