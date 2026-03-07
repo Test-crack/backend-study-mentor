@@ -16,6 +16,7 @@ import voiceLabRoutes from './routes/voiceLabRoutes';
 import superadminRoutes from './routes/superadminRoutes';
 import instituteOwnerRoutes from './routes/instituteOwnerRoutes';
 import instituteAdminRoutes from './routes/instituteAdminRoutes';
+import studentRoutes from './routes/studentRoutes';
 import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
@@ -86,6 +87,7 @@ app.use('/api/voice-lab', voiceLabRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/institute-owner', instituteOwnerRoutes);
 app.use('/api/institute-admin', instituteAdminRoutes);
+app.use('/api/student', studentRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {

@@ -5,6 +5,7 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import * as instructorController from '../controllers/instructorController';
+import { getInstructorBatches } from '../controllers/batchController';
 
 import multer from 'multer';
 import path from 'path';
@@ -62,6 +63,9 @@ router.delete('/courses/:courseId/modules/:moduleId/content/:contentId', instruc
 // Thumbnail management routes
 router.put('/courses/:id/thumbnail', upload.single('thumbnail'), instructorController.uploadCourseThumbnail);
 router.delete('/courses/:id/thumbnail', instructorController.removeCourseThumbnail);
+
+// Batch view — read only
+router.get('/batches', getInstructorBatches);
 
 export default router;
 
