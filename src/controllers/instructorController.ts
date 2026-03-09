@@ -1148,16 +1148,51 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
             return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
         }
 
-        // 3. Fetch the student's reading assessment history
-        const history = await prisma.readingAssessmentHistory.findMany({
+        // 3. Fetch the student's reading assessment history from the dynamic IELTS table
+        const history = await prisma.ieltsReadingAssessment.findMany({
             where: { userId: studentId },
             orderBy: { createdAt: 'desc' },
-            take: 50
+            take: 50,
+            include: {
+                Topic: {
+                    select: {
+                        title: true
+                    }
+                }
+            }
+        });
+
+        const formattedData = history.map(item => {
+            const pass1Counts = (item.pass1Data as any)?.fillerCounts || {};
+            const pass2Counts = (item.pass2Data as any)?.fillerCounts || {};
+            const combined: Record<string, number> = { ...pass1Counts };
+            for (const [word, count] of Object.entries(pass2Counts)) {
+                combined[word] = (combined[word] || 0) + (count as number);
+            }
+            const frequentFillers = Object.entries(combined)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 3)
+                .map(([word, count]) => ({ word, count }));
+
+            return {
+                id: item.id,
+                topicId: item.topicId,
+                topicTitle: (item as any).Topic?.title || item.topicId,
+                bandLevel: item.band || 'All',
+                fluencyScore: item.fluencyScore,
+                weightedWpm: item.weightedWpm,
+                keywordsHit: item.keywordsHit,
+                totalKeywords: item.totalKeywords,
+                pass1Data: item.pass1Data,
+                pass2Data: item.pass2Data,
+                frequentFillers: frequentFillers,
+                createdAt: item.createdAt,
+            };
         });
 
         res.json({
             success: true,
-            data: history
+            data: formattedData
         });
 
     } catch (error) {

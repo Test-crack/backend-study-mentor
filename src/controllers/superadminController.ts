@@ -223,9 +223,9 @@ export async function createInstitute(req: AuthRequest, res: Response) {
     }
 
     try {
-        // Pre-check for existing user
+        // Pre-check for existing user and role clash
         let dbUser = await prisma.user.findUnique({ where: { email: ownerEmail } });
-        if (dbUser) {
+        if (dbUser && dbUser.role !== UserRoleType.INSTITUTE_OWNER) {
             return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
         }
 
@@ -248,15 +248,27 @@ export async function createInstitute(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Create User row in our DB
-        dbUser = await prisma.user.create({
-            data: {
-                email: ownerEmail,
-                name: ownerName,
-                role: UserRoleType.INSTITUTE_OWNER,
-                supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-            },
-        });
+        // 2. Upsert User row in our DB
+        if (!dbUser) {
+            dbUser = await prisma.user.create({
+                data: {
+                    email: ownerEmail,
+                    name: ownerName,
+                    role: UserRoleType.INSTITUTE_OWNER,
+                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+                },
+            });
+        } else {
+            // Update role if existing user
+            dbUser = await prisma.user.update({
+                where: { id: dbUser.id },
+                data: {
+                    role: UserRoleType.INSTITUTE_OWNER,
+                    name: dbUser.name ?? ownerName,
+                    ...(supabaseUserId ? { supabaseuserid: supabaseUserId } : {}),
+                },
+            });
+        }
 
         // 3. Create the institute
         const institute = await prisma.institutes.create({

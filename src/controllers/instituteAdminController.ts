@@ -94,8 +94,15 @@ export async function addStudent(req: AuthRequest, res: Response) {
         // Check if already a student of this institute
         let dbUser = await prisma.user.findUnique({ where: { email: studentEmail } });
         if (dbUser) {
-            // Unconditionally reject any existing email from being added
-            return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
+            if (dbUser.role !== UserRoleType.STUDENT) {
+                return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
+            }
+            const alreadyEnrolled = await prisma.institute_students.findFirst({
+                where: { user_id: dbUser.id, institute_id: instituteId },
+            });
+            if (alreadyEnrolled) {
+                return res.status(409).json({ error: 'This student is already enrolled in your institute.' });
+            }
         }
 
         // 1. Send Supabase invite email
@@ -113,15 +120,17 @@ export async function addStudent(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Create User row
-        dbUser = await prisma.user.create({
-            data: {
-                email: studentEmail,
-                name: studentName,
-                role: UserRoleType.STUDENT,
-                supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-            },
-        });
+        // 2. Upsert User row
+        if (!dbUser) {
+            dbUser = await prisma.user.create({
+                data: {
+                    email: studentEmail,
+                    name: studentName,
+                    role: UserRoleType.STUDENT,
+                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+                },
+            });
+        }
 
         // 3. Upsert institute_students row
         await prisma.institute_students.upsert({
@@ -273,8 +282,15 @@ export async function addTutor(req: AuthRequest, res: Response) {
 
         let dbUser = await prisma.user.findUnique({ where: { email: tutorEmail } });
         if (dbUser) {
-            // Unconditionally reject any existing email from being added
-            return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
+            if (dbUser.role !== UserRoleType.INSTRUCTOR) {
+                return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
+            }
+            const alreadyEnrolled = await prisma.institute_instructors.findFirst({
+                where: { user_id: dbUser.id, institute_id: instituteId },
+            });
+            if (alreadyEnrolled) {
+                return res.status(409).json({ error: 'This tutor is already onboarded in your institute.' });
+            }
         }
 
         // 1. Send Supabase invite email
@@ -292,15 +308,17 @@ export async function addTutor(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Create User row
-        dbUser = await prisma.user.create({
-            data: {
-                email: tutorEmail,
-                name: tutorName,
-                role: UserRoleType.INSTRUCTOR,
-                supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-            },
-        });
+        // 2. Upsert User row
+        if (!dbUser) {
+            dbUser = await prisma.user.create({
+                data: {
+                    email: tutorEmail,
+                    name: tutorName,
+                    role: UserRoleType.INSTRUCTOR,
+                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+                },
+            });
+        }
 
         // 3. Upsert institute_instructors row
         await prisma.institute_instructors.upsert({

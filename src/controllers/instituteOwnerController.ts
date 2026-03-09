@@ -72,9 +72,9 @@ export async function addAdmin(req: AuthRequest, res: Response) {
             return res.status(403).json({ error: 'You do not own any institute.' });
         }
 
-        // Pre-check for existing user
+        // Pre-check for existing user and role clash
         let dbUser = await prisma.user.findUnique({ where: { email: adminEmail } });
-        if (dbUser) {
+        if (dbUser && dbUser.role !== UserRoleType.INSTITUTE_ADMIN) {
             return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
         }
 
@@ -93,15 +93,26 @@ export async function addAdmin(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Create User row
-        dbUser = await prisma.user.create({
-            data: {
-                email: adminEmail,
-                name: adminName,
-                role: UserRoleType.INSTITUTE_ADMIN,
-                supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-            },
-        });
+        // 2. Upsert User row
+        if (!dbUser) {
+            dbUser = await prisma.user.create({
+                data: {
+                    email: adminEmail,
+                    name: adminName,
+                    role: UserRoleType.INSTITUTE_ADMIN,
+                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+                },
+            });
+        } else {
+            dbUser = await prisma.user.update({
+                where: { id: dbUser.id },
+                data: {
+                    role: UserRoleType.INSTITUTE_ADMIN,
+                    name: dbUser.name ?? adminName,
+                    ...(supabaseUserId ? { supabaseuserid: supabaseUserId } : {}),
+                },
+            });
+        }
 
         // 3. Upsert institute_admins row
         await prisma.institute_admins.upsert({
