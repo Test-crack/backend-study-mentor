@@ -92,14 +92,10 @@ export async function addStudent(req: AuthRequest, res: Response) {
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
         // Check if already a student of this institute
-        const existing = await prisma.user.findUnique({ where: { email: studentEmail } });
-        if (existing) {
-            const alreadyEnrolled = await prisma.institute_students.findFirst({
-                where: { user_id: existing.id, institute_id: instituteId },
-            });
-            if (alreadyEnrolled) {
-                return res.status(409).json({ error: 'This student is already enrolled in your institute.' });
-            }
+        let dbUser = await prisma.user.findUnique({ where: { email: studentEmail } });
+        if (dbUser) {
+            // Unconditionally reject any existing email from being added
+            return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
         }
 
         // 1. Send Supabase invite email
@@ -117,18 +113,15 @@ export async function addStudent(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Upsert User row
-        let dbUser = await prisma.user.findUnique({ where: { email: studentEmail } });
-        if (!dbUser) {
-            dbUser = await prisma.user.create({
-                data: {
-                    email: studentEmail,
-                    name: studentName,
-                    role: UserRoleType.STUDENT,
-                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-                },
-            });
-        }
+        // 2. Create User row
+        dbUser = await prisma.user.create({
+            data: {
+                email: studentEmail,
+                name: studentName,
+                role: UserRoleType.STUDENT,
+                supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+            },
+        });
 
         // 3. Upsert institute_students row
         await prisma.institute_students.upsert({
@@ -278,14 +271,10 @@ export async function addTutor(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const existing = await prisma.user.findUnique({ where: { email: tutorEmail } });
-        if (existing) {
-            const alreadyEnrolled = await prisma.institute_instructors.findFirst({
-                where: { user_id: existing.id, institute_id: instituteId },
-            });
-            if (alreadyEnrolled) {
-                return res.status(409).json({ error: 'This tutor is already onboarded in your institute.' });
-            }
+        let dbUser = await prisma.user.findUnique({ where: { email: tutorEmail } });
+        if (dbUser) {
+            // Unconditionally reject any existing email from being added
+            return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
         }
 
         // 1. Send Supabase invite email
@@ -303,26 +292,15 @@ export async function addTutor(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Upsert User row
-        let dbUser = await prisma.user.findUnique({ where: { email: tutorEmail } });
-        if (!dbUser) {
-            dbUser = await prisma.user.create({
-                data: {
-                    email: tutorEmail,
-                    name: tutorName,
-                    role: UserRoleType.INSTRUCTOR,
-                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-                },
-            });
-        } else {
-            // Upgrade to INSTRUCTOR if they were a student
-            if (dbUser.role === UserRoleType.STUDENT) {
-                dbUser = await prisma.user.update({
-                    where: { id: dbUser.id },
-                    data: { role: UserRoleType.INSTRUCTOR },
-                });
-            }
-        }
+        // 2. Create User row
+        dbUser = await prisma.user.create({
+            data: {
+                email: tutorEmail,
+                name: tutorName,
+                role: UserRoleType.INSTRUCTOR,
+                supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+            },
+        });
 
         // 3. Upsert institute_instructors row
         await prisma.institute_instructors.upsert({
