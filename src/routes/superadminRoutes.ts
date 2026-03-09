@@ -24,5 +24,6 @@ router.get('/users', superadminController.getAllUsers);
 router.get('/institutes', superadminController.getInstitutes);
 router.post('/institutes', superadminController.createInstitute);
 router.patch('/institutes/:id/status', superadminController.toggleInstituteStatus);
+router.patch('/institutes/:id', superadminController.updateInstitute);
 
 export default router;

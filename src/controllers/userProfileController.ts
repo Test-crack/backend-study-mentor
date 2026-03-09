@@ -26,6 +26,24 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
         profileImage: true,
         createdAt: true,
         updatedAt: true,
+        institute_owners: {
+          select: {
+            institutes: {
+              select: {
+                is_active: true
+              }
+            }
+          }
+        },
+        institute_admins: {
+          select: {
+            institutes: {
+              select: {
+                is_active: true
+              }
+            }
+          }
+        },
         Instructor: {
           select: {
             id: true,
@@ -47,7 +65,17 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
       delete (user as any).Instructor;
     }
 
-    res.json({ user });
+    // Determine instituteIsActive for owners/admins
+    let instituteIsActive = true; // Default true for Roles without institutes (Student/Superadmin)
+    if (user.role === 'INSTITUTE_OWNER' && user.institute_owners?.institutes) {
+      instituteIsActive = user.institute_owners.institutes.is_active;
+    } else if (user.role === 'INSTITUTE_ADMIN' && user.institute_admins?.institutes) {
+      instituteIsActive = user.institute_admins.institutes.is_active;
+    }
+    delete (user as any).institute_owners;
+    delete (user as any).institute_admins;
+
+    res.json({ user: { ...user, instituteIsActive } });
   } catch (error) {
     console.error('[getUserProfile] Error:', error);
     res.status(500).json({ error: 'Failed to fetch user profile' });

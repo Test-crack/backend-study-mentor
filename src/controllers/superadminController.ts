@@ -169,6 +169,39 @@ export async function toggleInstituteStatus(req: AuthRequest, res: Response) {
     }
 }
 
+export async function updateInstitute(req: AuthRequest, res: Response) {
+    const { id } = req.params;
+    const { name, address, logoUrl } = req.body as { name?: string; address?: string; logoUrl?: string };
+
+    try {
+        const existing = await prisma.institutes.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Institute not found.' });
+        }
+
+        const updated = await prisma.institutes.update({
+            where: { id },
+            data: {
+                ...(name !== undefined ? { name: name.trim() } : {}),
+                ...(address !== undefined ? { address: address.trim() || null } : {}),
+                ...(logoUrl !== undefined ? { logo_url: logoUrl.trim() || null } : {}),
+            },
+        });
+
+        return res.json({
+            data: {
+                id: updated.id,
+                name: updated.name,
+                address: updated.address,
+                logoUrl: updated.logo_url
+            },
+        });
+    } catch (err: any) {
+        console.error('[SuperAdmin] updateInstitute error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to update institute details' });
+    }
+}
+
 // ─── POST /api/superadmin/institutes ─────────────────────────────────────────
 // Body: { instituteName, address?, ownerName, ownerEmail }
 // Flow:
