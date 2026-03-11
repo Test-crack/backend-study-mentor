@@ -21,4 +21,8 @@ router.get('/admins', instituteOwnerController.getAdmins);
 router.post('/admins', instituteOwnerController.addAdmin);
 router.delete('/admins/:userId', instituteOwnerController.removeAdmin);
 
+// Batches
+// GET    /api/institute-owner/batches/:batchId/analytics
+router.get('/batches/:batchId/analytics', instituteOwnerController.getBatchAnalytics);
+
 export default router;
