@@ -22,7 +22,7 @@ export const getTopics = async (req: Request, res: Response) => {
         }
 
         const [topics, total] = await Promise.all([
-            prisma.ieltsReadingPractice.findMany({
+            prisma.ieltsSpeakingPractice.findMany({
                 where,
                 select: {
                     id: true,
@@ -39,7 +39,7 @@ export const getTopics = async (req: Request, res: Response) => {
                 skip,
                 take: limitNum
             }),
-            prisma.ieltsReadingPractice.count({ where })
+            prisma.ieltsSpeakingPractice.count({ where })
         ]);
 
         res.json({
@@ -69,7 +69,7 @@ export const getTopicById = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
 
-        const topic = await prisma.ieltsReadingPractice.findUnique({
+        const topic = await prisma.ieltsSpeakingPractice.findUnique({
             where: { id }
         });
 
@@ -146,8 +146,8 @@ export const saveAssessment = async (req: Request, res: Response) => {
         if (weightedWpm < 100) fluencyScore -= 10;
         if (weightedWpm > 180) fluencyScore -= 5;
 
-        // 4. Persistence
-        const assessment = await prisma.ieltsReadingAssessment.create({
+        // 4. Persistence — saves to IeltsSpeakingAssessment (renamed from IeltsReadingAssessment)
+        const assessment = await prisma.ieltsSpeakingAssessment.create({
             data: {
                 userId: finalUserId,
                 topicId,

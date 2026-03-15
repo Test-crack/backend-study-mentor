@@ -6,6 +6,7 @@ import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import * as instructorController from '../controllers/instructorController';
 import { getInstructorBatches } from '../controllers/batchController';
+import { getBatchReadingAnalytics } from '../controllers/readingPracticeController';
 
 import multer from 'multer';
 import path from 'path';
@@ -67,8 +68,10 @@ router.delete('/courses/:id/thumbnail', instructorController.removeCourseThumbna
 // Batch view — read only
 router.get('/batches', getInstructorBatches);
 router.get('/batches/:batchId/analytics', instructorController.getBatchAnalytics);
+router.get('/batches/:batchId/reading-analytics', getBatchReadingAnalytics);
 
 // Student Progress
+router.get('/students/:studentId/speaking-history', instructorController.getStudentSpeakingHistory);
 router.get('/students/:studentId/reading-history', instructorController.getStudentReadingHistory);
 
 export default router;

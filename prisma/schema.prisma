@@ -217,6 +217,7 @@ model User {
   role                     UserRoleType               @default(STUDENT)
   profileImage             String?
   CourseOrder              CourseOrder[]
+  IeltsSpeakingAssessment  IeltsSpeakingAssessment[]
   IeltsReadingAssessment   IeltsReadingAssessment[]
   Instructor               Instructor?
   ReadingAssessmentHistory ReadingAssessmentHistory[]
@@ -360,43 +361,6 @@ model CourseOrder {
 
   @@index([userId])
   @@index([status])
-}
-
-model IeltsReadingPractice {
-  id                     String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  title                  String                   @db.VarChar(500)
-  type                   String                   @db.VarChar(100)
-  words                  Int
-  phrases                Int
-  band                   String                   @db.VarChar(50)
-  modelAnswer            String
-  keywords               String[]                 @default([])
-  keywordMap             Json?
-  tips                   String[]                 @default([])
-  createdAt              DateTime                 @default(now()) @db.Timestamptz(6)
-  updatedAt              DateTime                 @default(now()) @db.Timestamptz(6)
-  IeltsReadingAssessment IeltsReadingAssessment[]
-
-  @@index([band], map: "idx_ielts_reading_practice_band")
-}
-
-model IeltsReadingAssessment {
-  id            String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId        String               @db.Uuid
-  topicId       String               @db.Uuid
-  band          String               @db.VarChar(50)
-  weightedWpm   Float
-  fluencyScore  Float
-  keywordsHit   Int
-  totalKeywords Int
-  pass1Data     Json                 @db.Json
-  pass2Data     Json                 @db.Json
-  createdAt     DateTime             @default(now()) @db.Timestamptz(6)
-  Topic         IeltsReadingPractice @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  User          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([topicId])
 }
 
 model IeltsVoicePrompt {
@@ -559,6 +523,83 @@ model ielts_batches {
 
   @@index([institute_id], map: "idx_ielts_batches_institute")
   @@index([status], map: "idx_ielts_batches_status")
+}
+
+model IeltsSpeakingAssessment {
+  id                    String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId                String                @db.Uuid
+  topicId               String                @db.Uuid
+  band                  String                @db.VarChar(50)
+  weightedWpm           Float
+  fluencyScore          Float
+  keywordsHit           Int
+  totalKeywords         Int
+  pass1Data             Json                  @db.Json
+  pass2Data             Json                  @db.Json
+  createdAt             DateTime              @default(now()) @db.Timestamptz(6)
+  IeltsSpeakingPractice IeltsSpeakingPractice @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  User                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([topicId])
+  @@index([userId])
+}
+
+model IeltsSpeakingPractice {
+  id                      String                    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title                   String                    @db.VarChar(500)
+  type                    String                    @db.VarChar(100)
+  words                   Int
+  phrases                 Int
+  band                    String                    @db.VarChar(50)
+  modelAnswer             String
+  keywords                String[]                  @default([])
+  keywordMap              Json?
+  tips                    String[]                  @default([])
+  createdAt               DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                  @default(now()) @db.Timestamptz(6)
+  IeltsSpeakingAssessment IeltsSpeakingAssessment[]
+
+  @@index([band])
+}
+
+/// NEW — stores each completed Reading Practice session.
+/// Source: ReadingPractice.tsx → POST /api/reading-practice/submit
+/// DB table: "IeltsReadingAssessment" (freed up after speaking table rename)
+model IeltsReadingAssessment {
+  id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId             String   @db.Uuid
+
+  // Passage identity (links to IeltsSpeedReadingReport.id)
+  reportId           String   @db.VarChar(100)
+  passageTitle       String   @db.VarChar(500)
+  category           String   @db.VarChar(100)
+  wordCount          Int
+
+  // Performance metrics
+  readingTimeSeconds Int
+  wpm                Float
+  accuracy           Float
+  retentionScore     Float
+  efficiencyScore    Float
+  speedLearningScore Float
+  grade              String   @db.VarChar(5)    // A+, A, B, C, D, F
+  speedCategory      String?  @db.VarChar(50)
+
+  // Q&A summary
+  totalQuestions     Int
+  correctAnswers     Int
+
+  // Raw data blobs
+  scoredAnswers      Json?
+  feedbackTips       String[] @default([])
+
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+
+  User               User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, createdAt])
+  @@index([userId, category])
+  @@index([userId, grade])
 }
 
 enum ContentType {

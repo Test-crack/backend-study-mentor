@@ -1115,50 +1115,44 @@ export async function removeCourseThumbnail(req: AuthRequest, res: Response) {
  * Get student reading assessment history for an instructor
  * GET /api/instructor/students/:studentId/reading-history
  */
-export async function getStudentReadingHistory(req: AuthRequest, res: Response) {
+/**
+ * Get student SPEAKING history (from IeltsSpeakingAssessment, previously IeltsReadingAssessment)
+ * GET /api/instructor/students/:studentId/speaking-history
+ */
+export async function getStudentSpeakingHistory(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
         const { studentId } = req.params;
 
-        // 1. Verify the instructor is logged in and gets their profile
+        // 1. Verify instructor belongs to an institute
         const instructor = await prisma.institute_instructors.findUnique({
             where: { user_id: appUserId }
         });
-
         if (!instructor) {
             return res.status(403).json({ message: 'Instructor profile not found' });
         }
 
-        // 2. Verify the student belongs to one of the instructor's batches
+        // 2. Verify student is in one of the instructor's batches
         const instructorBatches = await prisma.ielts_batch_instructors.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
-
         const batchIds = instructorBatches.map(b => b.batch_id);
 
         const studentInBatch = await prisma.ielts_batch_students.findFirst({
-            where: {
-                user_id: studentId,
-                batch_id: { in: batchIds }
-            }
+            where: { user_id: studentId, batch_id: { in: batchIds } }
         });
-
         if (!studentInBatch) {
             return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
         }
 
-        // 3. Fetch the student's reading assessment history from the dynamic IELTS table
-        const history = await prisma.ieltsReadingAssessment.findMany({
+        // 3. Fetch from IeltsSpeakingAssessment (the renamed table)
+        const history = await prisma.ieltsSpeakingAssessment.findMany({
             where: { userId: studentId },
             orderBy: { createdAt: 'desc' },
             take: 50,
             include: {
-                Topic: {
-                    select: {
-                        title: true
-                    }
-                }
+                IeltsSpeakingPractice: { select: { title: true } }
             }
         });
 
@@ -1177,7 +1171,7 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
             return {
                 id: item.id,
                 topicId: item.topicId,
-                topicTitle: (item as any).Topic?.title || item.topicId,
+                topicTitle: item.IeltsSpeakingPractice?.title || item.topicId,
                 bandLevel: item.band || 'All',
                 fluencyScore: item.fluencyScore,
                 weightedWpm: item.weightedWpm,
@@ -1185,16 +1179,90 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
                 totalKeywords: item.totalKeywords,
                 pass1Data: item.pass1Data,
                 pass2Data: item.pass2Data,
-                frequentFillers: frequentFillers,
+                frequentFillers,
                 createdAt: item.createdAt,
             };
         });
 
+        const avgFluency = formattedData.length
+            ? formattedData.reduce((a, b) => a + b.fluencyScore, 0) / formattedData.length : 0;
+        const avgWpm = formattedData.length
+            ? formattedData.reduce((a, b) => a + b.weightedWpm, 0) / formattedData.length : 0;
+        const bestScore = formattedData.length
+            ? Math.max(...formattedData.map(s => s.fluencyScore)) : 0;
+
         res.json({
             success: true,
-            data: formattedData
+            data: {
+                sessions: formattedData,
+                summary: {
+                    totalSessions: formattedData.length,
+                    avgFluency: parseFloat(avgFluency.toFixed(1)),
+                    avgWpm: parseFloat(avgWpm.toFixed(0)),
+                    bestScore: parseFloat(bestScore.toFixed(1)),
+                },
+            }
+        });
+    } catch (error) {
+        console.error('getStudentSpeakingHistory error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+}
+
+/**
+ * Get student READING PRACTICE history (from new IeltsReadingAssessment table)
+ * GET /api/instructor/students/:studentId/reading-history
+ */
+export async function getStudentReadingHistory(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { studentId } = req.params;
+
+        // 1. Verify instructor
+        const instructor = await prisma.institute_instructors.findUnique({
+            where: { user_id: appUserId }
+        });
+        if (!instructor) {
+            return res.status(403).json({ message: 'Instructor profile not found' });
+        }
+
+        // 2. Verify student is in one of the instructor's batches
+        const instructorBatches = await prisma.ielts_batch_instructors.findMany({
+            where: { user_id: appUserId },
+            select: { batch_id: true }
+        });
+        const batchIds = instructorBatches.map(b => b.batch_id);
+
+        const studentInBatch = await prisma.ielts_batch_students.findFirst({
+            where: { user_id: studentId, batch_id: { in: batchIds } }
+        });
+        if (!studentInBatch) {
+            return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
+        }
+
+        // 3. Fetch from IeltsReadingAssessment (NEW table)
+        const sessions = await prisma.ieltsReadingAssessment.findMany({
+            where: { userId: studentId },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
         });
 
+        const avgWpm = sessions.length ? sessions.reduce((a, b) => a + b.wpm, 0) / sessions.length : 0;
+        const avgAccuracy = sessions.length ? sessions.reduce((a, b) => a + b.accuracy, 0) / sessions.length : 0;
+        const bestScore = sessions.length ? Math.max(...sessions.map(s => s.speedLearningScore)) : 0;
+
+        res.json({
+            success: true,
+            data: {
+                sessions,
+                summary: {
+                    totalSessions: sessions.length,
+                    avgWpm: parseFloat(avgWpm.toFixed(0)),
+                    avgAccuracy: parseFloat(avgAccuracy.toFixed(1)),
+                    bestScore: parseFloat(bestScore.toFixed(1)),
+                },
+            }
+        });
     } catch (error) {
         console.error('getStudentReadingHistory error:', error);
         res.status(500).json({ success: false, error: 'Internal server error' });
@@ -1233,10 +1301,9 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             return res.status(404).json({ error: 'Batch not found.' });
         }
 
-        // Fetch reading assessments for all students in this batch
         const studentIds = batch.ielts_batch_students.map(bs => bs.User.id);
-
-        const assessments = await prisma.ieltsReadingAssessment.findMany({
+        // Fetch SPEAKING assessments (from IeltsSpeakingAssessment) for batch trends
+        const assessments = await prisma.ieltsSpeakingAssessment.findMany({
             where: { userId: { in: studentIds } },
             orderBy: { createdAt: 'asc' }
         });
