@@ -14,11 +14,11 @@ export async function getSpeakingHistory(req: AuthRequest, res: Response) {
             return res.status(401).json({ success: false, error: 'Unauthorized user.' });
         }
 
-        const history = await prisma.ieltsReadingAssessment.findMany({
+        const history = await prisma.ieltsSpeakingAssessment.findMany({
             where: { userId: appUserId },
             orderBy: { createdAt: 'desc' },
             include: {
-                Topic: {
+                IeltsSpeakingPractice: {
                     select: {
                         title: true
                     }
@@ -43,7 +43,7 @@ export async function getSpeakingHistory(req: AuthRequest, res: Response) {
             return {
                 id: item.id,
                 topicId: item.topicId,
-                topicTitle: (item as any).Topic?.title || item.topicId,
+                topicTitle: item.IeltsSpeakingPractice?.title || item.topicId,
                 bandLevel: item.band || 'All',
                 fluencyScore: item.fluencyScore,
                 weightedWpm: item.weightedWpm,
