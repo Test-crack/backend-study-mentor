@@ -1394,9 +1394,16 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             orderBy: { createdAt: 'asc' }
         });
 
+        // Fetch WRITING assessments for batch trends
+        const writingAssessments = await prisma.ieltsWritingAssessment.findMany({
+            where: { userId: { in: studentIds } },
+            orderBy: { createdAt: 'asc' }
+        });
+
         // Use the exact same chunking logic for demo trends
         let speakingTrends: any[] = [];
         let readingTrends: any[] = [];
+        let writingTrends: any[] = [];
         let studentComparison: any[] = [];
 
         if (assessments.length > 0) {
@@ -1413,7 +1420,24 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
                 speakingTrends.push({ date: dateLabel, fluency: parseFloat(avgFluency.toFixed(2)), confidence: parseFloat((avgFluency + 5).toFixed(2)) });
                 readingTrends.push({ date: dateLabel, wpm: parseFloat(avgWpm.toFixed(2)), accuracy: parseFloat((Math.min(100, avgWpm * 0.4)).toFixed(2)) });
             }
-        } else {
+        }
+
+        if (writingAssessments.length > 0) {
+            const chunkSizeWriting = Math.max(1, Math.floor(writingAssessments.length / 6));
+            for (let i = 0; i < 6; i++) {
+                const chunk = writingAssessments.slice(i * chunkSizeWriting, (i + 1) * chunkSizeWriting);
+                if (chunk.length === 0) continue;
+
+                const avgWriting = chunk.reduce((sum, a: any) => {
+                    const num = parseFloat(a.aiBandScore || "0");
+                    return sum + (isNaN(num) ? 0 : num);
+                }, 0) / chunk.length;
+
+                const dateLabel = new Date(chunk[0].createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                writingTrends.push({ date: dateLabel, score: parseFloat(avgWriting.toFixed(1)) });
+            }
+        }
+        if (speakingTrends.length === 0 && readingTrends.length === 0) {
             // Fallback dummy data if no assessments found yet
             speakingTrends = [
                 { date: 'Week 1', fluency: 40, confidence: 45 },
@@ -1431,21 +1455,35 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
                 { date: 'Week 5', wpm: 170, accuracy: 72 },
                 { date: 'Week 6', wpm: 185, accuracy: 80 },
             ];
+            writingTrends = [
+                { date: 'Week 1', score: 5.5 },
+                { date: 'Week 2', score: 6.0 },
+                { date: 'Week 3', score: 6.0 }, 
+                { date: 'Week 4', score: 6.5 },
+                { date: 'Week 5', score: 6.5 }, 
+                { date: 'Week 6', score: 7.0 },
+            ];
         }
 
         // Calculate student comparison
         for (const bs of batch.ielts_batch_students) {
             const studentAssessments = assessments.filter(a => a.userId === bs.User.id);
-            if (studentAssessments.length > 0) {
-                const latest = studentAssessments[studentAssessments.length - 1];
+            const studentWriting = writingAssessments.filter(a => a.userId === bs.User.id);
+            
+            if (studentAssessments.length > 0 || studentWriting.length > 0) {
+                const latest = studentAssessments.length > 0 ? studentAssessments[studentAssessments.length - 1] : null;
+                const latestWriting = studentWriting.length > 0 ? studentWriting[studentWriting.length - 1] : null;
+                const wScore = latestWriting ? parseFloat(latestWriting.manualBandScore || latestWriting.aiBandScore || "0") : null;
+
                 studentComparison.push({
                     id: bs.User.id,
                     name: bs.User.name || 'Unknown Student',
                     avatar: bs.User.profileImage,
-                    speakingScore: parseFloat((latest.fluencyScore || 0).toFixed(2)),
-                    readingScore: parseFloat((latest.weightedWpm || 0).toFixed(2)),
+                    speakingScore: latest ? parseFloat((latest.fluencyScore || 0).toFixed(2)) : null,
+                    readingScore: latest ? parseFloat((latest.weightedWpm || 0).toFixed(2)) : null,
+                    writingScore: wScore && !isNaN(wScore) ? wScore : null,
                     listeningScore: Math.floor(Math.random() * 30 + 50), // Mocked
-                    overallGrade: latest.band || 'N/A'
+                    overallGrade: latest?.band || 'N/A'
                 });
             } else {
                 studentComparison.push({
@@ -1454,23 +1492,72 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
                     avatar: bs.User.profileImage,
                     speakingScore: null,
                     readingScore: null,
+                    writingScore: null,
                     listeningScore: null,
                     overallGrade: 'N/A'
                 });
             }
         }
 
+        const speakingLeaderboard = studentComparison
+            .filter(s => s.speakingScore !== null)
+            .map(s => {
+                const studentSpeaking = assessments.filter((a: any) => a.userId === s.id);
+                const bestScore = Math.max(...studentSpeaking.map((a: any) => a.fluencyScore || 0), 0);
+                const avgPronunciation = studentSpeaking.length 
+                    ? studentSpeaking.reduce((sum: number, a: any) => sum + (a.pronunciationScore || 0), 0) / studentSpeaking.length 
+                    : 0;
+                
+                return {
+                    studentId: s.id,
+                    name: s.name,
+                    avatar: s.avatar,
+                    avgFluency: s.speakingScore,
+                    avgBand: s.overallGrade,
+                    avgPronunciation: parseFloat(avgPronunciation.toFixed(1)),
+                    bestScore: bestScore > 0 ? parseFloat(bestScore.toFixed(1)) : null,
+                    totalSessions: studentSpeaking.length
+                };
+            })
+            .sort((a, b) => b.avgFluency - a.avgFluency);
+
+        const writingLeaderboard = studentComparison
+            .filter(s => s.writingScore !== null)
+            .map(s => {
+                const studentWriting = writingAssessments.filter((a: any) => a.userId === s.id);
+                const scores = studentWriting.map((a: any) => parseFloat(a.manualBandScore || a.aiBandScore || "0")).filter((n: number) => !isNaN(n));
+                const highestBand = scores.length > 0 ? Math.max(...scores) : 0;
+                const avgWordCount = studentWriting.length
+                    ? Math.round(studentWriting.reduce((sum: number, a: any) => sum + (a.wordCount || 0), 0) / studentWriting.length)
+                    : 0;
+
+                return {
+                    studentId: s.id,
+                    name: s.name,
+                    avatar: s.avatar,
+                    avgBand: Number(s.writingScore).toFixed(1),
+                    avgWordCount,
+                    bestScore: highestBand > 0 ? highestBand.toFixed(1) : null,
+                    totalSessions: studentWriting.length
+                };
+            })
+            .sort((a, b) => parseFloat(b.avgBand) - parseFloat(a.avgBand));
+
         return res.json({
             data: {
                 batchName: batch.name,
                 speakingTrends,
                 readingTrends,
+                writingTrends,
                 listeningTrends: speakingTrends.map(t => ({ date: t.date, score: Math.floor(Math.random() * 20 + 60) })),
                 studentComparison,
+                speakingLeaderboard,
+                writingLeaderboard,
                 summary: {
                     totalStudents: batch.ielts_batch_students.length,
                     avgSpeaking: studentComparison.reduce((sum, s) => sum + (s.speakingScore || 0), 0) / (studentComparison.filter(s => s.speakingScore !== null).length || 1),
                     avgReading: studentComparison.reduce((sum, s) => sum + (s.readingScore || 0), 0) / (studentComparison.filter(s => s.readingScore !== null).length || 1),
+                    avgWriting: studentComparison.reduce((sum, s) => sum + (s.writingScore || 0), 0) / (studentComparison.filter(s => s.writingScore !== null).length || 1),
                     avgListening: studentComparison.reduce((sum, s) => sum + (s.listeningScore || 0), 0) / (studentComparison.filter(s => s.listeningScore !== null).length || 1),
                 }
             }
