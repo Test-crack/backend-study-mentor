@@ -1269,6 +1269,92 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
     }
 }
 
+/**
+ * Get student WRITING PRACTICE history (from new IeltsWritingAssessment table)
+ * GET /api/instructor/students/:studentId/writing-history
+ */
+export async function getStudentWritingHistory(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { studentId } = req.params;
+
+        // 1. Verify instructor
+        const instructor = await prisma.institute_instructors.findUnique({
+            where: { user_id: appUserId }
+        });
+        if (!instructor) {
+            return res.status(403).json({ message: 'Instructor profile not found' });
+        }
+
+        // 2. Verify student is in one of the instructor's batches
+        const instructorBatches = await prisma.ielts_batch_instructors.findMany({
+            where: { user_id: appUserId },
+            select: { batch_id: true }
+        });
+        const batchIds = instructorBatches.map(b => b.batch_id);
+
+        const studentInBatch = await prisma.ielts_batch_students.findFirst({
+            where: { user_id: studentId, batch_id: { in: batchIds } }
+        });
+        if (!studentInBatch) {
+            return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
+        }
+
+        // 3. Fetch from IeltsWritingAssessment (NEW table)
+        const sessions = await prisma.ieltsWritingAssessment.findMany({
+            where: { userId: studentId },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+            include: { IeltsWritingTask: true }
+        });
+
+        const avgScore = sessions.length ? sessions.reduce((acc, curr) => {
+            const num = parseFloat(curr.aiBandScore || "0");
+            return acc + (isNaN(num) ? 0 : num);
+        }, 0) / sessions.length : 0;
+
+        res.json({
+            success: true,
+            data: {
+                sessions,
+                summary: {
+                    totalSessions: sessions.length,
+                    avgScore: parseFloat(avgScore.toFixed(1))
+                },
+            }
+        });
+    } catch (error) {
+        console.error('getStudentWritingHistory error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+}
+
+/**
+ * Instructor manually grades a student's writing assessment
+ * PATCH /api/instructor/writing-assessment/:assessmentId/grade
+ */
+export async function submitManualGradeWriting(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId;
+        const { assessmentId } = req.params;
+        const { bandScore, feedback } = req.body;
+
+        const assessment = await prisma.ieltsWritingAssessment.update({
+            where: { id: assessmentId },
+            data: {
+                manualBandScore: bandScore,
+                manualFeedback: feedback,
+                gradedByInstructorId: appUserId
+            }
+        });
+
+        res.json({ success: true, data: assessment });
+    } catch (error) {
+        console.error('submitManualGradeWriting error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+}
+
 export async function getBatchAnalytics(req: AuthRequest, res: Response) {
     const { batchId } = req.params;
 

@@ -106,6 +106,24 @@ model CourseModule {
   @@index([course_id, order_index], map: "idx_course_module_composite")
 }
 
+model CourseOrder {
+  id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId            String         @db.Uuid
+  courseId          String         @db.Uuid
+  amount            Decimal        @db.Decimal(10, 2)
+  currency          String         @default("INR") @db.VarChar(10)
+  status            PurchaseStatus @default(PENDING)
+  razorpayOrderId   String         @unique @db.VarChar(100)
+  razorpayPaymentId String?        @unique @db.VarChar(100)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @db.Timestamptz(6)
+  Course            Course         @relation(fields: [courseId], references: [id])
+  User              User           @relation(fields: [userId], references: [id])
+
+  @@index([status])
+  @@index([userId])
+}
+
 model Domain {
   id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   name        String    @unique @db.VarChar(100)
@@ -116,6 +134,152 @@ model Domain {
   Course      Course[]
 
   @@index([slug], map: "idx_domain_slug")
+}
+
+model IeltsReadingAssessment {
+  id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId             String   @db.Uuid
+  reportId           String   @db.VarChar(100)
+  passageTitle       String   @db.VarChar(500)
+  category           String   @db.VarChar(100)
+  wordCount          Int
+  readingTimeSeconds Int
+  wpm                Float
+  accuracy           Float
+  retentionScore     Float
+  efficiencyScore    Float
+  speedLearningScore Float
+  grade              String   @db.VarChar(5)
+  speedCategory      String?  @db.VarChar(50)
+  totalQuestions     Int
+  correctAnswers     Int
+  scoredAnswers      Json?
+  feedbackTips       String[] @default([])
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+  User               User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, category], map: "idx_ielts_reading_assessment_user_cat")
+  @@index([userId, createdAt], map: "idx_ielts_reading_assessment_user_date")
+  @@index([userId, grade], map: "idx_ielts_reading_assessment_user_grade")
+}
+
+model IeltsSpeakingAssessment {
+  id                    String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId                String                @db.Uuid
+  topicId               String                @db.Uuid
+  band                  String                @db.VarChar(50)
+  weightedWpm           Float
+  fluencyScore          Float
+  keywordsHit           Int
+  totalKeywords         Int
+  pass1Data             Json                  @db.Json
+  pass2Data             Json                  @db.Json
+  createdAt             DateTime              @default(now()) @db.Timestamptz(6)
+  IeltsSpeakingPractice IeltsSpeakingPractice @relation(fields: [topicId], references: [id], onDelete: Cascade, map: "IeltsReadingAssessment_topicId_fkey")
+  User                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([topicId], map: "IeltsReadingAssessment_topicId_idx")
+  @@index([userId], map: "IeltsReadingAssessment_userId_idx")
+}
+
+model IeltsSpeakingPractice {
+  id                      String                    @id(map: "IeltsReadingPractice_pkey") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title                   String                    @db.VarChar(500)
+  type                    String                    @db.VarChar(100)
+  words                   Int
+  phrases                 Int
+  band                    String                    @db.VarChar(50)
+  modelAnswer             String
+  keywords                String[]                  @default([])
+  keywordMap              Json?
+  tips                    String[]                  @default([])
+  createdAt               DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                  @default(now()) @db.Timestamptz(6)
+  IeltsSpeakingAssessment IeltsSpeakingAssessment[]
+
+  @@index([band], map: "idx_ielts_reading_practice_band")
+}
+
+model IeltsSpeedReadingExercise {
+  id                      String                  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reportId                String                  @db.Uuid
+  type                    String                  @db.VarChar(50)
+  question                String
+  options                 Json?
+  correctAnswer           String
+  explanation             String?
+  createdAt               DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                @default(now()) @db.Timestamptz(6)
+  IeltsSpeedReadingReport IeltsSpeedReadingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+}
+
+model IeltsSpeedReadingReport {
+  id                        String                      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  category                  String                      @db.VarChar(50)
+  title                     String                      @db.VarChar(255)
+  source                    String                      @db.VarChar(255)
+  text                      String
+  wordCount                 Int                         @default(0)
+  createdAt                 DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime                    @default(now()) @db.Timestamptz(6)
+  IeltsSpeedReadingExercise IeltsSpeedReadingExercise[]
+
+  @@index([category])
+}
+
+model IeltsVoicePrompt {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  band         String   @db.VarChar(50)
+  feature      String   @default("anatomy") @db.VarChar(50)
+  question     String
+  hint         String?
+  targetWpmMin Int      @default(120)
+  targetWpmMax Int      @default(160)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([isActive], map: "idx_voice_prompt_active")
+  @@index([band], map: "idx_voice_prompt_band")
+  @@index([feature], map: "idx_voice_prompt_feature")
+}
+
+model IeltsWritingTask {
+  id                     String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title                  String                   @db.VarChar(500)
+  topic                  String
+  assignedDate           DateTime                 @db.Date
+  createdAt              DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                 @default(now()) @db.Timestamptz(6)
+  IeltsWritingAssessment IeltsWritingAssessment[]
+
+  @@index([assignedDate])
+}
+
+model IeltsWritingAssessment {
+  id                   String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId               String           @db.Uuid
+  taskId               String           @db.Uuid
+  writtenContent       String
+  wordCount            Int
+  aiBandScore          String?          @db.VarChar(10)
+  aiGrammarScore       Float?
+  aiVocabularyScore    Float?
+  aiCoherenceScore     Float?
+  aiTaskResponseScore  Float?
+  aiFeedbackData       Json?
+  manualBandScore      String?          @db.VarChar(10)
+  manualFeedback       String?
+  gradedByInstructorId String?          @db.Uuid
+  createdAt            DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime         @default(now()) @db.Timestamptz(6)
+  IeltsWritingTask     IeltsWritingTask @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User                 User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId])
+  @@index([taskId])
 }
 
 model Instructor {
@@ -217,8 +381,9 @@ model User {
   role                     UserRoleType               @default(STUDENT)
   profileImage             String?
   CourseOrder              CourseOrder[]
-  IeltsSpeakingAssessment  IeltsSpeakingAssessment[]
   IeltsReadingAssessment   IeltsReadingAssessment[]
+  IeltsSpeakingAssessment  IeltsSpeakingAssessment[]
+  IeltsWritingAssessment   IeltsWritingAssessment[]
   Instructor               Instructor?
   ReadingAssessmentHistory ReadingAssessmentHistory[]
   UserConcept              UserConcept[]
@@ -345,68 +510,50 @@ model YouTubeTranscript {
   @@index([videoId])
 }
 
-model CourseOrder {
-  id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId            String         @db.Uuid
-  courseId          String         @db.Uuid
-  amount            Decimal        @db.Decimal(10, 2)
-  currency          String         @default("INR") @db.VarChar(10)
-  status            PurchaseStatus @default(PENDING)
-  razorpayOrderId   String         @unique @db.VarChar(100)
-  razorpayPaymentId String?        @unique @db.VarChar(100)
-  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime       @default(now()) @db.Timestamptz(6)
-  Course            Course         @relation(fields: [courseId], references: [id])
-  User              User           @relation(fields: [userId], references: [id])
+model ielts_batch_instructors {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id      String        @db.Uuid
+  user_id       String        @db.Uuid
+  assigned_at   DateTime      @default(now()) @db.Timestamptz(6)
+  ielts_batches ielts_batches @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User          User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([userId])
-  @@index([status])
+  @@unique([batch_id, user_id])
+  @@index([batch_id], map: "idx_ielts_batch_instructors_batch")
+  @@index([user_id], map: "idx_ielts_batch_instructors_user")
 }
 
-model IeltsVoicePrompt {
-  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  band         String   @db.VarChar(50)
-  feature      String   @default("anatomy") @db.VarChar(50)
-  question     String
-  hint         String?
-  targetWpmMin Int      @default(120)
-  targetWpmMax Int      @default(160)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime @default(now()) @db.Timestamptz(6)
+model ielts_batch_students {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id      String        @db.Uuid
+  user_id       String        @db.Uuid
+  enrolled_at   DateTime      @default(now()) @db.Timestamptz(6)
+  ielts_batches ielts_batches @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User          User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([band], map: "idx_voice_prompt_band")
-  @@index([feature], map: "idx_voice_prompt_feature")
-  @@index([isActive], map: "idx_voice_prompt_active")
+  @@unique([batch_id, user_id])
+  @@index([batch_id], map: "idx_ielts_batch_students_batch")
+  @@index([user_id], map: "idx_ielts_batch_students_user")
 }
 
-model IeltsSpeedReadingReport {
-  id                        String                      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  category                  String                      @db.VarChar(50)
-  title                     String                      @db.VarChar(255)
-  source                    String                      @db.VarChar(255)
-  text                      String
-  wordCount                 Int                         @default(0)
-  createdAt                 DateTime                    @default(now()) @db.Timestamptz(6)
-  updatedAt                 DateTime                    @default(now()) @db.Timestamptz(6)
-  IeltsSpeedReadingExercise IeltsSpeedReadingExercise[]
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ielts_batches {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institute_id            String                    @db.Uuid
+  name                    String                    @db.VarChar(255)
+  description             String?
+  status                  String                    @default("ACTIVE") @db.VarChar(20)
+  max_students            Int?
+  created_by              String?                   @db.Uuid
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  ielts_batch_instructors ielts_batch_instructors[]
+  ielts_batch_students    ielts_batch_students[]
+  User                    User?                     @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([category])
-}
-
-model IeltsSpeedReadingExercise {
-  id                      String                  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  reportId                String                  @db.Uuid
-  type                    String                  @db.VarChar(50)
-  question                String
-  options                 Json?
-  correctAnswer           String
-  explanation             String?
-  createdAt               DateTime                @default(now()) @db.Timestamptz(6)
-  updatedAt               DateTime                @default(now()) @db.Timestamptz(6)
-  IeltsSpeedReadingReport IeltsSpeedReadingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
-  @@index([reportId])
+  @@index([institute_id], map: "idx_ielts_batches_institute")
+  @@index([status], map: "idx_ielts_batches_status")
 }
 
 model institute_admins {
@@ -477,129 +624,6 @@ model institutes {
   User                  User?                   @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@index([is_active], map: "idx_institutes_is_active")
-}
-
-model ielts_batch_instructors {
-  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id      String        @db.Uuid
-  user_id       String        @db.Uuid
-  assigned_at   DateTime      @default(now()) @db.Timestamptz(6)
-  ielts_batches ielts_batches @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User          User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([batch_id, user_id])
-  @@index([batch_id], map: "idx_ielts_batch_instructors_batch")
-  @@index([user_id], map: "idx_ielts_batch_instructors_user")
-}
-
-model ielts_batch_students {
-  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id      String        @db.Uuid
-  user_id       String        @db.Uuid
-  enrolled_at   DateTime      @default(now()) @db.Timestamptz(6)
-  ielts_batches ielts_batches @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User          User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([batch_id, user_id])
-  @@index([batch_id], map: "idx_ielts_batch_students_batch")
-  @@index([user_id], map: "idx_ielts_batch_students_user")
-}
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model ielts_batches {
-  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  institute_id            String                    @db.Uuid
-  name                    String                    @db.VarChar(255)
-  description             String?
-  status                  String                    @default("ACTIVE") @db.VarChar(20)
-  max_students            Int?
-  created_by              String?                   @db.Uuid
-  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
-  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
-  ielts_batch_instructors ielts_batch_instructors[]
-  ielts_batch_students    ielts_batch_students[]
-  User                    User?                     @relation(fields: [created_by], references: [id], onUpdate: NoAction)
-  institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@index([institute_id], map: "idx_ielts_batches_institute")
-  @@index([status], map: "idx_ielts_batches_status")
-}
-
-model IeltsSpeakingAssessment {
-  id                    String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId                String                @db.Uuid
-  topicId               String                @db.Uuid
-  band                  String                @db.VarChar(50)
-  weightedWpm           Float
-  fluencyScore          Float
-  keywordsHit           Int
-  totalKeywords         Int
-  pass1Data             Json                  @db.Json
-  pass2Data             Json                  @db.Json
-  createdAt             DateTime              @default(now()) @db.Timestamptz(6)
-  IeltsSpeakingPractice IeltsSpeakingPractice @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  User                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([topicId])
-  @@index([userId])
-}
-
-model IeltsSpeakingPractice {
-  id                      String                    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  title                   String                    @db.VarChar(500)
-  type                    String                    @db.VarChar(100)
-  words                   Int
-  phrases                 Int
-  band                    String                    @db.VarChar(50)
-  modelAnswer             String
-  keywords                String[]                  @default([])
-  keywordMap              Json?
-  tips                    String[]                  @default([])
-  createdAt               DateTime                  @default(now()) @db.Timestamptz(6)
-  updatedAt               DateTime                  @default(now()) @db.Timestamptz(6)
-  IeltsSpeakingAssessment IeltsSpeakingAssessment[]
-
-  @@index([band])
-}
-
-/// NEW — stores each completed Reading Practice session.
-/// Source: ReadingPractice.tsx → POST /api/reading-practice/submit
-/// DB table: "IeltsReadingAssessment" (freed up after speaking table rename)
-model IeltsReadingAssessment {
-  id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId             String   @db.Uuid
-
-  // Passage identity (links to IeltsSpeedReadingReport.id)
-  reportId           String   @db.VarChar(100)
-  passageTitle       String   @db.VarChar(500)
-  category           String   @db.VarChar(100)
-  wordCount          Int
-
-  // Performance metrics
-  readingTimeSeconds Int
-  wpm                Float
-  accuracy           Float
-  retentionScore     Float
-  efficiencyScore    Float
-  speedLearningScore Float
-  grade              String   @db.VarChar(5)    // A+, A, B, C, D, F
-  speedCategory      String?  @db.VarChar(50)
-
-  // Q&A summary
-  totalQuestions     Int
-  correctAnswers     Int
-
-  // Raw data blobs
-  scoredAnswers      Json?
-  feedbackTips       String[] @default([])
-
-  createdAt          DateTime @default(now()) @db.Timestamptz(6)
-
-  User               User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@index([userId, createdAt])
-  @@index([userId, category])
-  @@index([userId, grade])
 }
 
 enum ContentType {

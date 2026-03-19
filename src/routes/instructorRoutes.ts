@@ -73,6 +73,8 @@ router.get('/batches/:batchId/reading-analytics', getBatchReadingAnalytics);
 // Student Progress
 router.get('/students/:studentId/speaking-history', instructorController.getStudentSpeakingHistory);
 router.get('/students/:studentId/reading-history', instructorController.getStudentReadingHistory);
+router.get('/students/:studentId/writing-history', instructorController.getStudentWritingHistory);
+router.patch('/writing-assessment/:assessmentId/grade', instructorController.submitManualGradeWriting);
 
 export default router;
 

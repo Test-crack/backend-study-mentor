@@ -18,6 +18,7 @@ import instituteOwnerRoutes from './routes/instituteOwnerRoutes';
 import instituteAdminRoutes from './routes/instituteAdminRoutes';
 import studentRoutes from './routes/studentRoutes';
 import readingPracticeRoutes from './routes/readingPracticeRoutes';
+import ieltsWritingRoutes from './routes/ieltsWritingRoutes';
 import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
@@ -90,6 +91,7 @@ app.use('/api/institute-owner', instituteOwnerRoutes);
 app.use('/api/institute-admin', instituteAdminRoutes);
 app.use('/api/student', studentRoutes);
 app.use('/api/reading-practice', readingPracticeRoutes);
+app.use('/api/ielts-writing', ieltsWritingRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {
