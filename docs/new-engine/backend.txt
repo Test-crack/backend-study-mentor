@@ -1,0 +1,796 @@
+﻿TestCrack
+Diagnostic Engine  â€”  Backend
+Scoring Pipelines, API Contracts &amp; Sprint Tasks for Sarthak
+For:  Sarthak (Backend Dev)
+Pairs with:  Gokul FE task doc
+Issued by:  Paul 
+
+
+1.  Purpose &amp; Backend Dev's role in the diagnostic
+The Diagnostic Engine has four components. Backend will be working with three of them: the Scoring Service, the Matrix Writer, and the Recommendation Seed trigger. Gokul will be working with the Diagnostic UI. This document specifies exactly what Backend must build, the exact API contracts Gokul will be calling, the data model Backend must implement in Supabase, and the AI integrations that power the Speaking and Writing assessment pipelines.
+
+This document is the complement to the Frontend Tasks document issued to Gokul. Read them together. Both developers must agree on API request/response shapes in Section 4 before either starts building.
+
+What Backend does not control
+The Diagnostic UI, question/passage content generation and sourcing, and product-level band thresholds are Paul's and Gokul's responsibility. Backend's deliverable is: correct scores returned reliably, data written correctly to Supabase, and the n8n webhook fired at the right moment.(N8n workflow and creation to be done Along with Paul)
+
+
+2.  Backend system overview
+2.1  Component ownership
+Component
+What it does
+Tech
+Priority
+Scoring Service
+Receives raw student answers or audio, runs the appropriate scorer, returns band scores
+Node.js / Express route
+P1
+Matrix Writer
+Takes scorer output, upserts rows in student_competency_matrix and inserts row in assessment_history
+Supabase client
+P1
+Diagnostic Status API
+Returns per-skill scoring completion flags so frontend can poll or subscribe
+Supabase query
+P1
+Questions API
+Returns question sets and audio/passage URLs for each diagnostic section
+Supabase query
+P1
+Whisper STT integration
+Receives audio file, calls OpenAI Whisper API, returns transcript
+OpenAI API
+P1
+Claude/Gemini Writing scorer
+Sends student text + system prompt to Claude API, parses 4-criterion JSON response
+Anthropic/Gemini API
+P1
+Claude/Gemini Speaking scorer
+Sends transcript + system prompt to Claude API, parses 4-criterion JSON response
+Anthropic/Gemini  API
+P1
+Recommendation seed trigger
+On all 4 skills scored, fires n8n webhook to generate first suggestions
+n8n HTTP trigger
+P2
+Rule-based band conversion
+Maps raw answer counts to IELTS band scores for Listening and Reading
+Local lookup table
+P1
+
+2.2  Infrastructure
+Hostinger VPS â€” Node.js / Express API  Server:
+Supabase (PostgreSQL) â€” all persistent state  Database:
+OpenAI (Whisper v3 for STT), Anthropic Claude API (Writing + Speaking scoring)/Gemini   AI APIs:
+n8n â€” recommendation seed webhook triggered on diagnostic completion  Automation:
+Supabase Storage bucket â€” audio files uploaded by Gokul's app land here before Whisper call  File storage:
+
+
+3.  Supabase data model â€” tables Sarthak must create
+These tables must exist and have the exact column definitions below before any API endpoints can be built. Create these in Supabase first. The frontend document has already been issued to Gokul referencing these schemas â€” do not deviate from the column names or types without coordinating with Gokul.
+
+3.1  student_competency_matrix
+One row per student per skill. Upserted on every assessment submission. This is the central data object of the entire platform.
+
+Column
+Type
+Constraints / notes
+id
+uuid
+PRIMARY KEY, default gen_random_uuid()
+student_id
+uuid
+FK -&gt; students.id, NOT NULL
+skill
+text
+CHECK (skill IN ('listening','reading','writing','speaking')), NOT NULL
+band_score
+numeric(2,1)
+CHECK (band_score &gt;= 0 AND band_score &lt;= 9), NULL until first scored
+level
+char(1)
+CHECK (level IN ('A','B','C')), derived and stored on every upsert
+sub_scores
+jsonb
+NULL for Listening and Reading. Writing: {task, coherence, lexical, grammar}. Speaking: {fluency, lexical, grammar, pronunciation}
+assessments_count
+integer
+DEFAULT 0, incremented on each upsert
+last_updated
+timestamptz
+DEFAULT now(), updated on each upsert
+UNIQUE
+â€”
+UNIQUE (student_id, skill) â€” one row per student per skill
+
+3.2  assessment_history
+One row per assessment submission. Never updated â€” only inserted. This is the student's permanent paper trail.
+
+Column
+Type
+Constraints / notes
+id
+uuid
+PRIMARY KEY, default gen_random_uuid()
+student_id
+uuid
+FK -&gt; students.id, NOT NULL
+skill
+text
+CHECK (skill IN ('listening','reading','writing','speaking')), NOT NULL
+mode
+text
+CHECK (mode IN ('diagnostic','practice','mock')), NOT NULL
+band_score
+numeric(2,1)
+NOT NULL â€” must be populated before insert
+sub_scores
+jsonb
+NULL for Listening/Reading. See student_competency_matrix notes above.
+feedback_json
+jsonb
+For Writing: {task: 'string', coherence: 'string', lexical: 'string', grammar: 'string'}. For Speaking: {fluency: 'string', lexical: 'string', grammar: 'string', pronunciation: 'string'}. For L/R: null.
+transcript
+text
+Speaking only. Full Whisper transcript string. NULL for other skills.
+raw_answers
+jsonb
+Listening/Reading only. The student's submitted answers object. NULL for W/S.
+created_at
+timestamptz
+DEFAULT now()
+
+3.3  diagnostic_status  (view or computed columns)
+The frontend polls GET /api/diagnostic/status/:studentId. The simplest implementation is a Supabase view that queries student_competency_matrix and returns one boolean per skill. Sarthak can implement this as a Postgres view or a computed query in the route handler â€” either is acceptable.
+
+-- Suggested Postgres view
+CREATE VIEW diagnostic_status AS
+SELECT
+  student_id,
+  bool_or(skill = 'listening' AND band_score IS NOT NULL)  AS listening_scored,
+  bool_or(skill = 'reading'   AND band_score IS NOT NULL)  AS reading_scored,
+  bool_or(skill = 'writing'   AND band_score IS NOT NULL)  AS writing_scored,
+  bool_or(skill = 'speaking'  AND band_score IS NOT NULL)  AS speaking_scored,
+  (bool_or(skill = 'listening' AND band_score IS NOT NULL)
+   AND bool_or(skill = 'reading'  AND band_score IS NOT NULL)
+   AND bool_or(skill = 'writing'  AND band_score IS NOT NULL)
+   AND bool_or(skill = 'speaking' AND band_score IS NOT NULL))
+                                                            AS overall_complete
+FROM student_competency_matrix
+GROUP BY student_id;
+
+3.4  Level derivation logic
+Every time a band_score is written to student_competency_matrix, the level column must be computed and stored. Apply this logic in the Matrix Writer before the upsert â€” do not leave level calculation to the frontend.
+
+function deriveLevel(bandScore) {
+  if (bandScore &gt;= 7.0) return 'C';
+  if (bandScore &gt;= 5.0) return 'B';
+  return 'A';
+}
+
+
+4.  API contracts  (exact shapes Gokul will call)
+These shapes are non-negotiable for this sprint â€” Gokul's frontend document references them directly. Review this section together before either of you writes code. If any shape needs to change, both documents must be updated and Paul must be informed.
+
+4.1  GET /api/diagnostic/questions/:skill
+Called by Gokul to fetch the question set before rendering each diagnostic section. Sarthak seeds the question data in Supabase; this endpoint reads it.
+
+// Request
+GET /api/diagnostic/questions/listening
+GET /api/diagnostic/questions/reading
+GET /api/diagnostic/questions/writing
+GET /api/diagnostic/questions/speaking
+
+// Success response â€” Listening example
+{
+  &quot;ok&quot;: true,
+  &quot;skill&quot;: &quot;listening&quot;,
+  &quot;audio_url&quot;: &quot;https://storage.supabase.co/...&quot;,
+  &quot;questions&quot;: [
+    {
+      &quot;id&quot;: &quot;q1&quot;,
+      &quot;type&quot;: &quot;mcq&quot;,
+      &quot;text&quot;: &quot;What does the speaker say about...?&quot;,
+      &quot;options&quot;: [&quot;A. ...&quot;, &quot;B. ...&quot;, &quot;C. ...&quot;, &quot;D. ...&quot;],
+      &quot;answer_key&quot;: &quot;B&quot;   // only returned server-side for scoring, never to client
+    }
+  ]
+}
+
+// IMPORTANT: answer_key must NEVER be included in the API response.
+// Strip it server-side before returning the questions array.
+
+4.2  GET /api/diagnostic/status/:studentId
+Called by Gokul every 2 seconds (polling) or via Supabase realtime. Returns per-skill scoring completion flags.
+
+// Success response
+{
+  &quot;ok&quot;: true,
+  &quot;listening_scored&quot;: true,
+  &quot;reading_scored&quot;: true,
+  &quot;writing_scored&quot;: false,
+  &quot;speaking_scored&quot;: false,
+  &quot;overall_complete&quot;: false
+}
+
+4.3  POST /api/diagnostic/submit-section
+Handles Listening and Reading submission. Rule-based scoring â€” no AI call. Must respond within 2 seconds.
+
+// Request body
+{
+  &quot;student_id&quot;: &quot;uuid&quot;,
+  &quot;skill&quot;: &quot;listening&quot;,   // or &quot;reading&quot;
+  &quot;answers&quot;: {
+    &quot;q1&quot;: &quot;B&quot;,
+    &quot;q2&quot;: &quot;TRUE&quot;,
+    &quot;q3&quot;: &quot;NOT GIVEN&quot;,
+    &quot;q4&quot;: &quot;A&quot;,
+    &quot;q5&quot;: &quot;C&quot;,
+    &quot;q6&quot;: &quot;FALSE&quot;
+  }
+}
+
+// Success response
+{
+  &quot;ok&quot;: true,
+  &quot;band_score&quot;: 5.5,
+  &quot;level&quot;: &quot;B&quot;
+}
+
+// Error response
+{
+  &quot;ok&quot;: false,
+  &quot;error&quot;: &quot;Human-readable error message&quot;
+}
+
+4.4  POST /api/diagnostic/submit-writing
+Handles Writing submission. Calls Claude API. Response time may be 8â€“15 seconds â€” this is expected and Gokul's frontend handles the wait state.
+
+// Request body
+{
+  &quot;student_id&quot;: &quot;uuid&quot;,
+  &quot;text&quot;: &quot;The graph shows a steady increase in...&quot;
+}
+
+// Success response
+{
+  &quot;ok&quot;: true,
+  &quot;band_score&quot;: 6.0,
+  &quot;sub_scores&quot;: {
+    &quot;task&quot;: 6.0,
+    &quot;coherence&quot;: 6.5,
+    &quot;lexical&quot;: 5.5,
+    &quot;grammar&quot;: 6.0
+  },
+  &quot;feedback&quot;: {
+    &quot;task&quot;: &quot;Your response addresses the key trend clearly.&quot;,
+    &quot;coherence&quot;: &quot;Ideas flow logically but transitions could be stronger.&quot;,
+    &quot;lexical&quot;: &quot;Vocabulary range is adequate. Avoid repeating 'increase'.&quot;,
+    &quot;grammar&quot;: &quot;Sentence structures are generally accurate.&quot;
+  }
+}
+
+4.5  POST /api/diagnostic/submit-speaking
+Handles Speaking submission. Receives a multipart/form-data upload. Runs Whisper, then Claude. Response time may be 15â€“25 seconds â€” this is expected.
+
+// Request â€” multipart/form-data
+student_id: 'uuid'
+audio: File (webm or mp4, max 10MB)
+
+// Success response
+{
+  &quot;ok&quot;: true,
+  &quot;band_score&quot;: 5.5,
+  &quot;sub_scores&quot;: {
+    &quot;fluency&quot;: 5.5,
+    &quot;lexical&quot;: 6.0,
+    &quot;grammar&quot;: 5.0,
+    &quot;pronunciation&quot;: 5.5
+  },
+  &quot;feedback&quot;: {
+    &quot;fluency&quot;: &quot;Speech was mostly fluent with occasional hesitation.&quot;,
+    &quot;lexical&quot;: &quot;Good range of topic-relevant vocabulary used.&quot;,
+    &quot;grammar&quot;: &quot;Some errors in complex sentences but meaning is clear.&quot;,
+    &quot;pronunciation&quot;: &quot;Generally clear. Work on consonant clusters.&quot;
+  },
+  &quot;transcript&quot;: &quot;Well, I think that technology has changed... um... the way we...&quot;
+}
+
+
+5.  Scoring pipelines â€” step-by-step implementation
+
+Pipeline 1 â€” Listening &amp; Reading (rule-based)
+
+No AI involved. Scoring is deterministic: count correct answers, look up the IELTS band conversion table, return the band. This is the simplest pipeline and should be working before any AI integration is attempted.
+
+Step
+Trigger
+Sarthak's action
+Supabase write
+Response to frontend
+1
+POST /api/diagnostic/submit-section received
+Validate request body: student_id present, skill is 'listening' or 'reading', answers object has expected keys
+â€”
+â€”
+2
+Fetch answer key from Supabase
+Query diagnostic_questions table for the active question set for this skill. Extract answer_key per question.
+Read only â€” no write
+â€”
+3
+Score answers
+For each question, compare student answer to answer_key. Count correct answers (raw score out of 6 for Listening, out of 4 for Reading in diagnostic).
+â€”
+â€”
+4
+Convert raw score to band
+Apply IELTS band conversion lookup (see Section 5.1 below). Derive level using deriveLevel() function.
+â€”
+â€”
+5
+Write to assessment_history
+INSERT row: student_id, skill, mode='diagnostic', band_score, raw_answers (the answers object), sub_scores=null, feedback_json=null, transcript=null
+assessment_history
+â€”
+6
+Upsert student_competency_matrix
+UPSERT: student_id + skill as unique key. Set band_score, level, increment assessments_count, set last_updated=now().
+student_competency_matrix
+â€”
+7
+Return response
+Respond with { ok: true, band_score, level }
+â€”
+{ ok: true, band_score: 5.5, level: 'B' }
+
+5.1  Band conversion table â€” Listening (diagnostic 6-question version)
+The diagnostic Listening section has 6 questions, not the full 40. Scale accordingly. This is a simplified diagnostic conversion â€” not the full IELTS table.
+
+Correct answers (out of 6)
+Band score
+Level
+6
+7.5
+C
+5
+6.5
+C
+4
+5.5
+B
+3
+4.5
+A
+2
+3.5
+A
+0â€“1
+2.5
+A
+
+5.2  Band conversion table â€” Reading (diagnostic 4-question version)
+Correct answers (out of 4)
+Band score
+Level
+4
+7.0
+C
+3
+6.0
+C
+2
+5.0
+B
+1
+4.0
+A
+0
+3.0
+A
+
+Note on diagnostic vs full assessment scoring
+These simplified conversion tables are for the diagnostic only. When full Listening (40 questions) and Reading (40 questions) assessments are built in a future sprint, use the official IELTS conversion tables. Paul will provide the official tables at that point.
+
+Pipeline 2 â€” Writing (Claude API)
+
+Writing is scored by Claude API. The accuracy of this pipeline depends almost entirely on the quality of the system prompt. The system prompt below is the exact prompt Sarthak must use. Do not change it without Paul's approval â€” prompt changes directly affect score accuracy.
+
+Step
+Trigger
+Sarthak's action
+Supabase write
+Response to frontend
+1
+POST /api/diagnostic/submit-writing received
+Validate: student_id present, text.length &gt; 0. If word count &lt; 60, return 400 error (Gokul's frontend should prevent this, but defend server-side too).
+â€”
+â€”
+2
+Construct Claude API request
+Build the messages array with the system prompt from Section 5.3 and the student's text as the user message. Model: claude-sonnet-4-20250514. max_tokens: 1000. Require JSON-only response.
+â€”
+â€”
+3
+Call Claude API
+POST to https://api.anthropic.com/v1/messages. Set server-side timeout to 30 seconds. Handle 429 (rate limit) and 5xx errors with a single retry after 3 seconds.
+â€”
+â€”
+4
+Parse Claude response
+Extract the content[0].text field. Strip any markdown code fences if present (```json ... ```). JSON.parse the result. Validate that all 4 keys are present: task, coherence, lexical, grammar â€” each with band_score (number) and feedback (string).
+â€”
+â€”
+5
+Compute overall Writing band
+Overall = average of the 4 criterion band scores, rounded to nearest 0.5. Use: Math.round(avg * 2) / 2
+â€”
+â€”
+6
+Write to assessment_history
+INSERT: student_id, skill='writing', mode='diagnostic', band_score (overall), sub_scores (4 criterion scores as JSON), feedback_json (4 criterion feedback strings as JSON), transcript=null, raw_answers=null
+assessment_history
+â€”
+7
+Upsert student_competency_matrix
+UPSERT: student_id + 'writing'. Set band_score (overall), level (derived), sub_scores (criterion scores), increment assessments_count, last_updated=now().
+student_competency_matrix
+â€”
+8
+Return response
+Respond with full shape from Section 4.4.
+â€”
+{ ok: true, band_score, sub_scores, feedback }
+
+5.3  Claude system prompt â€” Writing scorer  (exact text, do not modify)
+
+You are an experienced IELTS examiner with 10 years of marking experience.
+You will receive a student writing sample. Score it against the four official
+IELTS Writing Task 1 band descriptors.
+
+Score each criterion on the 0-9 IELTS band scale in 0.5 increments.
+The four criteria are:
+  1. Task Achievement (TA) â€” does the response address the task fully?
+  2. Coherence and Cohesion (CC) â€” is the response logically organised?
+  3. Lexical Resource (LR) â€” is the vocabulary range and accuracy appropriate?
+  4. Grammatical Range and Accuracy (GRA) â€” are structures varied and accurate?
+
+Return ONLY a valid JSON object with no preamble, no markdown, no explanation.
+The exact required format is:
+{
+  &quot;task&quot;:      { &quot;band_score&quot;: 6.0, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; },
+  &quot;coherence&quot;: { &quot;band_score&quot;: 6.5, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; },
+  &quot;lexical&quot;:   { &quot;band_score&quot;: 5.5, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; },
+  &quot;grammar&quot;:   { &quot;band_score&quot;: 6.0, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; }
+}
+
+Scoring guidelines:
+- Band 9: Expert user. Rare.
+- Band 7-8: Good user. Handles complex language well.
+- Band 5-6: Modest to competent user. Manages overall meaning, some errors.
+- Band 3-4: Limited user. Coping range. Basic language only.
+- Band 1-2: Intermittent user. Little communication possible.
+Do not give every student a 6. Score honestly. A weak response should score 3-4.
+
+Pipeline 3 â€” Speaking (Whisper + Claude)
+
+Speaking is the most complex pipeline. It runs two sequential AI calls: first Whisper for transcription, then Claude for scoring. Both must succeed for the pipeline to complete. Total latency budget is 25 seconds maximum.
+
+Step
+Trigger
+Sarthak's action
+Supabase write
+Response to frontend
+1
+POST /api/diagnostic/submit-speaking received
+Validate: student_id present, audio file present, file size &lt; 10MB, file MIME type is audio/webm or audio/mp4. If invalid, return 400 immediately.
+â€”
+â€”
+2
+Save audio to Supabase Storage
+Upload the audio file to the 'speaking-recordings' bucket with path: {student_id}/{timestamp}.webm. Store the public URL for future reference. This happens before Whisper so we have a permanent copy regardless of transcription outcome.
+Supabase Storage bucket
+â€”
+3
+Call OpenAI Whisper API
+POST to https://api.openai.com/v1/audio/transcriptions. Model: whisper-1. Language: 'en'. Response format: 'text'. Send the audio file as multipart/form-data. Set timeout: 20 seconds.
+â€”
+â€”
+4
+Handle Whisper response
+On success: store transcript string. On error or empty transcript: return { ok: false, error: 'Could not transcribe audio. Please try again.' } â€” do not proceed to Claude.
+â€”
+â€”
+5
+Construct Claude API Speaking request
+Build the messages array with the Speaking system prompt from Section 5.4, injecting the transcript as the user message. Model: claude-sonnet-4-20250514. max_tokens: 1000. Require JSON-only response.
+â€”
+â€”
+6
+Call Claude API
+POST to https://api.anthropic.com/v1/messages. Timeout: 20 seconds. Single retry on 429 or 5xx.
+â€”
+â€”
+7
+Parse Claude response
+Same parsing logic as Writing. Validate 4 keys: fluency, lexical, grammar, pronunciation â€” each with band_score and feedback.
+â€”
+â€”
+8
+Compute overall Speaking band
+Average of 4 criterion scores, rounded to nearest 0.5.
+â€”
+â€”
+9
+Write to assessment_history
+INSERT: student_id, skill='speaking', mode='diagnostic', band_score, sub_scores, feedback_json, transcript (the full Whisper transcript string), raw_answers=null
+assessment_history
+â€”
+10
+Upsert student_competency_matrix
+UPSERT: student_id + 'speaking'. Set band_score, level, sub_scores, increment assessments_count, last_updated=now().
+student_competency_matrix
+â€”
+11
+Return response
+Respond with full shape from Section 4.5 including transcript field.
+â€”
+{ ok: true, band_score, sub_scores, feedback, transcript }
+
+5.4  Claude system prompt â€” Speaking scorer  (exact text, do not modify)
+
+You are an experienced IELTS Speaking examiner. You will receive a transcript of
+a student's spoken response to an IELTS Part 1 prompt.
+
+Score the response against the four official IELTS Speaking band descriptors.
+Score each criterion on the 0-9 IELTS band scale in 0.5 increments.
+The four criteria are:
+  1. Fluency and Coherence (FC) â€” flow of speech, logical organisation, absence of hesitation
+  2. Lexical Resource (LR) â€” vocabulary range, precision, natural use
+  3. Grammatical Range and Accuracy (GRA) â€” variety of structures, accuracy
+  4. Pronunciation (P) â€” clarity, intonation, stress patterns (infer from transcript where possible)
+
+Note: Pronunciation must be estimated from the transcript. Look for evidence of
+disfluency markers (um, uh, ...) and sentence-level clarity as proxies.
+
+Return ONLY a valid JSON object with no preamble, no markdown, no explanation.
+The exact required format is:
+{
+  &quot;fluency&quot;:      { &quot;band_score&quot;: 5.5, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; },
+  &quot;lexical&quot;:      { &quot;band_score&quot;: 6.0, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; },
+  &quot;grammar&quot;:      { &quot;band_score&quot;: 5.0, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; },
+  &quot;pronunciation&quot;:{ &quot;band_score&quot;: 5.5, &quot;feedback&quot;: &quot;One sentence of specific feedback.&quot; }
+}
+
+Scoring guidelines:
+- Band 7+: Speaks at length with only rare repetition, uses flexible vocabulary naturally.
+- Band 5-6: Mostly able to maintain flow, uses circumlocution, some repetition.
+- Band 3-4: Responds but cannot sustain at length, restricted range, frequent errors.
+- Band 1-2: Cannot communicate effectively.
+Score honestly. A hesitant, limited response should score 3-4, not 5-6.
+
+
+6.  Matrix Writer â€” upsert logic
+Every scoring pipeline ends with a call to the Matrix Writer. This is a shared utility function Backend writes once and calls from all four scoring routes. It must be idempotent â€” calling it twice with the same student_id and skill must not create duplicate rows.
+
+// Pseudocode for Matrix Writer
+async function writeToMatrix({ student_id, skill, band_score, sub_scores }) {
+  const level = deriveLevel(band_score);
+
+  // Upsert: insert or update based on (student_id, skill) unique constraint
+  const { error } = await supabase
+    .from('student_competency_matrix')
+    .upsert({
+      student_id,
+      skill,
+      band_score,
+      level,
+      sub_scores: sub_scores || null,
+      last_updated: new Date().toISOString()
+    }, {
+      onConflict: 'student_id,skill',
+      // Increment assessments_count using Postgres function, not client-side
+      ignoreDuplicates: false
+    });
+
+  // Increment assessments_count via RPC to avoid race conditions
+  await supabase.rpc('increment_assessments_count', { p_student_id: student_id, p_skill: skill });
+
+  if (error) throw new Error('Matrix write failed: ' + error.message);
+}
+
+// Supabase RPC function to create:
+CREATE OR REPLACE FUNCTION increment_assessments_count(p_student_id uuid, p_skill text)
+RETURNS void AS $$
+  UPDATE student_competency_matrix
+  SET assessments_count = assessments_count + 1
+  WHERE student_id = p_student_id AND skill = p_skill;
+$$ LANGUAGE sql;
+
+
+7.  Recommendation seed trigger
+After all four skills are scored, the backend must fire a webhook to n8n. n8n will then run the recommendation rule engine and insert the first 3â€“5 suggestion rows for the student. This is what populates the student's Suggestions tab when they first reach the dashboard.
+
+Backend implements this trigger by checking, after each Matrix Writer call, whether all four skills are now scored for that student. If yes, fire the webhook exactly once. Use a flag column on the students table to prevent double-firing.
+
+// After every Matrix Writer call, check if diagnostic is complete
+async function checkAndTriggerRecommendationSeed(student_id) {
+  const { data } = await supabase
+    .from('diagnostic_status')   // the view from Section 3.3
+    .select('overall_complete, recommendation_seeded')
+    .eq('student_id', student_id)
+    .single();
+
+  if (data.overall_complete &amp;&amp; !data.recommendation_seeded) {
+    // Fire n8n webhook
+    await fetch(process.env.N8N_RECOMMENDATION_SEED_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student_id })
+    });
+
+    // Mark as seeded to prevent double-firing
+    await supabase
+      .from('students')
+      .update({ recommendation_seeded: true })
+      .eq('id', student_id);
+  }
+}
+
+n8n webhook setup
+Backend creates the N8N_RECOMMENDATION_SEED_WEBHOOK_URL environment variable on the VPS. Paul sets up the n8n workflow to receive this webhook and run the recommendation rule logic. Coordinate with Paul before this step.
+
+
+8.  Error handling requirements
+Every API endpoint must follow this error handling standard. Gokul's frontend renders different UI states based on the ok field and error message â€” inconsistent error responses will break the frontend's error states.
+
+Scenario
+HTTP code
+Response body
+Retry behaviour
+Validation failure (missing field, wrong type)
+400
+{ ok: false, error: 'Descriptive message' }
+No retry â€” client must fix request
+Answer key not found in DB
+500
+{ ok: false, error: 'Questions not found for this session' }
+Frontend shows retry button
+Claude API rate limit (429)
+Retry once after 3s internally, then return 503
+{ ok: false, error: 'Scoring service temporarily unavailable. Please try again.' }
+Frontend shows retry button
+Claude API 5xx error
+Retry once after 3s internally, then return 503
+{ ok: false, error: 'Scoring service temporarily unavailable. Please try again.' }
+Frontend shows retry button
+Whisper API failure
+503
+{ ok: false, error: 'Could not transcribe audio. Please re-record and try again.' }
+Frontend shows re-record option
+Audio file too large (&gt; 10MB)
+400
+{ ok: false, error: 'Recording too large. Maximum is 10MB.' }
+Frontend shows re-record option
+Supabase write failure
+500
+{ ok: false, error: 'Failed to save results. Please try again.' }
+Frontend shows retry button
+
+
+9.  Backend tasks for Sarthak
+All tasks must be completed in priority order. P1 tasks are blocking for Gokul â€” Gokul cannot test or complete his frontend tasks until the P1 backend endpoints are live on the dev environment. Communicate with Gokul directly when each P1 endpoint is ready for integration testing.
+
+Definition of done
+A task is complete when: (a) the endpoint returns the correct response shape from Section 4 for valid inputs, (b) error cases from Section 8 are handled, (c) Supabase writes are confirmed via the Supabase dashboard, and (d) Gokul has successfully called it from the frontend dev environment.
+
+ID
+Task
+Endpoint / area
+Description &amp; acceptance criteria
+Priority
+BE-01
+Create Supabase tables
+Supabase schema
+Create student_competency_matrix and assessment_history tables with exact column definitions from Section 3. Create the diagnostic_status view from Section 3.3. Create the increment_assessments_count RPC function from Section 6. Add recommendation_seeded boolean column to the students table.
+Acceptance: All tables, view, and RPC exist in Supabase. Supabase dashboard shows correct schema. Paul and Sarthak review together before any API work starts.
+P1 â€” Critical
+BE-02
+Questions API endpoint
+GET /api/diagnostic/questions/:skill
+Seed at least one complete question set per skill in Supabase (Listening: 6 MCQ + audio URL; Reading: 200-word passage + 4 T/F/NG questions; Writing: graph image URL + prompt text; Speaking: Part 1 prompt text). Build the GET endpoint that returns the correct shape from Section 4.1. Strip answer_key from the response before returning.
+Acceptance: GET /api/diagnostic/questions/listening returns correct shape with audio_url and 6 questions, no answer_key in response. Same for all 4 skills. Paul confirms content is seeded correctly.
+P1 â€” Critical
+BE-03
+Diagnostic status endpoint
+GET /api/diagnostic/status/:studentId
+Build the status endpoint that queries the diagnostic_status view and returns the boolean flags per Section 4.2. This must work immediately after BE-01 is done â€” it is the first endpoint Gokul will call.
+Acceptance: Returns correct booleans. A student with listening and reading scored returns listening_scored: true, reading_scored: true, writing_scored: false, speaking_scored: false, overall_complete: false.
+P1 â€” Critical
+BE-04
+Listening &amp; Reading scoring
+POST /api/diagnostic/submit-section
+Build the submit-section endpoint implementing Pipeline 1 from Section 5. Fetch answer key from Supabase, score answers, apply conversion table from Section 5.1 and 5.2, call Matrix Writer, write to assessment_history, return band_score and level. Must respond within 2 seconds.
+Acceptance: Correct answers score to correct band. Scores written to both tables. Response matches Section 4.3 shape. Sarthak tests with a known answer set before handing to Gokul.
+P1 â€” Critical
+BE-05
+Matrix Writer utility function
+Internal utility
+Write the shared writeToMatrix() function from Section 6 as a reusable module imported by all scoring routes. Must handle upsert correctly using the (student_id, skill) unique constraint. Must call the increment_assessments_count RPC, not increment client-side.
+Acceptance: Calling writeToMatrix() twice for the same student_id + skill produces exactly one row in student_competency_matrix (not two). assessments_count increments correctly on each call.
+P1 â€” Critical
+BE-06
+Claude Writing scoring pipeline
+POST /api/diagnostic/submit-writing
+Build the submit-writing endpoint implementing Pipeline 2 from Section 5. Use the exact system prompt from Section 5.3. Parse Claude's JSON response, compute overall band as average of 4 criterion scores rounded to nearest 0.5, call Matrix Writer, write to assessment_history, return full response shape.
+Acceptance: Submit a real 80-word paragraph. Endpoint returns 4 criterion band scores and feedback strings. Overall band is correctly averaged. Scores appear in Supabase. Response matches Section 4.4.
+P1 â€” Critical
+BE-07
+Whisper STT integration
+Internal â€” Speaking pipeline step 1
+Integrate OpenAI Whisper API as the first step of the Speaking pipeline. Accept multipart/form-data upload, save audio file to Supabase Storage speaking-recordings bucket, send audio to Whisper v3 API, return transcript string. Build and test this in isolation before wiring to Claude.
+Acceptance: A 60-second English audio recording returns an accurate transcript. File is stored in Supabase Storage. Empty or silent recordings return a handled error, not a crash.
+P1 â€” Critical
+BE-08
+Claude Speaking scoring pipeline
+POST /api/diagnostic/submit-speaking
+Wire the full Speaking pipeline: receive audio, save to storage, call Whisper, inject transcript into Claude system prompt from Section 5.4, parse 4 criterion scores, compute overall band, call Matrix Writer, write to assessment_history with transcript column populated, return full response shape including transcript.
+Acceptance: Submit a real audio recording. Response returns band_score, all 4 sub_scores, feedback per criterion, and the transcript string. All written correctly to Supabase. Response matches Section 4.5.
+P1 â€” Critical
+BE-09
+Error handling on all endpoints
+All 4 scoring endpoints
+Implement the full error handling matrix from Section 8 on all four endpoints. Claude 429 and 5xx must retry once internally before returning 503. Whisper failure must return the specific re-record message. All validation errors return 400 with descriptive messages.
+Acceptance: Simulate Claude API failure: endpoint retries once and returns 503 with correct message. Send request with missing student_id: returns 400. Gokul confirms error states render correctly on frontend.
+P1 â€” Critical
+BE-10
+Recommendation seed trigger
+Internal â€” post matrix write
+Implement checkAndTriggerRecommendationSeed() from Section 7. Called after every Matrix Writer call. Checks if overall_complete = true and recommendation_seeded = false. If both, fires n8n webhook with student_id and sets recommendation_seeded = true on the student record. Coordinate with Paul on the n8n webhook URL.
+Acceptance: After 4th skill is scored, n8n webhook fires exactly once. Verify in n8n execution history. recommendation_seeded is true in Supabase. Firing again after the flag is set does nothing.
+P2 â€” High
+BE-11
+Supabase Realtime for status updates
+Supabase config
+Enable Supabase Realtime on the student_competency_matrix table so Gokul can subscribe to row changes instead of polling. Configure the publication to include UPDATE events on the table. Document the channel name and filter Gokul should use in a short Slack message.
+Acceptance: Gokul confirms he can subscribe to student_competency_matrix changes via Supabase client and receive real-time updates when Sarthak's backend writes a new score.
+P2 â€” High
+BE-12
+Environment variable setup
+VPS / infrastructure
+Ensure all required environment variables are set on the Hostinger VPS: OPENAI_API_KEY (for Whisper), ANTHROPIC_API_KEY (for Claude), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, N8N_RECOMMENDATION_SEED_WEBHOOK_URL. Store in .env file. Do not commit secrets to Git â€” confirm .env is in .gitignore.
+Acceptance: .env file exists on VPS. All 5 variables are set. All API calls succeed in the dev environment. .gitignore confirmed to exclude .env.
+P1 â€” Critical
+BE-13
+Integration test document
+Quality assurance
+After all P1 tasks are complete, write a simple test script or Postman collection that calls all 4 scoring endpoints with known inputs and verifies the Supabase output. Share with Paul and Gokul. This does not need to be automated â€” a Postman collection or a shell script with curl commands is sufficient.
+Acceptance: Paul can run the test collection and see all 4 scoring pipelines succeed end-to-end in a single run. Results match expected band scores for the test inputs.
+P3 â€” Medium
+
+
+10.  Coordination notes
+
+First step before writing any code
+Complete BE-01 (Supabase tables) and BE-03 (status endpoint) first. These two tasks unblock Gokul immediately. Once BE-03 is live, Gokul can start building the frontend flow even before scoring is ready â€” he can mock the scoring responses temporarily.
+
+Handoff sequence to Gokul
+BE-01 complete â†’ message Gokul: 'Tables are live. You can check the schema in Supabase.'
+BE-02 + BE-03 complete â†’ message Gokul: 'Questions API and status endpoint are ready. Start FE-01 and FE-02.'
+BE-04 complete â†’ message Gokul: 'Listening and Reading scoring live. Test FE-03 and FE-04 flow.'
+BE-06 complete â†’ message Gokul: 'Writing scoring live. Test FE-05 flow.'
+BE-07 + BE-08 complete â†’ message Gokul: 'Speaking pipeline live. Test FE-06 full flow.'
+
+Known technical risks
+Claude JSON parsing failure â€” Claude will occasionally return JSON with a markdown code fence (```json ... ```) despite instructions not to. Sarthak must strip these defensively before JSON.parse. Never trust the raw response string.
+Whisper empty transcript on silent audio â€” A student who records silence or background noise will get an empty transcript. Handle this case: if transcript.trim().length === 0, return 400 with message 'No speech detected. Please re-record.'
+CORS â€” the Express server must allow requests from Gokul's frontend origin (localhost:3000 in dev, the production domain in prod). Set up CORS middleware before integration testing starts.
+Supabase service role key vs anon key â€” all server-side Supabase calls must use the SERVICE_ROLE_KEY, not the anon key. The anon key is for client-side use only and will fail on protected tables.
+OpenAI Whisper file format â€” Whisper v3 accepts webm and mp4. If Gokul's recorder produces a different format, the API call will fail. Confirm the frontend output format before integration testing.
+
+API keys and costs
+Both the OpenAI Whisper call and the Claude API call incur per-call costs. For the diagnostic sprint, this is acceptable, We need to use hugging face models parallelly to keep as fallbacks. Do not add caching or deduplication logic in this sprint â€” that is a later optimisation.
+
+
+TestCrack â€” Internal document. Not for distribution outside the core team.
+

@@ -593,15 +593,20 @@ model institute_owners {
 }
 
 model institute_students {
-  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id         String     @unique @db.Uuid
-  institute_id    String     @db.Uuid
-  enrollment_date DateTime   @default(dbgenerated("CURRENT_DATE")) @db.Date
-  is_active       Boolean    @default(true)
-  created_at      DateTime   @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime   @default(now()) @db.Timestamptz(6)
-  institutes      institutes @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User            User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                 String                    @unique @db.Uuid
+  institute_id            String                    @db.Uuid
+  enrollment_date         DateTime                  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  is_active               Boolean                   @default(true)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  isDiagnosed             Boolean                   @default(false)
+  recommendationSeeded    Boolean                   @default(false)
+  target_band             Float?
+  AssessmentHistory       AssessmentHistory[]
+  StudentCompetencyMatrix StudentCompetencyMatrix[]
+  institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([is_active], map: "idx_institute_students_active")
   @@index([institute_id], map: "idx_institute_students_institute")
@@ -624,6 +629,39 @@ model institutes {
   User                  User?                   @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@index([is_active], map: "idx_institutes_is_active")
+}
+
+model StudentCompetencyMatrix {
+  id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id         String             @db.Uuid
+  skill              IeltsSkillType
+  band_score         Decimal?           @db.Decimal(2, 1)
+  level              String?            @db.Char(1)
+  sub_scores         Json?
+  assessments_count  Int                @default(0)
+  last_updated       DateTime           @default(now()) @db.Timestamptz(6)
+  institute_students institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([student_id, skill])
+  @@index([student_id])
+}
+
+model AssessmentHistory {
+  id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id         String             @db.Uuid
+  skill              IeltsSkillType
+  mode               AssessmentModeType
+  band_score         Decimal            @db.Decimal(2, 1)
+  sub_scores         Json?
+  feedback_json      Json?
+  transcript         String?
+  raw_answers        Json?
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  institute_students institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@index([student_id])
+  @@index([skill])
+  @@index([mode])
 }
 
 enum ContentType {
@@ -666,4 +704,17 @@ enum UserRoleType {
   SUPERADMIN
   INSTITUTE_OWNER
   INSTITUTE_ADMIN
+}
+
+enum IeltsSkillType {
+  LISTENING
+  READING
+  WRITING
+  SPEAKING
+}
+
+enum AssessmentModeType {
+  DIAGNOSTIC
+  PRACTICE
+  MOCK
 }

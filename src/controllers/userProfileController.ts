@@ -44,6 +44,13 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
             }
           }
         },
+        institute_students: {
+          select: {
+            isDiagnosed: true,
+            recommendationSeeded: true,
+            target_band: true
+          }
+        },
         Instructor: {
           select: {
             id: true,
@@ -72,10 +79,21 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     } else if (user.role === 'INSTITUTE_ADMIN' && user.institute_admins?.institutes) {
       instituteIsActive = user.institute_admins.institutes.is_active;
     }
+
+    let isDiagnosed = false;
+    let recommendationSeeded = false;
+    let targetBand = null;
+    if (user.role === 'STUDENT' && user.institute_students) {
+      isDiagnosed = user.institute_students.isDiagnosed;
+      recommendationSeeded = user.institute_students.recommendationSeeded;
+      targetBand = user.institute_students.target_band;
+    }
+
     delete (user as any).institute_owners;
     delete (user as any).institute_admins;
+    delete (user as any).institute_students;
 
-    res.json({ user: { ...user, instituteIsActive } });
+    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand } });
   } catch (error) {
     console.error('[getUserProfile] Error:', error);
     res.status(500).json({ error: 'Failed to fetch user profile' });
@@ -92,7 +110,7 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    const { name, countryCode, phoneNo } = req.body;
+    const { name, countryCode, phoneNo, targetBand } = req.body;
 
     // Build update data object with only provided fields
     const updateData: any = {
@@ -118,6 +136,13 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
         updatedAt: true,
       },
     });
+
+    if (targetBand !== undefined) {
+      await prisma.institute_students.updateMany({
+        where: { user_id: userId },
+        data: { target_band: targetBand }
+      });
+    }
 
     res.json({ user: updatedUser, message: 'Profile updated successfully' });
   } catch (error: any) {
