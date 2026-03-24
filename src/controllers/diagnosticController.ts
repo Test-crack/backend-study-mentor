@@ -20,7 +20,14 @@ export const getDiagnosticStatus = async (req: AuthRequest & { appUserId?: strin
     });
 
     if (!instituteStudent) {
-      return res.status(404).json({ error: 'Student record not found for this user.' });
+      // Gracefully handle missing mapping from dev environments
+      return res.json({
+        isDiagnosed: false,
+        listening_scored: false,
+        reading_scored: false,
+        writing_scored: false,
+        speaking_scored: false
+      });
     }
 
     if (instituteStudent.isDiagnosed) {
