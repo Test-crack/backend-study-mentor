@@ -119,7 +119,7 @@ export const diagnosticQuestionSets: Record<DiagnosticLevel, DiagnosticSet> = {
       passage: "Quantum entanglement defies Newtonian mechanics by demonstrating non-locality. When pairs of particles are generated in a correlated state, the quantum state of each cannot be described independently of the other, even when separated by vast distances. Einstein famously disparaged this phenomenon as 'spooky action at a distance', yet subsequent Bell test experiments have conclusively proven its existence.",
       questions: [
         { id: "C-R-1", type: "tfng", text: "Quantum entanglement adheres strictly to the laws of Newtonian mechanics.", options: ["A. True", "B. False", "C. Not Given"], answer_key: "B" },
-        { id: "C-R-2", type: "tfng", text: "Einstein initially embraced the concept of quantum non-locality.", options: ["A. True", "B. False", "C. Not Given"], answer_key: "B" },
+        { id: "C-R-2", type: "tfng", text: "Einstein initially embraced the concept of quantum non-locality.", options: ["A. True", "B. False", "C. Not Given"], answer_key: "B" },                                                                        
         { id: "C-R-3", type: "tfng", text: "Bell test experiments confirmed Einstein's theoretical doubts.", options: ["A. True", "B. False", "C. Not Given"], answer_key: "B" },
         { id: "C-R-4", type: "tfng", text: "Entangled particles must remain in close physical proximity to maintain their state.", options: ["A. True", "B. False", "C. Not Given"], answer_key: "B" }
       ]

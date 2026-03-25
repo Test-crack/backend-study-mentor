@@ -9,7 +9,7 @@ export async function analyzeSpeaking(topic: string, audioFilePath: string, mime
     throw new Error('GEMINI_API_KEY is missing');
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const prompt = `
     You are an expert IELTS Speaking examiner. 
@@ -17,6 +17,12 @@ export async function analyzeSpeaking(topic: string, audioFilePath: string, mime
     Topic: "${topic}"
 
     Evaluate the spoken response strictly according to the official IELTS speaking band descriptors.
+    When grading, carefully analyze the speaker's fluency, noting details such as:
+    - Stops, unnatural pauses, or hesitations
+    - Confidence in delivery and tone
+    - Excessive use of filling words (e.g., "um", "ah", "like", "you know")
+    - Flow and spontaneity
+
     Anchor your scoring explicitly against these criteria:
     9: Expert User (Fully operational command)
     8: Very Good User (Fully operational command, occasional inaccuracies)
@@ -33,7 +39,7 @@ export async function analyzeSpeaking(topic: string, audioFilePath: string, mime
     4. Pronunciation (pronunciationScore)
     
     You must calculate the overall 'bandScore' as the mathematical average of the 4 criteria, rounded down to the nearest 0.5.
-    Additionally, provide a transcript of the audio.
+    Additionally, provide a highly accurate transcript of the audio.
     
     You must return your evaluation strictly in the following JSON structure without any markdown formatting:
     {
@@ -46,6 +52,8 @@ export async function analyzeSpeaking(topic: string, audioFilePath: string, mime
       "detailedFeedback": {
         "fluency": ["string"],
         "pronunciation": ["string"],
+        "delivery_and_confidence": ["string"],
+        "filler_words_used": ["string"],
         "improvements": "string"
       }
     }
