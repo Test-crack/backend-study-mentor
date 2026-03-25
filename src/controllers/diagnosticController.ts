@@ -207,6 +207,17 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
     let subScores: any = {};
     const skillUpper = skill.toUpperCase() as "LISTENING" | "READING" | "WRITING" | "SPEAKING";
 
+    // Defensively parse answers in case of proxy stringification/urlencoded issues
+    let parsedAnswers = answers;
+    if (typeof answers === 'string') {
+      try {
+        parsedAnswers = JSON.parse(answers);
+      } catch (e) {
+        parsedAnswers = {};
+      }
+    }
+    parsedAnswers = parsedAnswers || {};
+
     if (skillUpper === "LISTENING" || skillUpper === "READING") {
       const questions = skillUpper === "LISTENING" ? set.listening.questions : set.reading.questions;
       let correct = 0;
@@ -219,7 +230,11 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
         if (!questionTypes[type]) questionTypes[type] = { correct: 0, total: 0 };
         questionTypes[type].total++;
         
-        if (answers[q.id] && q.answer_key === answers[q.id]) {
+        // Ensure robust matching by trimming whitespace and case-insensitivity
+        const studentAns = typeof parsedAnswers[q.id] === 'string' ? parsedAnswers[q.id].trim().toUpperCase() : parsedAnswers[q.id];
+        const expectedAns = q.answer_key ? q.answer_key.trim().toUpperCase() : undefined;
+
+        if (studentAns && expectedAns === studentAns) {
           correct++;
           questionTypes[type].correct++;
         }
@@ -236,13 +251,13 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
       };
 
     } else if (skillUpper === "WRITING") {
-      const wordCount = answers.text ? answers.text.split(' ').length : 0;
+      const wordCount = parsedAnswers.text ? parsedAnswers.text.split(' ').length : 0;
       if (wordCount < 10) {
         bandScore = 0;
         subScores = { word_count: wordCount, error: "Text too short to evaluate" };
       } else {
         const topic = set.writing.topic;
-        const analysis = await analyzeWriting(topic, answers.text);
+        const analysis = await analyzeWriting(topic, parsedAnswers.text);
         bandScore = Number(analysis.bandScore) || 0;
         subScores = {
           word_count: wordCount,
@@ -262,7 +277,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
     bandScore = Math.min(Math.round(bandScore * 2) / 2, 9.0);
 
     // Save to DB (AssessmentHistory & StudentCompetencyMatrix)
-    await saveDiagnosticAssessment(instituteStudent.id, skillUpper, bandScore, answers, subScores);
+    await saveDiagnosticAssessment(instituteStudent.id, skillUpper, bandScore, parsedAnswers, subScores);
 
     // If all 4 are done, mark as diagnosed
     const statusResult: any[] = await prisma.$queryRaw`
