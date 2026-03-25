@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth';
 import { diagnosticQuestionSets, DiagnosticLevel } from '../data/diagnosticQuestions';
+import { analyzeWriting } from '../services/ieltsWritingService';
+import { analyzeSpeaking } from '../services/ieltsSpeakingService';
+import fs from 'fs';
 
 const prisma = new PrismaClient();
 
@@ -130,15 +133,22 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 /**
  * Handles saving to AssessmentHistory and StudentCompetencyMatrix
  */
-const saveDiagnosticAssessment = async (studentId: string, skill: "LISTENING" | "READING" | "WRITING" | "SPEAKING", bandScore: number, answers: any) => {
+const saveDiagnosticAssessment = async (
+  studentId: string, 
+  skill: "LISTENING" | "READING" | "WRITING" | "SPEAKING", 
+  bandScore: number, 
+  answers: any,
+  subScores: any
+) => {
   // 1. Create the History log
-  await prisma.assessmentHistory.create({
+  const history = await prisma.assessmentHistory.create({
     data: {
       student_id: studentId,
       skill,
       mode: 'DIAGNOSTIC',
       band_score: bandScore,
-      raw_answers: answers
+      raw_answers: answers,
+      sub_scores: subScores
     }
   });
 
@@ -152,6 +162,7 @@ const saveDiagnosticAssessment = async (studentId: string, skill: "LISTENING" | 
     },
     update: {
       band_score: bandScore,
+      sub_scores: subScores,
       assessments_count: { increment: 1 },
       last_updated: new Date()
     },
@@ -159,6 +170,7 @@ const saveDiagnosticAssessment = async (studentId: string, skill: "LISTENING" | 
       student_id: studentId,
       skill,
       band_score: bandScore,
+      sub_scores: subScores,
       assessments_count: 1
     }
   });
@@ -184,40 +196,73 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
       return res.status(404).json({ error: 'Student record not found.' });
     }
 
-    const diagnosticLevel: DiagnosticLevel = (['A', 'B', 'C'].includes(level)) ? level : 'A';
+    const targetBand = instituteStudent?.target_band || 7.0;
+    let diagnosticLevel: DiagnosticLevel = 'B';
+    if (targetBand <= 5.5) diagnosticLevel = 'A';
+    else if (targetBand >= 7.0) diagnosticLevel = 'C';
+
     const set = diagnosticQuestionSets[diagnosticLevel];
 
     let bandScore = 0;
+    let subScores: any = {};
     const skillUpper = skill.toUpperCase() as "LISTENING" | "READING" | "WRITING" | "SPEAKING";
 
     if (skillUpper === "LISTENING" || skillUpper === "READING") {
-      // Basic grading logic
       const questions = skillUpper === "LISTENING" ? set.listening.questions : set.reading.questions;
       let correct = 0;
+      const total = questions.length;
       
-      // answers should be an object mapping question ID to selected option string
-      Object.keys(answers).forEach(qId => {
-        const q = questions.find(question => question.id === qId);
-        if (q && q.answer_key === answers[qId]) {
+      const questionTypes: Record<string, { correct: number; total: number }> = {};
+      
+      questions.forEach(q => {
+        const type = q.type || 'mcq';
+        if (!questionTypes[type]) questionTypes[type] = { correct: 0, total: 0 };
+        questionTypes[type].total++;
+        
+        if (answers[q.id] && q.answer_key === answers[q.id]) {
           correct++;
+          questionTypes[type].correct++;
         }
       });
       
-      // very basic score mapping for 6 questions
-      bandScore = (correct / 6) * 9; 
+      // Calculate band score proportionally (assuming 9.0 max over 'total' questions)
+      bandScore = total > 0 ? (correct / total) * 9 : 0; 
+      
+      subScores = {
+        total_questions: total,
+        correct_answers: correct,
+        accuracy_percentage: total > 0 ? Math.round((correct / total) * 100) : 0,
+        by_question_type: questionTypes
+      };
+
     } else if (skillUpper === "WRITING") {
-      // mock write grading
       const wordCount = answers.text ? answers.text.split(' ').length : 0;
-      bandScore = wordCount > 150 ? 6.5 : 4.5;
+      if (wordCount < 10) {
+        bandScore = 0;
+        subScores = { word_count: wordCount, error: "Text too short to evaluate" };
+      } else {
+        const topic = set.writing.topic;
+        const analysis = await analyzeWriting(topic, answers.text);
+        bandScore = Number(analysis.bandScore) || 0;
+        subScores = {
+          word_count: wordCount,
+          grammarScore: analysis.grammarScore,
+          vocabularyScore: analysis.vocabularyScore,
+          coherenceScore: analysis.coherenceScore,
+          taskResponseScore: analysis.taskResponseScore,
+          feedback: analysis.detailedFeedback
+        };
+      }
     } else if (skillUpper === "SPEAKING") {
-      // mock speaking grading
       bandScore = 6.0;
+      subScores = { fluency: 6.0 };
     }
 
     // Cap at 1 decimal, up to 9.0
     bandScore = Math.min(Math.round(bandScore * 2) / 2, 9.0);
 
-    await saveDiagnosticAssessment(instituteStudent.id, skillUpper, bandScore, answers);
+    // Save to DB (AssessmentHistory & StudentCompetencyMatrix)
+    await saveDiagnosticAssessment(instituteStudent.id, skillUpper, bandScore, answers, subScores);
 
     // If all 4 are done, mark as diagnosed
     const statusResult: any[] = await prisma.$queryRaw`
@@ -233,10 +278,110 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
       });
     }
 
-    res.json({ message: `${skillUpper} diagnostic submitted successfully`, bandScore, overallComplete });
+    res.json({ 
+      message: `${skillUpper} diagnostic submitted successfully`, 
+      bandScore, 
+      overallComplete,
+      sub_scores: subScores,
+      feedback: subScores?.feedback ? `Improvements: ${subScores.feedback.improvements}` : undefined
+    });
 
   } catch (error) {
     console.error(`[submitDiagnosticAssessment] Error:`, error);
     res.status(500).json({ error: 'Failed to submit assessment' });
+  }
+};
+
+/**
+ * POST /api/diagnostic/submit/speaking
+ * Handles multipart/form-data specifically for audio payloads.
+ */
+export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+  try {
+    const userId = req.appUserId;
+    if (!userId) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const instituteStudent = await prisma.institute_students.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!instituteStudent) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(404).json({ error: 'Student record not found.' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'Audio file is required for speaking diagnostic.' });
+    }
+
+    const targetBand = instituteStudent?.target_band || 7.0;
+    let diagnosticLevel: DiagnosticLevel = 'B';
+    if (targetBand <= 5.5) diagnosticLevel = 'A';
+    else if (targetBand >= 7.0) diagnosticLevel = 'C';
+
+    const set = diagnosticQuestionSets[diagnosticLevel];
+    const topic = set.speaking.prompts[0] || 'Introduce yourself and describe your hometown.';
+
+    let bandScore = 0;
+    let subScores: any = {};
+    let transcript = '';
+
+    try {
+      const analysis = await analyzeSpeaking(topic, req.file.path, req.file.mimetype || 'audio/webm');
+      
+      bandScore = Number(analysis.bandScore) || 0;
+      bandScore = Math.max(4.0, Math.min(Math.round(bandScore * 2) / 2, 9.0));
+
+      transcript = analysis.transcript;
+      subScores = {
+        fluencyScore: analysis.fluencyScore,
+        vocabularyScore: analysis.vocabularyScore,
+        grammarScore: analysis.grammarScore,
+        pronunciationScore: analysis.pronunciationScore,
+        feedback: analysis.detailedFeedback
+      };
+
+    } catch (aiError) {
+      console.error('[analyzeSpeaking] Failure:', aiError);
+      // Fallback
+      bandScore = 6.0;
+      subScores = { error: 'Failed to evaluate audio correctly', fallback: true };
+    } finally {
+      // Clean up the uploaded audio file immediately
+      fs.unlink(req.file.path, () => {});
+    }
+
+    // Save to Database
+    await saveDiagnosticAssessment(instituteStudent.id, "SPEAKING", bandScore, { prompt: topic }, subScores);
+
+    // Check completion
+    const statusResult: any[] = await prisma.$queryRaw`
+      SELECT * FROM "diagnostic_status" WHERE "student_id" = ${instituteStudent.id}::uuid
+    `;
+    let overallComplete = false;
+    if (statusResult.length > 0 && statusResult[0].overall_complete) {
+      overallComplete = true;
+      await prisma.institute_students.update({
+        where: { id: instituteStudent.id },
+        data: { isDiagnosed: true }
+      });
+    }
+
+    res.json({ 
+      message: `SPEAKING diagnostic submitted successfully`, 
+      bandScore, 
+      overallComplete,
+      sub_scores: subScores,
+      transcript,
+      feedback: subScores?.feedback ? `Improvements: ${subScores.feedback.improvements}` : undefined
+    });
+
+  } catch (error) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    console.error(`[submitDiagnosticSpeaking] Error:`, error);
+    res.status(500).json({ error: 'Failed to submit speaking assessment' });
   }
 };
