@@ -9,7 +9,7 @@ export async function analyzeSpeaking(topic: string, audioFilePath: string, mime
     throw new Error('GEMINI_API_KEY is missing');
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   const prompt = `
     You are an expert IELTS Speaking examiner. 
