@@ -5,7 +5,7 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
-import { getSpeakingHistory } from '../controllers/studentController';
+import { getSpeakingHistory, getCompetencyScores } from '../controllers/studentController';
 
 const router = Router();
 
@@ -18,5 +18,8 @@ router.get('/batches', getStudentBatches);
 
 // GET /api/student/speaking-history — Student's own past analytics
 router.get('/speaking-history', getSpeakingHistory);
+
+// GET /api/student/competency-scores — Student's competency matrix
+router.get('/competency-scores', getCompetencyScores);
 
 export default router;

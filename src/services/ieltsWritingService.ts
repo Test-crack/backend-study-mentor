@@ -3,72 +3,172 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-export async function analyzeWriting(topic: string, content: string) {
+export async function analyzeWriting(topic: string, content: string, taskType: "Task 1" | "Task 2" = "Task 1") {
   if (!GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is missing');
   }
 
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
+  const wordCount = content.trim().split(/\s+/).length;
+
   const prompt = `
-    You are an expert IELTS examiner. Analyze the following student essay based on this topic prompt:
-    Topic: "${topic}"
+You are a strict IELTS Writing examiner conducting an official band assessment.
+You do not inflate scores to encourage students. Your job is accuracy, 
+not encouragement. A student who receives an inflated score will fail 
+their real exam — that is the harm you must prevent.
 
-    Student Essay:
-    """
-    ${content}
-    """
+Task type: "${taskType}" (either "Task 1" or "Task 2")
+Topic: "${topic}"
 
-    Evaluate this essay strictly according to the official IELTS writing band descriptors.
-    Anchor your scoring explicitly against these IDP IELTS metrics:
-    9: Expert User (Fully operational command)
-    8: Very Good User (Fully operational command, occasional inaccuracies)
-    7: Good User (Operational command, some inaccuracies)
-    6: Competent User (Generally effective command, some inaccuracies)
-    5: Modest User (Partial command, copes with general meaning)
-    4: Limited User (Basic competence in familiar situations)
-    3: Extremely Limited User (Conveys only general meaning)
-    2: Intermittent User (Great difficulty understanding)
-    1: Non-User (Cannot communicate)
-    0: Did not attempt (Did not answer questions)
+Student response:
+"""
+${content}
+"""
 
-    Score each of the four criteria precisely from 4.0 to 9.0, limited to 0.5 increments (e.g., 6.0, 6.5, 7.0, etc.). 
-    Do not give any metric below 4.0.
-    1. Task Achievement / Task Response (taskResponseScore)
-    2. Coherence & Cohesion (coherenceScore)
-    3. Lexical Resource (vocabularyScore)
-    4. Grammatical Range and Accuracy (grammarScore)
-    
-    You must calculate the overall 'bandScore' as the mathematical average of the 4 criteria, rounded down to the nearest 0.5.
-    
-    You must return your evaluation strictly in the following JSON structure without any surrounding markdown blocks or markdown formatting (e.g. no \`\`\`json):
-    {
-      "bandScore": number,
-      "grammarScore": number,
-      "vocabularyScore": number,
-      "coherenceScore": number,
-      "taskResponseScore": number,
-      "detailedFeedback": {
-        "grammar": ["string"],
-        "vocabulary": ["string"],
-        "improvements": "string"
-      }
-    }
-  `;
+Word count: ${wordCount} words.
+
+SCORING RULES:
+- Score each criterion on the 0.5-increment scale from 1.0 to 9.0.
+- If word count is below 150 (Task 1) or 250 (Task 2), the 
+  Task Achievement/Response score cannot exceed 5.0.
+- Do not give any criterion above 6.5 unless the performance is 
+  clearly strong across every observable marker for that band.
+- The overall bandScore is the MEAN of the 4 criteria, rounded to 
+  the nearest 0.5.
+
+CRITERION DESCRIPTORS:
+
+TASK ACHIEVEMENT (Task 1) / TASK RESPONSE (Task 2):
+9.0: Fully satisfies all requirements. Sufficiently developed position 
+     with fully extended and well-supported ideas.
+7.0: Addresses all parts of the task. Presents a clear position 
+     throughout. Main ideas are extended and supported but 
+     balance of coverage may be uneven.
+6.0: Addresses all parts of the task though some more fully than 
+     others. Presents a relevant position but conclusions may be 
+     unclear or repetitive. Main ideas are extended but not all 
+     are supported.
+5.0: Addresses the task only partially. Format may be inappropriate. 
+     Position is expressed but difficult to identify. Some main 
+     ideas are present but lack development.
+4.0: Responds to task but fails to address it adequately. Format 
+     may be inappropriate. A position is present but not clear. 
+     Ideas are repetitive or mechanical.
+
+COHERENCE AND COHESION:
+9.0: Sequences information seamlessly. Manages all aspects of cohesion 
+     skilfully. Paragraphing is used appropriately throughout.
+7.0: Logically organises information with clear overall progression. 
+     Uses a range of cohesive devices appropriately although there 
+     may be some over- or under-use.
+6.0: Arranges information coherently with clear overall progression. 
+     Uses cohesive devices effectively but over- or under-uses some 
+     features. Uses paragraphing but not always logically.
+5.0: Presents information with some organisation but lacks overall 
+     progression. Uses limited range of cohesive devices. May not 
+     write in paragraphs or may not paragraph appropriately.
+4.0: Presents information but lacks overall progression. Uses a 
+     limited range of cohesive devices and those used may not 
+     indicate a logical relationship between ideas.
+
+LEXICAL RESOURCE:
+9.0: Uses a wide range of vocabulary with sophisticated control. 
+     Errors are rare and minor.
+7.0: Uses a sufficient range of vocabulary to allow flexibility and 
+     precision. Uses less common lexical items with some awareness 
+     of style. Minor errors in spelling and word formation.
+6.0: Uses an adequate range of vocabulary for the task. Attempts to 
+     use less common vocabulary but with some inaccuracy. Makes 
+     some errors in spelling and word formation but meaning is clear.
+5.0: Uses a limited range of vocabulary but this is minimally 
+     adequate for the task. May make noticeable errors in 
+     spelling and word formation that cause difficulty for the reader.
+4.0: Uses only basic vocabulary which is inadequate or may be 
+     inappropriately used. Errors in spelling and word formation 
+     may cause strain for the reader.
+
+GRAMMATICAL RANGE AND ACCURACY:
+9.0: Uses a wide range of structures with full flexibility and 
+     accuracy. Rare minor errors.
+7.0: Uses a variety of complex structures. Produces frequent 
+     error-free sentences. Has good control of grammar and 
+     punctuation but may make a few errors.
+6.0: Uses a mix of simple and complex sentence forms. Makes some 
+     errors in grammar and punctuation but rarely impedes communication.
+5.0: Uses only a limited range of structures. Attempts complex 
+     sentences but these tend to be less accurate. May make frequent 
+     grammatical errors and punctuation may be faulty.
+4.0: Uses only a very limited range of structures with only rare 
+     use of subordinate clauses. Some structures are accurate but 
+     errors predominate and punctuation is often faulty.
+
+FEEDBACK RULES — critical:
+- Every score_rationale must cite specific evidence from the essay. 
+  Do not make claims that cannot be verified from the text.
+- "error_examples" must quote exact text from the essay with 
+  correction and explanation.
+- "next_step" must be one specific, practisable technique — 
+  not general advice like "read more."
+- Do not praise effort. Assess only quality.
+
+Return ONLY valid JSON with no markdown, no code fences, no preamble:
+
+{
+  "bandScore": number,
+  "taskResponseScore": number,
+  "coherenceScore": number,
+  "vocabularyScore": number,
+  "grammarScore": number,
+  "feedback": {
+    "task_response": {
+      "score_rationale": "One sentence citing specific evidence from the essay for this score",
+      "observed_issues": ["specific issue with quote from essay"],
+      "next_step": "One specific technique to apply in the next writing session"
+    },
+    "coherence": {
+      "score_rationale": "One sentence citing specific evidence for this score",
+      "observed_issues": ["specific structural or cohesion issue"],
+      "next_step": "One specific technique to apply in the next writing session"
+    },
+    "vocabulary": {
+      "score_rationale": "One sentence citing specific evidence for this score",
+      "error_examples": ["quote exact vocabulary error and explain it"],
+      "strengths": ["quote specific strong vocabulary choice if present"],
+      "next_step": "One specific technique to apply in the next writing session"
+    },
+    "grammar": {
+      "score_rationale": "One sentence citing specific evidence for this score",
+      "error_examples": ["quote exact grammatical error, provide correction, explain the rule"],
+      "next_step": "One specific technique to apply in the next writing session"
+    },
+    "priority_action": "The single most impactful change this student should make before submitting their next essay"
+  }
+}
+`;
 
   try {
     const result = await model.generateContent(prompt);
-    let output = result.response.text();
-
-    // Clean up potential markdown wrapper from Gemini output
-    if (output.startsWith('\`\`\`json')) {
-      output = output.replace(/\`\`\`json\n/g, '').replace(/\`\`\`/g, '');
-    } else if (output.startsWith('\`\`\`')) {
-      output = output.replace(/\`\`\`\n/g, '').replace(/\`\`\`/g, '');
+    let rawText = result.response.text().trim();
+    
+    // Strip markdown fences if present
+    if (rawText.startsWith('```')) {
+      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
 
-    const parsedJson = JSON.parse(output.trim());
-    return parsedJson;
+    const evaluation = JSON.parse(rawText);
+
+    // Validate the band score arithmetic yourself
+    const criteria = [
+      evaluation.taskResponseScore,
+      evaluation.coherenceScore, 
+      evaluation.vocabularyScore,
+      evaluation.grammarScore
+    ];
+    const avg = criteria.reduce((a, b) => a + b, 0) / criteria.length;
+    evaluation.bandScore = Math.round(avg * 2) / 2; // round to nearest 0.5
+
+    return evaluation;
   } catch (error: any) {
     console.error('Error in analyzeWriting:', error);
     throw new Error('Failed to analyze writing with AI.');

@@ -184,7 +184,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
   try {
     const userId = req.appUserId;
     const { skill } = req.params; // listening, reading, writing, speaking
-    const { level, answers } = req.body;
+    const { level, answers, taskType } = req.body;
 
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -257,7 +257,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
         subScores = { word_count: wordCount, error: "Text too short to evaluate" };
       } else {
         const topic = set.writing.topic;
-        const analysis = await analyzeWriting(topic, parsedAnswers.text);
+        const analysis = await analyzeWriting(topic, parsedAnswers.text, taskType || "Task 1");
         bandScore = Number(analysis.bandScore) || 0;
         subScores = {
           word_count: wordCount,
@@ -265,7 +265,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
           vocabularyScore: analysis.vocabularyScore,
           coherenceScore: analysis.coherenceScore,
           taskResponseScore: analysis.taskResponseScore,
-          feedback: analysis.detailedFeedback
+          feedback: analysis.feedback
         };
       }
     } else if (skillUpper === "SPEAKING") {
@@ -298,7 +298,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
       bandScore, 
       overallComplete,
       sub_scores: subScores,
-      feedback: subScores?.feedback ? `Improvements: ${subScores.feedback.improvements}` : undefined
+      feedback: subScores?.feedback
     });
 
   } catch (error) {
@@ -356,7 +356,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         vocabularyScore: analysis.vocabularyScore,
         grammarScore: analysis.grammarScore,
         pronunciationScore: analysis.pronunciationScore,
-        feedback: analysis.detailedFeedback
+        feedback: analysis.feedback
       };
 
     } catch (aiError) {
@@ -370,7 +370,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
     }
 
     // Save to Database
-    await saveDiagnosticAssessment(instituteStudent.id, "SPEAKING", bandScore, { prompt: topic }, subScores);
+    await saveDiagnosticAssessment(instituteStudent.id, "SPEAKING", bandScore, { prompt: topic, transcript }, subScores);
 
     // Check completion
     const statusResult: any[] = await prisma.$queryRaw`
@@ -391,7 +391,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
       overallComplete,
       sub_scores: subScores,
       transcript,
-      feedback: subScores?.feedback ? `Improvements: ${subScores.feedback.improvements}` : undefined
+      feedback: subScores?.feedback
     });
 
   } catch (error) {

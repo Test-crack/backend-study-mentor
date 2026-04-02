@@ -66,3 +66,39 @@ export async function getSpeakingHistory(req: AuthRequest, res: Response) {
         res.status(500).json({ success: false, error: 'Internal server error while fetching history.' });
     }
 }
+
+/**
+ * Get the authenticated student's competency matrix (latest band scores)
+ * GET /api/student/competency-scores
+ */
+export async function getCompetencyScores(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+
+        if (!appUserId) {
+            return res.status(401).json({ success: false, error: 'Unauthorized user.' });
+        }
+
+        const student = await prisma.institute_students.findUnique({
+            where: { user_id: appUserId }
+        });
+
+        if (!student) {
+             return res.status(404).json({ success: false, error: 'Student record not found.' });
+        }
+
+        const matrix = await prisma.studentCompetencyMatrix.findMany({
+            where: { student_id: student.id }
+        });
+
+        return res.json({
+            success: true,
+            data: matrix,
+            target_band: student.target_band
+        });
+
+    } catch (error) {
+        console.error('[StudentController] getCompetencyScores error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error while fetching competency scores.' });
+    }
+}
