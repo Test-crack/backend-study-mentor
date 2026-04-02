@@ -29,8 +29,10 @@ ${content}
 Word count: ${wordCount} words.
 
 SCORING RULES:
+- TRIVIAL RESPONSE PENALTY: If the word count is extremely low (e.g., under 30 words), or consists of random words/characters without full sentences, you MUST assign a score of 1.0 or 2.0 to ALL criteria. You cannot properly evaluate a full essay based on a few words.
+- STRICT RELEVANCE PENALTY: The essay MUST be specifically about the provided Topic. If the content is out of context, addresses a random topic, or uses a memorized template that ignores the specific prompt asked, you MUST cap the Task Achievement/Response and Lexical Resource scores at a maximum of 2.0. You must strictly penalize essays that don't answer the specific question.
 - Score each criterion on the 0.5-increment scale from 1.0 to 9.0.
-- If word count is below 150 (Task 1) or 250 (Task 2), the 
+- If word count is below 150 (Task 1) or 250 (Task 2) but is a genuine attempt, the 
   Task Achievement/Response score cannot exceed 5.0.
 - Do not give any criterion above 6.5 unless the performance is 
   clearly strong across every observable marker for that band.
@@ -145,15 +147,15 @@ Return ONLY valid JSON with no markdown, no code fences, no preamble:
     "priority_action": "The single most impactful change this student should make before submitting their next essay"
   }
 }
-`;
+\`;
 
   try {
     const result = await model.generateContent(prompt);
     let rawText = result.response.text().trim();
     
     // Strip markdown fences if present
-    if (rawText.startsWith('```')) {
-      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    if (rawText.startsWith('\`\`\`')) {
+      rawText = rawText.replace(/^\`\`\`(?:json)?\\n?/, '').replace(/\\n?\`\`\`$/, '');
     }
 
     const evaluation = JSON.parse(rawText);

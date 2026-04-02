@@ -21,6 +21,8 @@ The student was responding to this prompt:
 Topic: "${topic}"
 
 SCORING RULES:
+- TRIVIAL RESPONSE & MURMUR PENALTY: If the response is just random murmurs (e.g., "Uhm", "Hmm"), a single sentence, or extremely short, you MUST assign a score of 1.0 or 2.0 to ALL criteria. You cannot evaluate fluency, grammar, or vocabulary on a mere grunt or single phrase.
+- STRICT RELEVANCE PENALTY: The answer MUST be specifically in context with the provided Topic. If the answer is entirely out of context, talks about a random different topic, or is just a pre-memorized unrelated speech, you MUST assign a maximum score of 2.0 for Fluency & Coherence, and Lexical Resource. You must penalize answers that don't address the specific question asked.
 - Score each criterion on the 0.5-increment scale from 1.0 to 9.0.
 - Do not give any criterion above 6.5 unless the performance is clearly 
   strong across every observable marker for that band.
