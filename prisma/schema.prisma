@@ -664,6 +664,24 @@ model AssessmentHistory {
   @@index([mode])
 }
 
+model RecommendationItem {
+  id            String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title         String              @db.VarChar(300)
+  url           String
+  description   String?
+  thumbnail_url String?
+  source        String?             @db.VarChar(150)
+  duration_min  Int?
+  type          RecommendationType
+  skill_type    IeltsSkillType
+  level         RecommendationLevel
+  is_active     Boolean             @default(true)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@index([skill_type, level, is_active])
+}
+
 enum ContentType {
   YOUTUBE
   NOTES
@@ -717,4 +735,16 @@ enum AssessmentModeType {
   DIAGNOSTIC
   PRACTICE
   MOCK
+}
+
+enum RecommendationLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum RecommendationType {
+  VIDEO
+  BLOG
+  PRACTICE_TEST
 }

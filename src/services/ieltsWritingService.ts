@@ -147,15 +147,15 @@ Return ONLY valid JSON with no markdown, no code fences, no preamble:
     "priority_action": "The single most impactful change this student should make before submitting their next essay"
   }
 }
-\`;
+`;
 
   try {
     const result = await model.generateContent(prompt);
     let rawText = result.response.text().trim();
     
     // Strip markdown fences if present
-    if (rawText.startsWith('\`\`\`')) {
-      rawText = rawText.replace(/^\`\`\`(?:json)?\\n?/, '').replace(/\\n?\`\`\`$/, '');
+    if (rawText.startsWith('```')) {
+      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
 
     const evaluation = JSON.parse(rawText);
