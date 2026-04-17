@@ -7,9 +7,22 @@ import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
 import { getSpeakingHistory, getCompetencyScores } from '../controllers/studentController';
 import { getRecommendations } from '../controllers/recommendationController';
+import { getNextActionDrill } from '../controllers/drillController';
 
 const router = Router();
 
+// =========================================================================
+// TEMPORARY FOR POSTMAN TESTING (No Auth Required)
+// =========================================================================
+router.get('/next-action-drill', (req, res, next) => {
+    // We are mocking a specific user ID here for testing.
+    // Replace this string with a valid user UUID from your database!
+    (req as any).appUserId = '69bb7e8c-1d35-4191-83cd-fd625be72b36';
+    next();
+}, getNextActionDrill);
+// =========================================================================
+
+// --- REAL AUTH STARTS HERE ---
 router.use(requireAuth);
 router.use(ensureUser);
 router.use(authorize(UserRoleType.STUDENT));
