@@ -14,18 +14,21 @@ const router = Router();
 // =========================================================================
 // TEMPORARY FOR POSTMAN TESTING (No Auth Required)
 // =========================================================================
-router.get('/next-action-drill', (req, res, next) => {
-    // We are mocking a specific user ID here for testing.
-    // Replace this string with a valid user UUID from your database!
-    (req as any).appUserId = '69bb7e8c-1d35-4191-83cd-fd625be72b36';
-    next();
-}, getNextActionDrill);
+// router.get('/next-action-drill', (req, res, next) => {
+//     // We are mocking a specific user ID here for testing.
+//     // Replace this string with a valid user UUID from your database!
+//     (req as any).appUserId = '69bb7e8c-1d35-4191-83cd-fd625be72b36';
+//     next();
+// }, getNextActionDrill);
 // =========================================================================
 
 // --- REAL AUTH STARTS HERE ---
 router.use(requireAuth);
 router.use(ensureUser);
 router.use(authorize(UserRoleType.STUDENT));
+
+// GET /api/student/next-action-drill — Next prioritized drill to act on
+router.get('/next-action-drill', getNextActionDrill);
 
 // GET /api/student/batches  — enrolled batches with instructors
 router.get('/batches', getStudentBatches);

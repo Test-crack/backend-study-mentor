@@ -730,15 +730,15 @@ model ContentLibrary {
 }
 
 model DrillSession {
-  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id        String   @db.Uuid
-  skill             String
-  sub_skill         String
-  drill_type        String
+  id                String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id        String            @db.Uuid
+  skill             IeltsSkillType
+  sub_skill         IeltsSubSkillType
+  drill_type        String?           @db.VarChar(50)
   prompts_completed Int
   momentum_earned   Int
-  ai_feedback_json  Json
-  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  ai_feedback_json  Json?
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
 
   Student institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
@@ -758,6 +758,35 @@ model ContentCompletion {
   Content ContentLibrary     @relation(fields: [content_id], references: [id], onDelete: Cascade)
 
   @@map("content_completions")
+}
+
+model DrillQuestion {
+  id               String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  skill            IeltsSkillType
+  sub_skill        IeltsSubSkillType
+  level            RecommendationLevel
+  drill_type       String              @db.VarChar(50)     // e.g., 'MCQ', 'FILL_UP'
+  prompt_text      String              @db.Text
+  options          Json?
+  correct_answer   Json
+  explanation      String?             @db.Text
+  is_active        Boolean             @default(true)
+  created_at       DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@index([skill, sub_skill, level, is_active])
+  @@map("drill_questions")
+}
+
+enum IeltsSubSkillType {
+  LISTENING
+  READING
+  GRAMMAR
+  VOCABULARY
+  COHERENCE
+  TASK_RESPONSE
+  FLUENCY
+  PRONUNCIATION
 }
 
 enum ContentType {

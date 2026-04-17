@@ -20,6 +20,7 @@ import instituteAdminRoutes from './routes/instituteAdminRoutes';
 import studentRoutes from './routes/studentRoutes';
 import readingPracticeRoutes from './routes/readingPracticeRoutes';
 import ieltsWritingRoutes from './routes/ieltsWritingRoutes';
+import drillRoutes from './routes/drillRoutes';
 import diagnosticRoutes from './routes/diagnosticRoutes';
 import { startWSServer } from './wsServer';
 
@@ -94,6 +95,7 @@ app.use('/api/institute-admin', instituteAdminRoutes);
 app.use('/api/student', studentRoutes);
 app.use('/api/reading-practice', readingPracticeRoutes);
 app.use('/api/ielts-writing', ieltsWritingRoutes);
+app.use('/api/drills', drillRoutes);
 app.use('/api/diagnostic', requireAuth, ensureUser, diagnosticRoutes);
 
 // Initialize storage directories and start server
