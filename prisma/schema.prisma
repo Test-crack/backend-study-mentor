@@ -604,6 +604,8 @@ model institute_students {
   recommendationSeeded    Boolean                   @default(false)
   target_band             Float?
   momentum_score          Int                       @default(0)
+  daily_streak            Int                       @default(0)
+  last_streak_date        DateTime?                 @db.Date
   AssessmentHistory       AssessmentHistory[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
   institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -769,6 +771,23 @@ model StudentGameScore {
   @@index([student_id])
   @@index([session_date])
   @@map("student_game_scores")
+}
+
+model LexiGridWord {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  base_word    String   @db.VarChar(100)
+  target_word  String   @db.VarChar(100)
+  hint         String   @db.Text
+  category     String?  @db.VarChar(50)
+  difficulty   String   @default("INTERMEDIATE") @db.VarChar(20)
+  target_band  Decimal? @default(7.0) @db.Decimal(2, 1)
+  is_active    Boolean  @default(true)
+  times_served Int      @default(0)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([is_active, difficulty])
+  @@map("lexigrid_words")
 }
 
 model ContentCompletion {

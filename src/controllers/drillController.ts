@@ -228,6 +228,9 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
         const momentum_earned     = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
         const extraSession        = is_extra_session === true || is_extra_session === 'true';
 
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
         const [session, updatedStudent] = await prisma.$transaction([
             prisma.drillSession.create({
                 data: {
@@ -247,15 +250,78 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
             })
         ]);
 
+        // Streak logic: ≥2 drills in a calendar day = streak day.
+        // Only trigger when today's count hits exactly 2 (the threshold).
+        const drillsToday = await prisma.drillSession.count({
+            where: { student_id: student.id, created_at: { gte: todayStart } }
+        });
+
+        let newDailyStreak = updatedStudent.daily_streak;
+
+        if (drillsToday === 2) {
+            const yesterdayStart = new Date(todayStart);
+            yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
+            const { daily_streak: prevStreak, last_streak_date: lastDate } =
+                await prisma.institute_students.findUnique({
+                    where: { id: student.id },
+                    select: { daily_streak: true, last_streak_date: true }
+                }) ?? { daily_streak: 0, last_streak_date: null };
+
+            // Extend streak if yesterday was the last streak day; otherwise reset to 1
+            if (lastDate
+                && lastDate.getTime() >= yesterdayStart.getTime()
+                && lastDate.getTime() < todayStart.getTime()) {
+                newDailyStreak = prevStreak + 1;
+            } else {
+                newDailyStreak = 1;
+            }
+
+            await prisma.institute_students.update({
+                where: { id: student.id },
+                data: { daily_streak: newDailyStreak, last_streak_date: todayStart }
+            });
+        }
+
         return res.json({
             success: true,
             data: session,
             momentum_earned,
-            momentum_score: updatedStudent.momentum_score
+            momentum_score: updatedStudent.momentum_score,
+            daily_streak: newDailyStreak,
         });
 
     } catch (error) {
         console.error('[DrillController] saveDrillSession error:', error);
         return res.status(500).json({ success: false, error: 'Internal server error while saving drill session.' });
+    }
+}
+
+/**
+ * POST /api/drills/apply-complete
+ * Awards +30 momentum pts when the student completes the Apply Drill step.
+ */
+export async function completeApplyDrill(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const APPLY_DRILL_BONUS = 30;
+        const updated = await prisma.institute_students.update({
+            where: { id: student.id },
+            data: { momentum_score: { increment: APPLY_DRILL_BONUS } }
+        });
+
+        return res.json({
+            success: true,
+            momentum_earned: APPLY_DRILL_BONUS,
+            momentum_score: updated.momentum_score
+        });
+    } catch (error) {
+        console.error('[DrillController] completeApplyDrill error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }

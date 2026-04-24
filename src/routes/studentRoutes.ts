@@ -9,6 +9,7 @@ import { getSpeakingHistory, getCompetencyScores } from '../controllers/studentC
 import { getRecommendations } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
 import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
+import { getLexiGridWords } from '../controllers/lexiGridController';
 
 const router = Router();
 
@@ -48,5 +49,8 @@ router.get('/competency-scores', getCompetencyScores);
 
 // GET /api/student/recommendations — Student's AI recommendations
 router.get('/recommendations', getRecommendations);
+
+// GET /api/student/lexigrid-words?difficulty=INTERMEDIATE — Daily word set for LexiGrid
+router.get('/lexigrid-words', getLexiGridWords);
 
 export default router;

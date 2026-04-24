@@ -76,6 +76,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             extra_sessions_today,
             sessions_remaining,
             momentum_score: student.momentum_score,
+            daily_streak: student.daily_streak,
             can_buy_extra: student.momentum_score >= EXTRA_SESSION_COST
                 && drills_completed_today >= FREE_SESSIONS_PER_DAY
                 && drills_completed_today < MAX_SESSIONS_PER_DAY,

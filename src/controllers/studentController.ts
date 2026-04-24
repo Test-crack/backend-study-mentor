@@ -94,7 +94,9 @@ export async function getCompetencyScores(req: AuthRequest, res: Response) {
         return res.json({
             success: true,
             data: matrix,
-            target_band: student.target_band
+            target_band: student.target_band,
+            momentum_score: student.momentum_score,
+            daily_streak: student.daily_streak,
         });
 
     } catch (error) {

@@ -3,7 +3,7 @@ import { requireAuth } from '../middleware/auth';
 import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
-import { getDrillQuestions, saveDrillSession } from '../controllers/drillController';
+import { getDrillQuestions, saveDrillSession, completeApplyDrill } from '../controllers/drillController';
 import { authorizeExtraDrill } from '../controllers/gameScoreController';
 
 const router = Router();
@@ -20,5 +20,8 @@ router.post('/session', saveDrillSession);
 
 // POST /api/drills/authorize-extra - Spend 75 pts to unlock an extra drill session
 router.post('/authorize-extra', authorizeExtraDrill);
+
+// POST /api/drills/apply-complete - Award +30 pts for completing the Apply Drill step
+router.post('/apply-complete', completeApplyDrill);
 
 export default router;
