@@ -4,6 +4,7 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getDrillQuestions, saveDrillSession } from '../controllers/drillController';
+import { authorizeExtraDrill } from '../controllers/gameScoreController';
 
 const router = Router();
 
@@ -16,5 +17,8 @@ router.get('/questions', getDrillQuestions);
 
 // POST /api/drills/session - Save completed session
 router.post('/session', saveDrillSession);
+
+// POST /api/drills/authorize-extra - Spend 75 pts to unlock an extra drill session
+router.post('/authorize-extra', authorizeExtraDrill);
 
 export default router;

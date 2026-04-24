@@ -30,14 +30,28 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             where: { student_id: student.id }
         });
 
-        // Fetch DrillSessions in the last 24 hours
-        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const MAX_DAILY_SESSIONS = 5;
+
+        // Use calendar-day boundary so sessions reset at midnight, not on a rolling 24hr window
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
         const practicedSessions = await prisma.drillSession.findMany({
             where: {
                 student_id: student.id,
-                created_at: { gt: cutoff }
+                created_at: { gte: todayStart }
             }
         });
+
+        if (practicedSessions.length >= MAX_DAILY_SESSIONS) {
+            return res.json({
+                success: true,
+                recommended_drills: [],
+                daily_sessions_completed: practicedSessions.length,
+                daily_limit: MAX_DAILY_SESSIONS,
+                message: "You've completed your maximum drill sessions for today. Great work!"
+            });
+        }
 
         // Store as ALL UPPERCASE for case-insensitive matching
         const practicedSet = new Set(practicedSessions.map(s => `${s.skill.toUpperCase()}-${s.sub_skill.toUpperCase()}`));
@@ -117,15 +131,22 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             }
         }
 
-        // 24 Hour check (Case-insensitive)
-        const recommended_drills = interleaved.filter(item => 
+        // Filter out sub-skills already practiced today (case-insensitive)
+        const recommended_drills = interleaved.filter(item =>
             !practicedSet.has(`${item.skill.toUpperCase()}-${item.sub_skill.toUpperCase().replace(/\s+/g, '_')}`)
         );
+
+        const sessionsLeft = MAX_DAILY_SESSIONS - practicedSessions.length;
 
         return res.json({
             success: true,
             recommended_drills,
-            message: recommended_drills.length > 0 ? "Drills available for today." : "You have completed all 10 recommended drills for today!"
+            daily_sessions_completed: practicedSessions.length,
+            daily_limit: MAX_DAILY_SESSIONS,
+            sessions_remaining: sessionsLeft,
+            message: recommended_drills.length > 0
+                ? `${sessionsLeft} drill session${sessionsLeft !== 1 ? 's' : ''} remaining today.`
+                : "You have completed all available sub-skills for today!"
         });
 
     } catch (error) {
@@ -149,12 +170,8 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
             });
         }
 
-        const countNum = parseInt(count as string) || 1; // Default to 1
-
-        // Enforce max limit to prevent abuse
-        if (countNum < 1 || countNum > 50) {
-            return res.status(400).json({ success: false, error: 'Count must be between 1 and 50.' });
-        }
+        const QUESTIONS_PER_SESSION = 5;
+        const countNum = QUESTIONS_PER_SESSION;
 
         // Use Prisma's native $queryRaw for true randomness (ORDER BY RANDOM())
         // Postgres will automatically cast the template parameters to the appropriate Enum types
@@ -199,24 +216,43 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
             return res.status(404).json({ success: false, error: 'Student record not found.' });
         }
 
-        const { skill, subskill, prompts_completed, momentum_earned } = req.body;
+        const { skill, subskill, prompts_completed, correct_answers, is_extra_session } = req.body;
 
-        if (!skill || !subskill || prompts_completed === undefined || momentum_earned === undefined) {
-            return res.status(400).json({ success: false, error: 'Missing required fields in session payload.' });
+        if (!skill || !subskill || prompts_completed === undefined || correct_answers === undefined) {
+            return res.status(400).json({ success: false, error: 'Missing required fields: skill, subskill, prompts_completed, correct_answers.' });
         }
 
-        const session = await prisma.drillSession.create({
-            data: {
-                student_id: student.id,
-                skill: skill,
-                sub_skill: subskill,
-                prompts_completed: parseInt(prompts_completed),
-                momentum_earned: parseInt(momentum_earned)
-                // drill_type and ai_feedback_json are optional/null now!
-            }
-        });
+        const DRILL_BASE_PTS      = 15;
+        const DRILL_PER_CORRECT   = 10;
+        const correctCount        = Math.max(0, parseInt(correct_answers));
+        const momentum_earned     = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
+        const extraSession        = is_extra_session === true || is_extra_session === 'true';
 
-        return res.json({ success: true, data: session });
+        const [session, updatedStudent] = await prisma.$transaction([
+            prisma.drillSession.create({
+                data: {
+                    student_id:       student.id,
+                    skill,
+                    sub_skill:        subskill,
+                    prompts_completed: parseInt(prompts_completed),
+                    correct_answers:  correctCount,
+                    total_questions:  5,
+                    momentum_earned,
+                    is_extra_session: extraSession
+                }
+            }),
+            prisma.institute_students.update({
+                where: { id: student.id },
+                data:  { momentum_score: { increment: momentum_earned } }
+            })
+        ]);
+
+        return res.json({
+            success: true,
+            data: session,
+            momentum_earned,
+            momentum_score: updatedStudent.momentum_score
+        });
 
     } catch (error) {
         console.error('[DrillController] saveDrillSession error:', error);

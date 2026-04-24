@@ -8,6 +8,7 @@ import { getStudentBatches } from '../controllers/batchController';
 import { getSpeakingHistory, getCompetencyScores } from '../controllers/studentController';
 import { getRecommendations } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
+import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
 
 const router = Router();
 
@@ -26,6 +27,12 @@ const router = Router();
 router.use(requireAuth);
 router.use(ensureUser);
 router.use(authorize(UserRoleType.STUDENT));
+
+// GET /api/student/daily-drill-state — Lock/unlock state for the day
+router.get('/daily-drill-state', getDailyDrillState);
+
+// POST /api/student/game-score — Record LexiGrid / mini-game completion
+router.post('/game-score', saveGameScore);
 
 // GET /api/student/next-action-drill — Next prioritized drill to act on
 router.get('/next-action-drill', getNextActionDrill);

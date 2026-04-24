@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TestCrack — Student Flow v3</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Sora:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #07090F;
+    --surface: #0D1117;
+    --surface2: #131929;
+    --border: #1C2840;
+    --border2: #243352;
+    --accent: #38BDF8;
+    --accent-dim: rgba(56,189,248,0.1);
+    --purple: #818CF8;
+    --purple-dim: rgba(129,140,248,0.1);
+    --green: #34D399;
+    --green-dim: rgba(52,211,153,0.08);
+    --amber: #FBBF24;
+    --amber-dim: rgba(251,191,36,0.08);
+    --red: #F87171;
+    --red-dim: rgba(248,113,113,0.08);
+    --orange: #FB923C;
+    --orange-dim: rgba(251,146,60,0.08);
+    --teal: #2DD4BF;
+    --teal-dim: rgba(45,212,191,0.08);
+    --text: #CBD5E1;
+    --text-bright: #F1F5F9;
+    --muted: #475569;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Sora', sans-serif;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    padding: 48px 24px 100px;
+    background-image:
+      radial-gradient(ellipse 60% 40% at 10% 5%, rgba(56,189,248,0.04) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 90% 95%, rgba(129,140,248,0.04) 0%, transparent 60%);
+  }
+
+  /* HEADER */
+  .header { text-align:center; margin-bottom:48px; }
+  .header-eyebrow {
+    font-family: var(--mono); font-size:10px;
+    letter-spacing:4px; color:var(--accent);
+    text-transform:uppercase; margin-bottom:14px;
+  }
+  .header h1 { font-size:28px; font-weight:700; color:var(--text-bright); letter-spacing:-0.5px; }
+  .header h1 em { font-style:normal; color:var(--accent); }
+  .header-sub { font-size:13px; color:var(--muted); margin-top:8px; font-weight:300; }
+  .vtag {
+    display:inline-flex; align-items:center; gap:6px; margin-top:14px;
+    font-family:var(--mono); font-size:10px; color:var(--green);
+    background:var(--green-dim); border:1px solid rgba(52,211,153,0.2);
+    border-radius:20px; padding:4px 12px;
+  }
+
+  /* LEGEND */
+  .legend { display:flex; flex-wrap:wrap; gap:14px 22px; justify-content:center; margin-bottom:44px; }
+  .legend-item { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--muted); font-family:var(--mono); }
+  .ldot { width:8px; height:8px; border-radius:2px; flex-shrink:0; }
+
+  /* FLOW */
+  .flow { max-width:1060px; margin:0 auto; display:flex; flex-direction:column; align-items:center; }
+
+  /* CONNECTOR */
+  .conn { display:flex; flex-direction:column; align-items:center; }
+  .conn-line { width:2px; background:var(--border2); }
+  .conn-arrow { width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--border2); }
+  .conn-tag {
+    font-family:var(--mono); font-size:9px; letter-spacing:1.5px; color:var(--muted);
+    background:var(--bg); border:1px solid var(--border); border-radius:4px;
+    padding:2px 8px; text-transform:uppercase; white-space:nowrap;
+  }
+  .conn-line.ca { background:rgba(56,189,248,0.35); }
+  .conn-line.cg { background:rgba(52,211,153,0.35); }
+  .conn-line.cr { background:rgba(248,113,113,0.3); }
+  .conn-line.cam{ background:rgba(251,191,36,0.3); }
+  .conn-line.cp { background:rgba(129,140,248,0.35); }
+  .conn-line.ct { background:rgba(45,212,191,0.35); }
+  .conn-arrow.ca { border-top-color:rgba(56,189,248,0.6); }
+  .conn-arrow.cg { border-top-color:rgba(52,211,153,0.6); }
+  .conn-arrow.cr { border-top-color:rgba(248,113,113,0.5); }
+  .conn-arrow.cam{ border-top-color:rgba(251,191,36,0.5); }
+  .conn-arrow.cp { border-top-color:rgba(129,140,248,0.6); }
+  .conn-arrow.ct { border-top-color:rgba(45,212,191,0.6); }
+
+  /* CARDS */
+  .card { border-radius:14px; border:1px solid var(--border); padding:20px 24px; width:100%; background:var(--surface); }
+  .card-eyebrow { font-family:var(--mono); font-size:9px; letter-spacing:2.5px; text-transform:uppercase; margin-bottom:8px; opacity:.55; }
+  .card-title { font-size:15px; font-weight:600; color:var(--text-bright); margin-bottom:6px; line-height:1.3; }
+  .card-body { font-size:12px; color:var(--muted); line-height:1.7; font-weight:300; }
+
+  .v-entry  { background:var(--accent-dim);  border-color:rgba(56,189,248,0.25); }
+  .v-drill  { background:var(--surface2);    border-color:var(--border2); }
+  .v-gate   { background:var(--purple-dim);  border-color:rgba(129,140,248,0.28); }
+  .v-game   { background:var(--teal-dim);    border-color:rgba(45,212,191,0.25); }
+  .v-ok     { background:var(--green-dim);   border-color:rgba(52,211,153,0.25); }
+  .v-miss   { background:var(--red-dim);     border-color:rgba(248,113,113,0.25); }
+  .v-warn   { background:var(--amber-dim);   border-color:rgba(251,191,36,0.25); }
+  .v-mock   { background:var(--purple-dim);  border-color:rgba(129,140,248,0.35); }
+  .v-cycle  { background:var(--surface);     border-color:var(--border2); border-style:dashed; }
+  .v-future { background:var(--orange-dim);  border-color:rgba(251,146,60,0.25); border-style:dashed; }
+  .v-unlock { background:rgba(52,211,153,0.05); border-color:rgba(52,211,153,0.3); border-style:dashed; border-radius:14px; padding:20px 24px; width:100%; }
+
+  /* PILLS */
+  .pills { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .pill { font-family:var(--mono); font-size:9px; padding:3px 9px; border-radius:20px; border:1px solid; white-space:nowrap; }
+  .pa  { color:var(--accent);  border-color:rgba(56,189,248,0.3);  background:var(--accent-dim); }
+  .pg  { color:var(--green);   border-color:rgba(52,211,153,0.3);  background:var(--green-dim); }
+  .pam { color:var(--amber);   border-color:rgba(251,191,36,0.3);  background:var(--amber-dim); }
+  .pr  { color:var(--red);     border-color:rgba(248,113,113,0.3); background:var(--red-dim); }
+  .pp  { color:var(--purple);  border-color:rgba(129,140,248,0.3); background:var(--purple-dim); }
+  .pt  { color:var(--teal);    border-color:rgba(45,212,191,0.3);  background:var(--teal-dim); }
+  .po  { color:var(--orange);  border-color:rgba(251,146,60,0.3);  background:var(--orange-dim); }
+  .pm  { color:var(--muted);   border-color:var(--border2);        background:transparent; }
+
+  /* NOTES */
+  .note { margin-top:10px; border-left:2px solid; padding:8px 12px; border-radius:0 6px 6px 0; font-size:11px; line-height:1.65; background:rgba(255,255,255,0.02); }
+  .na  { border-color:var(--accent);  color:rgba(56,189,248,0.8); }
+  .ng  { border-color:var(--green);   color:rgba(52,211,153,0.8); }
+  .nam { border-color:var(--amber);   color:rgba(251,191,36,0.8); }
+  .nr  { border-color:var(--red);     color:rgba(248,113,113,0.8); }
+  .np  { border-color:var(--purple);  color:rgba(129,140,248,0.8); }
+  .nt  { border-color:var(--teal);    color:rgba(45,212,191,0.8); }
+  .no  { border-color:var(--orange);  color:rgba(251,146,60,0.8); }
+
+  /* GRIDS */
+  .g2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; width:100%; }
+  .g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; width:100%; }
+
+  /* SECTION DIVIDER */
+  .secdiv { display:flex; align-items:center; gap:14px; width:100%; margin:6px 0; }
+  .secdiv-line { flex:1; height:1px; background:var(--border); }
+  .secdiv-text { font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--muted); text-transform:uppercase; white-space:nowrap; }
+
+  /* BRANCH */
+  .branch-top { width:100%; position:relative; height:36px; }
+  .branch-top::before { content:''; position:absolute; top:0; left:50%; width:2px; height:100%; background:var(--border2); transform:translateX(-50%); }
+  .branch-top::after  { content:''; position:absolute; top:50%; left:15%; right:15%; height:1px; background:var(--border2); }
+  .branch-top.w2::after { left:25%; right:25%; }
+
+  .gcol { display:flex; flex-direction:column; align-items:center; }
+  .gcol-line { width:2px; height:36px; background:var(--border2); }
+
+  /* WRAP BOX */
+  .wrap { width:100%; border:1px dashed rgba(56,189,248,0.16); border-radius:18px; padding:28px 24px 24px; position:relative; background:rgba(56,189,248,0.012); }
+  .wrap.wp { border-color:rgba(129,140,248,0.18); background:rgba(129,140,248,0.012); }
+  .wrap.wo { border-color:rgba(251,146,60,0.18); background:rgba(251,146,60,0.012); }
+  .wrap-lbl { position:absolute; top:-10px; left:20px; background:var(--bg); padding:0 10px; font-family:var(--mono); font-size:9px; letter-spacing:2.5px; color:var(--accent); text-transform:uppercase; }
+  .wrap-lbl.wlp { color:var(--purple); }
+  .wrap-lbl.wlo { color:var(--orange); }
+
+  /* ── THE BIG UNLOCK VISUAL ── */
+  .unlock-stages {
+    display: grid;
+    grid-template-columns: 1fr 40px 1fr;
+    gap: 0;
+    align-items: center;
+    width: 100%;
+    margin-top: 16px;
+  }
+  .unlock-stage {
+    border-radius: 12px;
+    border: 1px solid;
+    padding: 16px 18px;
+  }
+  .us-1 { border-color: rgba(56,189,248,0.25); background: rgba(56,189,248,0.06); }
+  .us-2 { border-color: rgba(52,211,153,0.3);  background: rgba(52,211,153,0.07); border-style: dashed; }
+  .unlock-arrow-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .unlock-stage-title { font-size:13px; font-weight:600; color:var(--text-bright); margin-bottom:8px; }
+  .unlock-stage-eyebrow { font-family:var(--mono); font-size:9px; letter-spacing:2px; opacity:0.5; margin-bottom:6px; text-transform:uppercase; }
+  .uitem { font-size:11px; padding:3px 0; display:flex; align-items:center; gap:8px; }
+  .uitem-lock { color: var(--border2); }
+  .uitem-open { color: var(--green); }
+  .uitem-dim  { color: var(--muted); text-decoration: line-through; font-size:10px; }
+
+  /* SIDEBAR UNLOCK VISUAL */
+  .sidebar-mock {
+    display: flex;
+    gap: 16px;
+    margin-top: 14px;
+    align-items: flex-start;
+  }
+  .sidebar-panel {
+    width: 180px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    background: var(--surface2);
+  }
+  .sidebar-header {
+    padding: 10px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .sidebar-item {
+    padding: 8px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid rgba(28,40,64,0.5);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sidebar-item:last-child { border-bottom: none; }
+  .si-locked { color: var(--border2); }
+  .si-open   { color: var(--text-bright); }
+  .si-icon   { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; }
+  .lock-icon { color: var(--border2); font-size: 10px; }
+
+  .sidebar-explain {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sidebar-state {
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 11px;
+    line-height: 1.6;
+    border: 1px solid;
+  }
+  .ss-before {
+    background: rgba(56,189,248,0.06);
+    border-color: rgba(56,189,248,0.2);
+    color: rgba(56,189,248,0.8);
+  }
+  .ss-after {
+    background: rgba(52,211,153,0.06);
+    border-color: rgba(52,211,153,0.2);
+    color: rgba(52,211,153,0.8);
+  }
+  .ss-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+    opacity: 0.7;
+  }
+
+  /* MINI TABLE */
+  .mini-table { width:100%; border-collapse:collapse; font-size:11px; margin-top:10px; }
+  .mini-table th { font-family:var(--mono); font-size:9px; letter-spacing:1.5px; color:var(--muted); text-transform:uppercase; text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); }
+  .mini-table td { padding:7px 10px; border-bottom:1px solid var(--border); color:var(--text); line-height:1.5; vertical-align:top; }
+  .mini-table tr:last-child td { border-bottom:none; }
+  .mini-table td:first-child { color:var(--muted); font-family:var(--mono); font-size:10px; white-space:nowrap; }
+
+  /* REF TABLE */
+  .ref-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; width:100%; margin-top:8px; }
+  .ref-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .ref-card-title { font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--muted); text-transform:uppercase; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+  .ref-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:11px; border-bottom:1px solid rgba(28,40,64,0.4); }
+  .ref-row:last-child { border-bottom:none; }
+  .ref-row-key { color:var(--muted); }
+  .ref-row-val { color:var(--text-bright); font-family:var(--mono); font-size:10px; }
+
+  @media (max-width:680px) {
+    .g2,.g3,.ref-grid { grid-template-columns:1fr; }
+    .branch-top::after { left:0; right:0; }
+    .header h1 { font-size:22px; }
+    .unlock-stages { grid-template-columns:1fr; }
+    .unlock-arrow-col { display:none; }
+    .sidebar-mock { flex-direction:column; }
+    .sidebar-panel { width:100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-eyebrow">TestCrack · Architecture v3</div>
+  <h1>Student Journey <em>Flow</em></h1>
+  <p class="header-sub">Post-diagnostic → Dashboard → Drills → IA → Mock Test</p>
+  <div class="vtag"><span>●</span> v3 · 2-Stage Unlock · LexiGrid Gate · Full Sidebar on Drill 2 Access</div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="ldot" style="background:var(--accent)"></div> Entry / Action</div>
+  <div class="legend-item"><div class="ldot" style="background:var(--purple)"></div> Gate / Decision</div>
+  <div class="legend-item"><div class="ldot" style="background:var(--green)"></div> Unlocked / Success</div>
+  <div class="legend-item"><div class="ldot" style="background:var(--red)"></div> Missed / Failed</div>
+  <div class="legend-item"><div class="ldot" style="background:var(--amber)"></div> Warning / Alert</div>
+  <div class="legend-item"><div class="ldot" style="background:var(--teal)"></div> Game / Gate Activity</div>
+  <div class="legend-item"><div class="ldot" style="background:var(--orange)"></div> Future / Phase 2</div>
+</div>
+
+<div class="flow">
+
+  <!-- ═══════════════════════════════
+       STEP 1 — DASHBOARD ENTRY
+  ═══════════════════════════════ -->
+  <div style="width:100%">
+    <div class="card v-entry">
+      <div class="card-eyebrow" style="color:var(--accent)">Step 1 · Entry Point</div>
+      <div class="card-title">🎯 Student Logs In — First Dashboard After Diagnostic</div>
+      <div class="card-body">Diagnostic completed. Student lands on dashboard. Most sidebar sections are visible but locked — student can see what they will unlock.</div>
+      <div class="pills">
+        <span class="pill pa">Band Score (from diagnostic)</span>
+        <span class="pill pa">4 Skill Scores visible</span>
+        <span class="pill pa">12 Sub-skill Scores visible</span>
+        <span class="pill pam">Sidebar sections — LOCKED (visible, greyed)</span>
+      </div>
+      <div class="note na" style="margin-top:12px">
+        ⚙️ System identifies the <strong>weakest sub-skill</strong> from diagnostic scores → auto-assigns it as Drill 1 target. Student does not choose — system decides.
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line ca" style="height:18px"></div>
+    <div class="conn-tag">STUDENT STARTS FIRST DRILL — SYSTEM ASSIGNED</div>
+    <div class="conn-line ca" style="height:18px"></div>
+    <div class="conn-arrow ca"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       DRILL 1
+  ═══════════════════════════════ -->
+  <div style="width:100%;max-width:700px">
+    <div class="card v-drill">
+      <div class="card-eyebrow" style="color:var(--accent)">Drill Session 1 · System-Assigned · Mandatory</div>
+      <div class="card-title">📚 Drill 1 — Weakest Sub-skill</div>
+      <div class="card-body">System assigns the lowest-scored sub-skill from diagnostic. 5 prompts, AI feedback on each, approximately 15 minutes. Student cannot skip or override the sub-skill for this first slot.</div>
+      <div class="pills">
+        <span class="pill pa">Weakest sub-skill auto-assigned</span>
+        <span class="pill pa">5 prompts · AI feedback per prompt</span>
+        <span class="pill pg">DCS initialised after completion</span>
+        <span class="pill pg">Momentum +15 base + performance bonus</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line ct" style="height:18px"></div>
+    <div class="conn-tag" style="color:var(--teal);border-color:rgba(45,212,191,0.3)">DRILL 1 COMPLETE → LEXIGRID GATE OPENS</div>
+    <div class="conn-line ct" style="height:18px"></div>
+    <div class="conn-arrow ct"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       LEXIGRID GATE
+  ═══════════════════════════════ -->
+  <div style="width:100%;max-width:700px">
+    <div class="card v-game">
+      <div class="card-eyebrow" style="color:var(--teal)">Activity Gate · Between Drill 1 and Drill 2</div>
+      <div class="card-title">🎯 LexiGrid — Solve 5 Words to Unlock Drill 2</div>
+      <div class="card-body">
+        Drill 2 button is locked until the student solves <strong>5 words</strong> in LexiGrid. This is the only gate — activity-based, not time-based. Student goes at their own pace. No countdown timer.
+      </div>
+      <div class="pills">
+        <span class="pill pt">5 words must be solved (not just attempted)</span>
+        <span class="pill pt">Student's own pace — no timer pressure</span>
+        <span class="pill pg">Momentum +10 on completion</span>
+        <span class="pill pg">+5 bonus if each word solved in ≤3 attempts</span>
+        <span class="pill pam">Drill 2 button visible but greyed + 🔒 until done</span>
+      </div>
+      <div class="note nt">
+        📲 UI message during gate: <em>"Complete 5 LexiGrid words to unlock your next drill session."</em>
+        Progress shown as word counter: <strong>3 / 5 words solved ●●●○○</strong>
+        Drill 2 button unlocks the moment the 5th word is solved — no delay.
+      </div>
+      <div class="note no" style="margin-top:8px">
+        <strong style="color:var(--orange)">Phase 2 — Future:</strong> When Grammar Swipe is built, it slots in as the Drill 2 → Drill 3 gate using the same architecture. LexiGrid gate remains unchanged.
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line cg" style="height:18px"></div>
+    <div class="conn-tag" style="color:var(--green);border-color:rgba(52,211,153,0.3)">5 WORDS SOLVED → DRILL 2 UNLOCKS + FULL SIDEBAR UNLOCKS</div>
+    <div class="conn-line cg" style="height:18px"></div>
+    <div class="conn-arrow cg"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       THE BIG UNLOCK — SIDEBAR
+  ═══════════════════════════════ -->
+  <div style="width:100%">
+    <div class="v-unlock">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <div style="font-size:20px">🔓</div>
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;letter-spacing:2.5px;color:var(--green);text-transform:uppercase;margin-bottom:4px">The Unlock Moment</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text-bright)">Full Sidebar Unlocks — Triggered When Drill 2 is Accessed</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;font-weight:300;padding-left:30px">
+        The moment the student taps into Drill 2 (after completing LexiGrid gate), all sidebar sections unlock simultaneously. One moment, full access.
+      </div>
+
+      <!-- SIDEBAR BEFORE / AFTER -->
+      <div class="sidebar-mock">
+
+        <!-- SIDEBAR PANEL — BEFORE -->
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--muted);text-align:center;margin-bottom:8px;text-transform:uppercase">After Drill 1</div>
+          <div class="sidebar-panel">
+            <div class="sidebar-header">Student Dashboard</div>
+            <div class="sidebar-item si-open"><span class="si-icon">🏠</span> Home</div>
+            <div class="sidebar-item si-open"><span class="si-icon">📊</span> My Scores</div>
+            <div class="sidebar-item si-open"><span class="si-icon">📚</span> Drills</div>
+            <div class="sidebar-item si-locked"><span class="si-icon">🎯</span> <span>LexiGrid</span> <span class="lock-icon" style="margin-left:auto">→ active gate</span></div>
+            <div class="sidebar-item si-locked"><span class="si-icon">📋</span> <span style="text-decoration:line-through;opacity:0.4">Assessments</span> <span class="lock-icon" style="margin-left:auto">🔒</span></div>
+            <div class="sidebar-item si-locked"><span class="si-icon">📈</span> <span style="text-decoration:line-through;opacity:0.4">Reports</span> <span class="lock-icon" style="margin-left:auto">🔒</span></div>
+            <div class="sidebar-item si-locked"><span class="si-icon">🏆</span> <span style="text-decoration:line-through;opacity:0.4">Leaderboard</span> <span class="lock-icon" style="margin-left:auto">🔒</span></div>
+            <div class="sidebar-item si-locked"><span class="si-icon">🎓</span> <span style="text-decoration:line-through;opacity:0.4">Mock Test</span> <span class="lock-icon" style="margin-left:auto">🔒</span></div>
+            <div class="sidebar-item si-locked"><span class="si-icon">⚡</span> <span style="text-decoration:line-through;opacity:0.4">Momentum</span> <span class="lock-icon" style="margin-left:auto">🔒</span></div>
+          </div>
+        </div>
+
+        <!-- ARROW -->
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding-top:30px">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--teal);letter-spacing:1px;text-align:center">LEXIGRID<br>5 WORDS<br>+<br>DRILL 2<br>ACCESSED</div>
+          <div style="color:var(--green);font-size:20px">→</div>
+        </div>
+
+        <!-- SIDEBAR PANEL — AFTER -->
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--green);text-align:center;margin-bottom:8px;text-transform:uppercase">After Drill 2 Accessed ✓</div>
+          <div class="sidebar-panel" style="border-color:rgba(52,211,153,0.3)">
+            <div class="sidebar-header" style="color:var(--green)">Student Dashboard — Full Access</div>
+            <div class="sidebar-item si-open"><span class="si-icon">🏠</span> Home</div>
+            <div class="sidebar-item si-open"><span class="si-icon">📊</span> My Scores</div>
+            <div class="sidebar-item si-open"><span class="si-icon">📚</span> Drills</div>
+            <div class="sidebar-item si-open"><span class="si-icon">🎯</span> LexiGrid</div>
+            <div class="sidebar-item si-open"><span class="si-icon">📋</span> Assessments</div>
+            <div class="sidebar-item si-open"><span class="si-icon">📈</span> Reports</div>
+            <div class="sidebar-item si-open"><span class="si-icon">🏆</span> Leaderboard</div>
+            <div class="sidebar-item si-open"><span class="si-icon">🎓</span> Mock Test <span style="font-family:var(--mono);font-size:9px;color:var(--border2);margin-left:auto">locked until 6 IAs</span></div>
+            <div class="sidebar-item si-open"><span class="si-icon">⚡</span> Momentum</div>
+          </div>
+        </div>
+
+        <!-- EXPLAIN -->
+        <div class="sidebar-explain" style="padding-top:30px">
+          <div class="sidebar-state ss-before">
+            <div class="ss-label">Before — After Drill 1 only</div>
+            Student can see Home, their scores, and start drills. All other sections greyed and locked. LexiGrid is active as a gate, not a sidebar destination.
+          </div>
+          <div class="sidebar-state ss-after">
+            <div class="ss-label">After — Drill 2 Accessed</div>
+            All sidebar sections unlock at once. Mock Test section is visible but internally locked until 6 IAs done — that's a different gate, not a sidebar lock.
+          </div>
+        </div>
+
+      </div>
+
+      <div class="note ng" style="margin-top:14px">
+        ⚡ <strong>One moment. Full access.</strong> The unlock happens when the student taps into Drill 2 — not after Drill 2 is completed. Accessing = unlocked. This rewards the act of showing up, not just finishing.
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line ca" style="height:18px"></div>
+    <div class="conn-tag">CONTINUING — DRILL 2 IN PROGRESS</div>
+    <div class="conn-line ca" style="height:18px"></div>
+    <div class="conn-arrow ca"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       DRILL 2
+  ═══════════════════════════════ -->
+  <div style="width:100%;max-width:700px">
+    <div class="card v-drill">
+      <div class="card-eyebrow" style="color:var(--accent)">Drill Session 2 · Full Sidebar Now Active</div>
+      <div class="card-title">📚 Drill 2 — Student Picks Sub-skill</div>
+      <div class="card-body">System recommends the next weakest sub-skill but student can now choose freely. Full dashboard accessible while drill is in progress.</div>
+      <div class="pills">
+        <span class="pill pa">System recommends next weakest</span>
+        <span class="pill pa">Student can override and choose any sub-skill</span>
+        <span class="pill pg">DCS recalculates after completion</span>
+        <span class="pill pg">Momentum +15 base + performance bonus</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line ca" style="height:16px"></div>
+    <div class="conn-tag">NO GATE — DRILL 3 AVAILABLE IMMEDIATELY AFTER DRILL 2</div>
+    <div class="conn-line ca" style="height:16px"></div>
+    <div class="conn-arrow ca"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       DRILL 3
+  ═══════════════════════════════ -->
+  <div style="width:100%;max-width:700px">
+    <div class="card v-drill">
+      <div class="card-eyebrow" style="color:var(--accent)">Drill Session 3 · Optional · No Gate</div>
+      <div class="card-title">📚 Drill 3 — Final Daily Session</div>
+      <div class="card-body">No gate before Drill 3. Available immediately after Drill 2 completes. Student can stop at Drill 2 if time-constrained — streak still counts if 2 drills completed.</div>
+      <div class="pills">
+        <span class="pill pa">Any sub-skill — student's choice</span>
+        <span class="pill pg">DCS recalculates</span>
+        <span class="pill pg">Momentum +15 base + performance bonus</span>
+        <span class="pill pam">Standard daily max: 3 drills</span>
+      </div>
+      <div class="note na">
+        ⚡ <strong>High performer path:</strong> Student with DCS ≥ 75% can spend 75 Momentum points to unlock a 4th drill session. This 4th session counts once toward IA trigger per cycle.
+      </div>
+    </div>
+  </div>
+
+  <!-- STREAK RULE -->
+  <div style="width:100%;margin:8px 0;border:1px solid rgba(251,191,36,0.2);border-radius:10px;padding:12px 18px;background:rgba(251,191,36,0.03);display:flex;gap:12px;align-items:flex-start">
+    <div style="font-size:18px;flex-shrink:0">🔥</div>
+    <div style="font-size:12px;color:rgba(251,191,36,0.85);line-height:1.7">
+      <strong style="color:var(--amber)">Streak Rule:</strong> Login alone does NOT count as a streak day.
+      Student must complete <strong>at least 2 drills</strong> for the day to register as an active streak day.
+      Streak decay begins at −5 pts/day after 3 consecutive non-qualifying days.
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line cp" style="height:18px"></div>
+    <div class="conn-tag">AFTER 6 TOTAL DRILL SESSIONS COMPLETED + MIN 2 DAYS SINCE FIRST DRILL</div>
+    <div class="conn-line cp" style="height:18px"></div>
+    <div class="conn-arrow cp"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       IA ELIGIBILITY
+  ═══════════════════════════════ -->
+  <div style="width:100%">
+    <div class="card v-gate">
+      <div class="card-eyebrow" style="color:var(--purple)">Step 3 · Eligibility Gate</div>
+      <div class="card-title">🔓 Internal Assessment Eligibility Unlocked</div>
+      <div class="card-body">System checks after every drill completion. Gate opens the moment all 3 conditions are met simultaneously.</div>
+      <div class="pills">
+        <span class="pill pp">✓ 6 drill sessions completed total</span>
+        <span class="pill pp">✓ Minimum 2 calendar days since first drill</span>
+        <span class="pill pp">✓ Average DCS ≥ 40% across priority sub-skills</span>
+      </div>
+      <div class="note np">
+        📲 Push notification + in-app banner: <em>"Your Internal Assessment is now unlocked. You can take it 24 hours from now — let this knowledge consolidate."</em><br>
+        +50 Momentum milestone reward fires immediately on eligibility unlock.
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line cp" style="height:18px"></div>
+    <div class="conn-tag">24-HOUR MANDATORY WAIT — MEMORY CONSOLIDATION</div>
+    <div class="conn-line cp" style="height:18px"></div>
+    <div class="conn-arrow cp"></div>
+  </div>
+
+  <!-- ═══════════════════════════════
+       IA WINDOW
+  ═══════════════════════════════ -->
+  <div style="width:100%">
+    <div class="card v-gate">
+      <div class="card-eyebrow" style="color:var(--purple)">Step 4 · Assessment Window</div>
+      <div class="card-title">⏱ Internal Assessment Window Opens — 24 Hours to Respond</div>
+      <div class="card-body">Student has exactly 24 hours to take the IA from the moment the window opens. Platform is live all 7 days — no blackout times, no scheduled days.</div>
+      <div class="pills">
+        <span class="pill pp">24-hour response window</span>
+        <span class="pill pa">10 questions per priority sub-skill</span>
+        <span class="pill pa">20-min timer per skill — visible, cannot pause</span>
+        <span class="pill pam">Platform live 7 days — no restricted days</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3-WAY BRANCH -->
+  <div class="branch-top" style="width:100%;max-width:960px"></div>
+
+  <div class="g3" style="max-width:960px;width:100%;align-items:start">
+
+    <!-- PATH A -->
+    <div class="gcol">
+      <div class="gcol-line"></div>
+      <div class="card v-ok" style="width:100%">
+        <div class="card-eyebrow" style="color:var(--green)">Path A · Completed</div>
+        <div class="card-title">✅ IA Taken & Completed</div>
+        <div class="card-body">Student completes within 24-hour window. Full scoring pipeline runs on all criteria.</div>
+        <div class="pills">
+          <span class="pill pg">+100 Momentum (participation)</span>
+          <span class="pill pg">+25 if improved vs last IA</span>
+          <span class="pill pg">+50 if personal best</span>
+        </div>
+        <div class="note ng" style="margin-top:10px">
+          Sub-skill scores update → Real Band recalculates via weighted average → next weakest sub-skill identified → new drill cycle starts with updated priority.<br><br>
+          Min 2–3 day gap before next IA window opens.
+        </div>
+      </div>
+    </div>
+
+    <!-- PATH B -->
+    <div class="gcol">
+      <div class="gcol-line"></div>
+      <div class="card v-warn" style="width:100%">
+        <div class="card-eyebrow" style="color:var(--amber)">Path B · Interrupted</div>
+        <div class="card-title">⚠️ Student Exits Mid-Test</div>
+        <div class="card-body">App crash, network loss, or manual exit during assessment. State saved after every answered question.</div>
+        <div class="note nam" style="margin-top:10px">
+          On return within 24hr window:<br>
+          <em>"You left with 3/10 questions answered. 18 minutes remaining. Test auto-submits when timer ends."</em><br><br>
+          Answered questions scored normally. Unanswered = zero for that criterion. No retake. If 24hr window expired on return → marked Not Attended, catch-up logic applies.
+        </div>
+      </div>
+    </div>
+
+    <!-- PATH C -->
+    <div class="gcol">
+      <div class="gcol-line"></div>
+      <div class="card v-miss" style="width:100%">
+        <div class="card-eyebrow" style="color:var(--red)">Path C · Missed</div>
+        <div class="card-title">❌ IA Not Taken in 24hrs</div>
+        <div class="card-body">Student did not open or respond within the 24-hour window.</div>
+        <div class="pills">
+          <span class="pill pr">−20 Momentum (first miss)</span>
+          <span class="pill pr">Marked: Not Completed</span>
+        </div>
+        <div class="note nr" style="margin-top:10px">
+          Missed sub-skills carried forward automatically. Next IA = fresh drill topics + all previously missed sub-skills combined into one longer session.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="conn" style="margin:8px 0 0">
+    <div class="conn-line" style="height:16px"></div>
+    <div class="conn-tag">SECOND IA FOLLOWS SAME RULES</div>
+    <div class="conn-line" style="height:16px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- SECOND MISS ESCALATION -->
+  <div style="width:100%">
+    <div class="card v-warn">
+      <div class="card-eyebrow" style="color:var(--amber)">Escalation — Second Consecutive Miss</div>
+      <div class="card-title">🚨 Second IA Also Missed → Tutor Notified</div>
+      <div class="g2" style="margin-top:12px">
+        <div class="note nam" style="margin-top:0">
+          <strong>Student impact:</strong><br>
+          −40 Momentum total (cumulative)<br>
+          Predicted readiness → ⚠️ warning state<br>
+          Consolidated catch-up session on next login
+        </div>
+        <div class="note nam" style="margin-top:0">
+          <strong>Tutor Alert — Level 2:</strong><br>
+          "[Name] missed 2 consecutive Internal Assessments.<br>
+          Last login: [date] · Exam in [X] days.<br>
+          Recommend direct outreach."
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line" style="height:16px"></div>
+    <div class="conn-tag">IA CYCLE CONTINUES — DRILL → GATE → IA → REPEAT</div>
+    <div class="conn-line" style="height:16px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- 3 WEEKS MONITOR -->
+  <div style="width:100%">
+    <div class="card v-warn">
+      <div class="card-eyebrow" style="color:var(--amber)">Background Monitor — Always Running</div>
+      <div class="card-title">📅 3+ Weeks Active Without 6 IAs Completed</div>
+      <div class="g2" style="margin-top:10px">
+        <div class="note nam" style="margin-top:0">
+          <strong>Trigger:</strong><br>
+          account_age ≥ 21 days<br>
+          AND total_IAs_completed &lt; 6
+        </div>
+        <div class="note nam" style="margin-top:0">
+          <strong>Tutor Alert — Level 1 Critical:</strong><br>
+          "[Name] on platform 3+ weeks with only [X] IAs done. Mock Test locked. Immediate intervention recommended."
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line cp" style="height:18px"></div>
+    <div class="conn-tag">STUDENT COMPLETES 6 IAs ACROSS ALL 4 SKILLS</div>
+    <div class="conn-line cp" style="height:18px"></div>
+    <div class="conn-arrow cp"></div>
+  </div>
+
+  <!-- MOCK GATE -->
+  <div style="width:100%">
+    <div class="card v-gate">
+      <div class="card-eyebrow" style="color:var(--purple)">Final Gate · Mock Test</div>
+      <div class="card-title">🏆 Mock Test Eligibility — One-Time Gate</div>
+      <div class="card-body">Once passed, mock access is permanent. Both conditions required simultaneously.</div>
+      <div class="pills">
+        <span class="pill pp">✓ 6 IAs completed — at least 1 per skill</span>
+        <span class="pill pp">✓ Real Band improved ≥ 0.5 on at least 1 skill from diagnostic</span>
+      </div>
+      <div class="note np">
+        Lock message before eligibility: <em>"Complete 6 Internal Assessments and show measurable improvement to unlock your Mock IELTS."</em> Visible in sidebar, locked, creates aspiration.
+      </div>
+    </div>
+  </div>
+
+  <div class="branch-top w2" style="width:100%;max-width:800px"></div>
+
+  <div class="g2" style="max-width:800px;width:100%;align-items:start">
+    <div class="gcol">
+      <div class="gcol-line"></div>
+      <div class="card v-mock" style="width:100%">
+        <div class="card-eyebrow" style="color:var(--purple)">Path A · Standard</div>
+        <div class="card-title">🎓 Full Mock — 1 Per Calendar Month</div>
+        <div class="card-body">Permanent unlock. One full simulation per calendar month. Scarcity is intentional.</div>
+        <div class="pills">
+          <span class="pill pp">Full IELTS format</span>
+          <span class="pill pp">Hard timers · Audio once · No rewind</span>
+          <span class="pill pp">+200 Momentum flat</span>
+          <span class="pill pp">+500 if band crosses new 0.5 threshold</span>
+        </div>
+        <div class="note np" style="margin-top:10px">
+          Real Band = (Mock × 0.60) + (Last IA × 0.40) · Rounded to nearest 0.5
+        </div>
+      </div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-line"></div>
+      <div class="card v-mock" style="width:100%">
+        <div class="card-eyebrow" style="color:var(--purple)">Path B · Momentum Exchange</div>
+        <div class="card-title">⚡ Extra Mock via 1500 Momentum Points</div>
+        <div class="card-body">For students who want more than 1 mock per month or early access before standard unlock.</div>
+        <div class="pills">
+          <span class="pill pp">Min 4 IAs · 1500 pts · ≥14 days on platform</span>
+          <span class="pill pp">Band ≥ 0.5 improvement shown</span>
+          <span class="pill pp">Max 2 mocks/month total (1 std + 1 earned)</span>
+        </div>
+        <div class="note np" style="margin-top:10px">
+          Hard cap enforced server-side. Earned mock does not replace standard monthly allocation.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:8px 0 0">
+    <div class="conn-line cp" style="height:16px"></div>
+    <div class="conn-arrow cp"></div>
+  </div>
+
+  <!-- MOCK RESULT -->
+  <div style="width:100%">
+    <div class="card v-mock">
+      <div class="card-eyebrow" style="color:var(--purple)">Mock Result + Comparison</div>
+      <div class="card-title">📋 Full IELTS Result — Diagnostic Baseline vs Today</div>
+      <div class="g2" style="margin-top:10px">
+        <div class="note np" style="margin-top:0">
+          <strong>Result card shows:</strong><br>
+          Overall band (prominent) · 4 skill bands<br>
+          Before (diagnostic) vs After comparison<br>
+          One priority action per skill
+        </div>
+        <div class="note np" style="margin-top:0">
+          <strong>After mock completes:</strong><br>
+          Drill cycle resumes with updated priorities<br>
+          Next mock available next calendar month<br>
+          Full rhythm continues until exam day
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn" style="margin:0">
+    <div class="conn-line" style="height:16px"></div>
+    <div class="conn-tag">DRILL CYCLE RESUMES — UPDATED PRIORITIES</div>
+    <div class="conn-line" style="height:16px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- CONTINUOUS CYCLE -->
+  <div style="width:100%">
+    <div class="card v-cycle">
+      <div class="card-eyebrow" style="color:var(--muted)">Repeats Until Exam Day</div>
+      <div class="card-title">🔄 The Continuous Improvement Cycle</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-family:var(--mono);font-size:11px">
+        <span style="color:var(--accent)">DRILL 1</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--teal)">LEXIGRID (5 words)</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--green)">SIDEBAR UNLOCKS</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--accent)">DRILL 2</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--accent)">DRILL 3</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--purple)">IA UNLOCK</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--green)">IA TAKEN</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--amber)">SCORES UPDATE</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--accent)">NEW PRIORITY</span>
+        <span style="color:var(--muted)">→</span>
+        <span style="color:var(--muted)">⟳</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASE 2 -->
+  <div class="conn" style="margin:0">
+    <div class="conn-line" style="height:16px;background:rgba(251,146,60,0.3)"></div>
+    <div class="conn-arrow" style="border-top-color:rgba(251,146,60,0.5)"></div>
+  </div>
+
+  <div style="width:100%">
+    <div class="wrap wo">
+      <div class="wrap-lbl wlo">PHASE 2 — FUTURE B2C UPGRADE</div>
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--orange);text-transform:uppercase;margin-bottom:8px">When Grammar Swipe is built</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text-bright);margin-bottom:12px">Same gate architecture — new activity fills the Drill 2 → Drill 3 slot</div>
+      <table class="mini-table">
+        <thead>
+          <tr>
+            <th>Gate</th>
+            <th>Phase 1 — Now (B2B)</th>
+            <th>Phase 2 — Future (B2C)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Drill 1 → Drill 2</td>
+            <td>LexiGrid · 5 words solved</td>
+            <td>LexiGrid · 5 words solved (unchanged)</td>
+          </tr>
+          <tr>
+            <td>Drill 2 → Drill 3</td>
+            <td>No gate — immediate access</td>
+            <td>Grammar Swipe · 3 rounds completed</td>
+          </tr>
+          <tr>
+            <td>After Drill 3</td>
+            <td>Session complete, day done</td>
+            <td>Vocab Bank review (suggested, not gated)</td>
+          </tr>
+          <tr>
+            <td>Sidebar unlock trigger</td>
+            <td>Drill 2 accessed (unchanged)</td>
+            <td>Drill 2 accessed (unchanged)</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note no" style="margin-top:10px">
+        Core rule that never changes: <strong>Gates are activity-based, never time-based.</strong> A student accepts a gate that feels like learning. They abandon a gate that just makes them wait. True for B2B today. True for B2C tomorrow.
+      </div>
+    </div>
+  </div>
+
+  <!-- QUICK REF -->
+  <div style="width:100%;margin-top:44px">
+    <div class="secdiv">
+      <div class="secdiv-line"></div>
+      <div class="secdiv-text">QUICK REFERENCE — ALL KEY RULES</div>
+      <div class="secdiv-line"></div>
+    </div>
+    <div class="ref-grid" style="margin-top:14px">
+      <div class="ref-card">
+        <div class="ref-card-title">Unlock + Drill Rules</div>
+        <div class="ref-row"><span class="ref-row-key">Sidebar locked until</span><span class="ref-row-val" style="color:var(--teal)">LexiGrid 5 words</span></div>
+        <div class="ref-row"><span class="ref-row-key">Sidebar unlock trigger</span><span class="ref-row-val" style="color:var(--green)">Drill 2 accessed</span></div>
+        <div class="ref-row"><span class="ref-row-key">Gate D1 → D2</span><span class="ref-row-val" style="color:var(--teal)">LexiGrid 5 words</span></div>
+        <div class="ref-row"><span class="ref-row-key">Gate D2 → D3</span><span class="ref-row-val" style="color:var(--green)">None — immediate</span></div>
+        <div class="ref-row"><span class="ref-row-key">Max drills/day</span><span class="ref-row-val">3 standard</span></div>
+        <div class="ref-row"><span class="ref-row-key">4th drill</span><span class="ref-row-val">75 pts + DCS ≥ 75%</span></div>
+        <div class="ref-row"><span class="ref-row-key">Streak valid if</span><span class="ref-row-val" style="color:var(--amber)">≥ 2 drills/day</span></div>
+        <div class="ref-row"><span class="ref-row-key">Platform days</span><span class="ref-row-val" style="color:var(--green)">All 7 — no off day</span></div>
+      </div>
+      <div class="ref-card">
+        <div class="ref-card-title">Internal Assessment Rules</div>
+        <div class="ref-row"><span class="ref-row-key">Drills required</span><span class="ref-row-val" style="color:var(--accent)">6 sessions total</span></div>
+        <div class="ref-row"><span class="ref-row-key">Min days before IA</span><span class="ref-row-val">2 calendar days</span></div>
+        <div class="ref-row"><span class="ref-row-key">DCS threshold</span><span class="ref-row-val">avg ≥ 40%</span></div>
+        <div class="ref-row"><span class="ref-row-key">Wait after notify</span><span class="ref-row-val" style="color:var(--purple)">24 hours</span></div>
+        <div class="ref-row"><span class="ref-row-key">Response window</span><span class="ref-row-val" style="color:var(--amber)">24 hours</span></div>
+        <div class="ref-row"><span class="ref-row-key">Mid-exit resume</span><span class="ref-row-val">18-min countdown</span></div>
+        <div class="ref-row"><span class="ref-row-key">Miss 1 penalty</span><span class="ref-row-val" style="color:var(--red)">−20 Momentum</span></div>
+        <div class="ref-row"><span class="ref-row-key">Miss 2 → alert</span><span class="ref-row-val" style="color:var(--amber)">Tutor Level 2</span></div>
+        <div class="ref-row"><span class="ref-row-key">3 weeks &lt; 6 IAs</span><span class="ref-row-val" style="color:var(--red)">Tutor Level 1</span></div>
+      </div>
+      <div class="ref-card">
+        <div class="ref-card-title">Mock Test Rules</div>
+        <div class="ref-row"><span class="ref-row-key">IAs required</span><span class="ref-row-val" style="color:var(--purple)">6 across all 4 skills</span></div>
+        <div class="ref-row"><span class="ref-row-key">Band requirement</span><span class="ref-row-val">≥ 0.5 any skill</span></div>
+        <div class="ref-row"><span class="ref-row-key">Standard access</span><span class="ref-row-val">1 per calendar month</span></div>
+        <div class="ref-row"><span class="ref-row-key">Momentum unlock</span><span class="ref-row-val" style="color:var(--purple)">1500 points</span></div>
+        <div class="ref-row"><span class="ref-row-key">Momentum unlock req</span><span class="ref-row-val">Min 4 IAs · 14 days</span></div>
+        <div class="ref-row"><span class="ref-row-key">Max per month</span><span class="ref-row-val">2 total (hard cap)</span></div>
+        <div class="ref-row"><span class="ref-row-key">Scoring formula</span><span class="ref-row-val">Mock×0.6 + IA×0.4</span></div>
+        <div class="ref-row"><span class="ref-row-key">Rounding</span><span class="ref-row-val">Nearest 0.5</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="text-align:center;margin-top:60px;font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:3px">
+  TESTCRACK · STUDENT FLOW v3 · B2B NOW · B2C READY · DECISIONS LOCKED
+</div>
+
+</body>
+</html>

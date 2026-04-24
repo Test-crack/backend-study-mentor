@@ -603,12 +603,14 @@ model institute_students {
   isDiagnosed             Boolean                   @default(false)
   recommendationSeeded    Boolean                   @default(false)
   target_band             Float?
+  momentum_score          Int                       @default(0)
   AssessmentHistory       AssessmentHistory[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
   institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   DrillSessions           DrillSession[]
   ContentCompletions      ContentCompletion[]
+  GameScores              StudentGameScore[]
 
   @@index([is_active], map: "idx_institute_students_active")
   @@index([institute_id], map: "idx_institute_students_institute")
@@ -736,13 +738,37 @@ model DrillSession {
   sub_skill         IeltsSubSkillType
   drill_type        String?           @db.VarChar(50)
   prompts_completed Int
+  correct_answers   Int               @default(0) @db.SmallInt
+  total_questions   Int               @default(5) @db.SmallInt
   momentum_earned   Int
+  is_extra_session  Boolean           @default(false)
   ai_feedback_json  Json?
   created_at        DateTime          @default(now()) @db.Timestamptz(6)
 
   Student institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@map("drill_sessions")
+}
+
+model StudentGameScore {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id      String   @db.Uuid
+  game_type       String   @db.VarChar(30)
+  session_date    DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  words_solved    Int      @default(0)
+  total_attempts  Int      @default(0)
+  bonus_eligible  Boolean  @default(false)
+  momentum_earned Int      @default(0)
+  completed       Boolean  @default(false)
+  score_data      Json?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  Student institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([student_id, game_type, session_date])
+  @@index([student_id])
+  @@index([session_date])
+  @@map("student_game_scores")
 }
 
 model ContentCompletion {
