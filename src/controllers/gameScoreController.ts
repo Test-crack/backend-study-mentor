@@ -29,7 +29,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
 
         const start = todayStart();
 
-        const [drillSessions, lexiGridRecord] = await Promise.all([
+        const [drillSessions, lexiGridRecord, competencyMatrix] = await Promise.all([
             prisma.drillSession.findMany({
                 where: { student_id: student.id, created_at: { gte: start } },
                 select: { id: true, is_extra_session: true }
@@ -40,8 +40,19 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
                     game_type: 'LEXIGRID',
                     session_date: { gte: start }
                 }
+            }),
+            prisma.studentCompetencyMatrix.findMany({
+                where: { student_id: student.id },
+                select: { band_score: true }
             })
         ]);
+
+        const validBands = competencyMatrix
+            .map(m => Number(m.band_score))
+            .filter(s => s > 0);
+        const current_band = validBands.length > 0
+            ? Math.round((validBands.reduce((a, b) => a + b, 0) / validBands.length) * 2) / 2
+            : 0;
 
         const drills_completed_today  = drillSessions.length;
         const lexigrid_completed_today = !!(lexiGridRecord?.completed);
@@ -75,12 +86,14 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             next_action,
             extra_sessions_today,
             sessions_remaining,
-            momentum_score: student.momentum_score,
-            daily_streak: student.daily_streak,
+            momentum_score:   student.momentum_score,
+            daily_streak:     student.daily_streak,
+            target_band:      student.target_band ?? 7.0,
+            current_band,
             can_buy_extra: student.momentum_score >= EXTRA_SESSION_COST
                 && drills_completed_today >= FREE_SESSIONS_PER_DAY
                 && drills_completed_today < MAX_SESSIONS_PER_DAY,
-            free_sessions: FREE_SESSIONS_PER_DAY,
+            free_sessions:    FREE_SESSIONS_PER_DAY,
             extra_session_cost: EXTRA_SESSION_COST
         });
     } catch (err) {

@@ -91,12 +91,20 @@ export async function getCompetencyScores(req: AuthRequest, res: Response) {
             where: { student_id: student.id }
         });
 
+        const validBands = matrix
+            .map(m => Number(m.band_score))
+            .filter(s => s > 0);
+        const current_band = validBands.length > 0
+            ? Math.round((validBands.reduce((a, b) => a + b, 0) / validBands.length) * 2) / 2
+            : 0;
+
         return res.json({
             success: true,
             data: matrix,
-            target_band: student.target_band,
+            target_band:   student.target_band ?? 7.0,
+            current_band,
             momentum_score: student.momentum_score,
-            daily_streak: student.daily_streak,
+            daily_streak:  student.daily_streak,
         });
 
     } catch (error) {
