@@ -1,18 +1,13 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { todayStartIST, currentISTDate } from '../lib/timezone';
 
 const FREE_SESSIONS_PER_DAY = 2;
 const MAX_SESSIONS_PER_DAY  = 5;
 const EXTRA_SESSION_COST    = 75;
 const LEXIGRID_BASE_PTS     = 10;
 const LEXIGRID_BONUS_PTS    = 5;
-
-function todayStart(): Date {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-}
 
 async function resolveStudent(appUserId: string) {
     return prisma.institute_students.findUnique({ where: { user_id: appUserId } });
@@ -27,18 +22,25 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         const student = await resolveStudent(appUserId);
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const start = todayStart();
+        // TIMESTAMPTZ boundary for drill_sessions.created_at
+        const drillCutoff  = todayStartIST();
+        // DATE boundary for student_game_scores.session_date
+        const sessionToday = currentISTDate();
+
+        // DEBUG — remove before prod
+        console.log('[TZ] drillCutoff (IST midnight as UTC) :', drillCutoff.toISOString());
+        console.log('[TZ] sessionToday (IST date as UTC 00:00):', sessionToday.toISOString());
 
         const [drillSessions, lexiGridRecord, competencyMatrix] = await Promise.all([
             prisma.drillSession.findMany({
-                where: { student_id: student.id, created_at: { gte: start } },
+                where: { student_id: student.id, created_at: { gte: drillCutoff } },
                 select: { id: true, is_extra_session: true }
             }),
             prisma.studentGameScore.findFirst({
                 where: {
                     student_id: student.id,
-                    game_type: 'LEXIGRID',
-                    session_date: { gte: start }
+                    game_type:    'LEXIGRID',
+                    session_date: sessionToday   // exact IST date match — no gte skew
                 }
             }),
             prisma.studentCompetencyMatrix.findMany({
@@ -55,7 +57,10 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             : 0;
 
         const drills_completed_today  = drillSessions.length;
-        const lexigrid_completed_today = !!(lexiGridRecord?.completed);
+        // A record existing for today = student played the session.
+        // We don't gate on `completed` field because old rows written before the
+        // completed-flag fix may have completed=false even though the session finished.
+        const lexigrid_completed_today = !!lexiGridRecord;
         const dashboard_unlocked       = drills_completed_today >= FREE_SESSIONS_PER_DAY;
         const extra_sessions_today     = drillSessions.filter(s => s.is_extra_session).length;
         const sessions_remaining       = MAX_SESSIONS_PER_DAY - drills_completed_today;
@@ -118,38 +123,50 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'game_type and words_solved are required.' });
         }
 
-        const REQUIRED_WORDS = 5;
-        const completed       = words_solved >= REQUIRED_WORDS;
-        let momentum_earned   = 0;
+        const wordsSolvedNum = Math.max(0, parseInt(words_solved));
 
-        if (game_type === 'LEXIGRID' && completed) {
-            momentum_earned = LEXIGRID_BASE_PTS + (bonus_eligible ? LEXIGRID_BONUS_PTS : 0);
-        }
+        // submitLexiGridSession is only ever called at end of a full 5-word session,
+        // so any API call here means the session is complete regardless of score.
+        const completed = true;
 
-        const start = todayStart();
+        // Momentum matches the frontend per-word award (15 pts/word) so that
+        // syncMomentum(res.momentum_score) is consistent with the local addPoints calls.
+        // Bonus (+5 pts) only applies if all 5 words were solved on first/second try.
+        const POINTS_PER_WORD = 15;
+        const momentum_earned = game_type === 'LEXIGRID'
+            ? wordsSolvedNum * POINTS_PER_WORD + (bonus_eligible && wordsSolvedNum >= 5 ? LEXIGRID_BONUS_PTS : 0)
+            : 0;
 
-        // Upsert — one record per student per game per calendar day
+        // One record per student per game per IST calendar day
+        const sessionToday = currentISTDate();
+
+        // Check BEFORE upsert to guard against double-awarding momentum
+        const existingRecord = await prisma.studentGameScore.findFirst({
+            where: { student_id: student.id, game_type, session_date: sessionToday }
+        });
+        const wasAlreadyComplete = existingRecord?.completed ?? false;
+
         const record = await prisma.studentGameScore.upsert({
             where: {
                 student_id_game_type_session_date: {
-                    student_id: student.id,
+                    student_id:   student.id,
                     game_type,
-                    session_date: start
+                    session_date: sessionToday
                 }
             },
             create: {
-                student_id: student.id,
+                student_id:     student.id,
                 game_type,
-                session_date: start,
-                words_solved,
+                session_date:   sessionToday,
+                words_solved:   wordsSolvedNum,
                 total_attempts: total_attempts ?? 0,
                 bonus_eligible: bonus_eligible ?? false,
                 momentum_earned,
                 completed,
-                score_data: req.body.score_data ?? null
+                score_data:     req.body.score_data ?? null
             },
             update: {
-                words_solved,
+                words_solved:   wordsSolvedNum,
                 total_attempts: total_attempts ?? 0,
                 bonus_eligible: bonus_eligible ?? false,
                 momentum_earned,
@@ -157,9 +174,9 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             }
         });
 
-        // Award momentum only on first-time completion
+        // Award momentum only on first submission — idempotent
         let updated_momentum = student.momentum_score;
-        if (completed && momentum_earned > 0) {
+        if (!wasAlreadyComplete && momentum_earned > 0) {
             const updatedStudent = await prisma.institute_students.update({
                 where: { id: student.id },
                 data: { momentum_score: { increment: momentum_earned } }
@@ -172,7 +189,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             data: record,
             momentum_earned,
             momentum_score: updated_momentum,
-            next_action: completed ? 'DRILL_2' : 'CONTINUE_LEXIGRID'
+            next_action: 'DRILL_2'
         });
     } catch (err) {
         console.error('[GameScore] saveGameScore error:', err);
@@ -197,9 +214,8 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             });
         }
 
-        const start = todayStart();
         const drillsToday = await prisma.drillSession.count({
-            where: { student_id: student.id, created_at: { gte: start } }
+            where: { student_id: student.id, created_at: { gte: todayStartIST() } }
         });
 
         if (drillsToday < FREE_SESSIONS_PER_DAY) {

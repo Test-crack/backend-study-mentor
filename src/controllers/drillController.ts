@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 
 interface DrillItem {
     skill: string;
@@ -32,14 +33,10 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
 
         const MAX_DAILY_SESSIONS = 5;
 
-        // Use calendar-day boundary so sessions reset at midnight, not on a rolling 24hr window
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
         const practicedSessions = await prisma.drillSession.findMany({
             where: {
                 student_id: student.id,
-                created_at: { gte: todayStart }
+                created_at: { gte: todayStartIST() }
             }
         });
 
@@ -228,9 +225,6 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
         const momentum_earned     = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
         const extraSession        = is_extra_session === true || is_extra_session === 'true';
 
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
         const [session, updatedStudent] = await prisma.$transaction([
             prisma.drillSession.create({
                 data: {
@@ -250,17 +244,17 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
             })
         ]);
 
-        // Streak logic: ≥2 drills in a calendar day = streak day.
-        // Only trigger when today's count hits exactly 2 (the threshold).
+        // Streak: fires only when today's count crosses exactly 2 (the threshold).
+        const drillCutoff = todayStartIST();
         const drillsToday = await prisma.drillSession.count({
-            where: { student_id: student.id, created_at: { gte: todayStart } }
+            where: { student_id: student.id, created_at: { gte: drillCutoff } }
         });
 
         let newDailyStreak = updatedStudent.daily_streak;
 
         if (drillsToday === 2) {
-            const yesterdayStart = new Date(todayStart);
-            yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+            const todayIST     = currentISTDate();
+            const yesterdayIST = yesterdayISTDate();
 
             const { daily_streak: prevStreak, last_streak_date: lastDate } =
                 await prisma.institute_students.findUnique({
@@ -268,10 +262,11 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
                     select: { daily_streak: true, last_streak_date: true }
                 }) ?? { daily_streak: 0, last_streak_date: null };
 
-            // Extend streak if yesterday was the last streak day; otherwise reset to 1
+            // last_streak_date is a DATE column — Prisma returns midnight UTC of that IST date.
+            // It was yesterday (IST) if it falls within [yesterdayIST, todayIST).
             if (lastDate
-                && lastDate.getTime() >= yesterdayStart.getTime()
-                && lastDate.getTime() < todayStart.getTime()) {
+                && lastDate.getTime() >= yesterdayIST.getTime()
+                && lastDate.getTime() <  todayIST.getTime()) {
                 newDailyStreak = prevStreak + 1;
             } else {
                 newDailyStreak = 1;
@@ -279,7 +274,7 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
 
             await prisma.institute_students.update({
                 where: { id: student.id },
-                data: { daily_streak: newDailyStreak, last_streak_date: todayStart }
+                data: { daily_streak: newDailyStreak, last_streak_date: todayIST }
             });
         }
 
