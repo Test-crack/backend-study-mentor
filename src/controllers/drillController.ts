@@ -225,6 +225,10 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
         const momentum_earned     = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
         const extraSession        = is_extra_session === true || is_extra_session === 'true';
 
+        // Consume one pre-authorized extra credit when the session is an extra drill.
+        // This is idempotent: if credits = 0 (e.g., re-submit), no change.
+        const consumeCredit = extraSession && student.extra_drill_credits > 0;
+
         const [session, updatedStudent] = await prisma.$transaction([
             prisma.drillSession.create({
                 data: {
@@ -240,7 +244,10 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
             }),
             prisma.institute_students.update({
                 where: { id: student.id },
-                data:  { momentum_score: { increment: momentum_earned } }
+                data:  {
+                    momentum_score:     { increment: momentum_earned },
+                    ...(consumeCredit ? { extra_drill_credits: { decrement: 1 } } : {})
+                }
             })
         ]);
 

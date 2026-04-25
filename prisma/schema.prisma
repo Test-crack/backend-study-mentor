@@ -606,6 +606,7 @@ model institute_students {
   momentum_score          Int                       @default(0)
   daily_streak            Int                       @default(0)
   last_streak_date        DateTime?                 @db.Date
+  extra_drill_credits     Int                       @default(0) // pre-paid extra sessions not yet consumed
   AssessmentHistory       AssessmentHistory[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
   institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

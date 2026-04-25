@@ -2,10 +2,12 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { todayStartIST, currentISTDate } from '../lib/timezone';
+import { computeDailyDCS } from '../lib/dcs';
 
-const FREE_SESSIONS_PER_DAY = 2;
-const MAX_SESSIONS_PER_DAY  = 5;
+const FREE_SESSIONS_PER_DAY = 3;    // 3 drills free daily
+const MAX_SESSIONS_PER_DAY  = 100;  // no hard cap — students can keep buying extra drills
 const EXTRA_SESSION_COST    = 75;
+const DCS_EXTRA_THRESHOLD   = 75;   // DCS% required to unlock extra drill
 const LEXIGRID_BASE_PTS     = 10;
 const LEXIGRID_BONUS_PTS    = 5;
 
@@ -56,16 +58,25 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             ? Math.round((validBands.reduce((a, b) => a + b, 0) / validBands.length) * 2) / 2
             : 0;
 
-        const drills_completed_today  = drillSessions.length;
-        // A record existing for today = student played the session.
-        // We don't gate on `completed` field because old rows written before the
-        // completed-flag fix may have completed=false even though the session finished.
+        const drills_completed_today   = drillSessions.length;
         const lexigrid_completed_today = !!lexiGridRecord;
-        const dashboard_unlocked       = drills_completed_today >= FREE_SESSIONS_PER_DAY;
+        // Dashboard unlocks when Drill 2 is accessed — still threshold of 2
+        const dashboard_unlocked       = drills_completed_today >= 2;
         const extra_sessions_today     = drillSessions.filter(s => s.is_extra_session).length;
         const sessions_remaining       = MAX_SESSIONS_PER_DAY - drills_completed_today;
 
-        // Determine what the student should do next
+        // DCS needed for next_action decision and can_buy_extra gate
+        const daily_dcs = await computeDailyDCS(student.id);
+        const hasDCSForExtra = daily_dcs >= DCS_EXTRA_THRESHOLD;
+        const hasMomForExtra = student.momentum_score >= EXTRA_SESSION_COST;
+
+        // ── next_action decision tree ──────────────────────────────────────────
+        // DRILL_1 → LEXIGRID gate → DRILL_2 → DRILL_3 (all free)
+        // → EXTRA_DRILL_READY   (credit already purchased, not yet consumed)
+        // → EXTRA_DRILL_AVAILABLE (eligible to purchase: DCS≥75 + mom≥75)
+        // → DRILL_LOCKED_LOW_DCS / DRILL_LOCKED_INSUFFICIENT_PTS
+        const pendingCredit = student.extra_drill_credits > 0;
+
         let next_action: string;
         if (drills_completed_today === 0) {
             next_action = 'DRILL_1';
@@ -73,14 +84,21 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             next_action = 'LEXIGRID';
         } else if (drills_completed_today === 1 && lexigrid_completed_today) {
             next_action = 'DRILL_2';
-        } else if (drills_completed_today >= MAX_SESSIONS_PER_DAY) {
-            next_action = 'DAILY_LIMIT_REACHED';
+        } else if (drills_completed_today === 2) {
+            next_action = 'DRILL_3';
         } else if (drills_completed_today >= FREE_SESSIONS_PER_DAY) {
-            next_action = student.momentum_score >= EXTRA_SESSION_COST
-                ? 'EXTRA_DRILL_AVAILABLE'
-                : 'DRILL_LOCKED_INSUFFICIENT_PTS';
+            if (pendingCredit) {
+                // Student already paid — go straight to drill, no re-payment
+                next_action = 'EXTRA_DRILL_READY';
+            } else if (!hasDCSForExtra) {
+                next_action = 'DRILL_LOCKED_LOW_DCS';
+            } else if (!hasMomForExtra) {
+                next_action = 'DRILL_LOCKED_INSUFFICIENT_PTS';
+            } else {
+                next_action = 'EXTRA_DRILL_AVAILABLE';
+            }
         } else {
-            next_action = 'DAILY_LIMIT_REACHED';
+            next_action = 'DRILL_LOCKED_LOW_DCS'; // fallback
         }
 
         return res.json({
@@ -91,15 +109,17 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             next_action,
             extra_sessions_today,
             sessions_remaining,
-            momentum_score:   student.momentum_score,
-            daily_streak:     student.daily_streak,
-            target_band:      student.target_band ?? 7.0,
+            momentum_score:     student.momentum_score,
+            daily_streak:       student.daily_streak,
+            daily_dcs,
+            target_band:        student.target_band ?? 7.0,
             current_band,
-            can_buy_extra: student.momentum_score >= EXTRA_SESSION_COST
-                && drills_completed_today >= FREE_SESSIONS_PER_DAY
-                && drills_completed_today < MAX_SESSIONS_PER_DAY,
-            free_sessions:    FREE_SESSIONS_PER_DAY,
-            extra_session_cost: EXTRA_SESSION_COST
+            extra_drill_credits: student.extra_drill_credits,
+            can_buy_extra:      !pendingCredit && hasDCSForExtra && hasMomForExtra
+                                && drills_completed_today >= FREE_SESSIONS_PER_DAY,
+            free_sessions:      FREE_SESSIONS_PER_DAY,
+            extra_session_cost: EXTRA_SESSION_COST,
+            dcs_threshold:      DCS_EXTRA_THRESHOLD
         });
     } catch (err) {
         console.error('[DailyDrillState] error:', err);
@@ -207,13 +227,6 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
         const student = await resolveStudent(appUserId);
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        if (student.momentum_score < EXTRA_SESSION_COST) {
-            return res.status(400).json({
-                success: false,
-                error: `Insufficient momentum. Need ${EXTRA_SESSION_COST} pts, have ${student.momentum_score}.`
-            });
-        }
-
         const drillsToday = await prisma.drillSession.count({
             where: { student_id: student.id, created_at: { gte: todayStartIST() } }
         });
@@ -221,7 +234,7 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
         if (drillsToday < FREE_SESSIONS_PER_DAY) {
             return res.status(400).json({
                 success: false,
-                error: 'Complete your free daily sessions before purchasing extra sessions.'
+                error: `Complete all ${FREE_SESSIONS_PER_DAY} free daily sessions first.`
             });
         }
 
@@ -232,15 +245,39 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             });
         }
 
+        // DCS gate — student must score ≥ 75% today to unlock extra drill
+        const daily_dcs = await computeDailyDCS(student.id);
+        if (daily_dcs < DCS_EXTRA_THRESHOLD) {
+            return res.status(400).json({
+                success: false,
+                error: `Your Daily Competency Score (${daily_dcs}%) must be ≥${DCS_EXTRA_THRESHOLD}% to unlock an extra drill.`,
+                daily_dcs,
+                required_dcs: DCS_EXTRA_THRESHOLD
+            });
+        }
+
+        if (student.momentum_score < EXTRA_SESSION_COST) {
+            return res.status(400).json({
+                success: false,
+                error: `Insufficient momentum. Need ${EXTRA_SESSION_COST} pts, have ${student.momentum_score}.`
+            });
+        }
+
+        // Deduct pts and grant one pre-authorized credit atomically.
+        // The credit survives logout/disconnect — consumed only when the extra
+        // drill session is actually saved via POST /api/drills/session.
         const updated = await prisma.institute_students.update({
             where: { id: student.id },
-            data: { momentum_score: { decrement: EXTRA_SESSION_COST } }
+            data: {
+                momentum_score:     { decrement: EXTRA_SESSION_COST },
+                extra_drill_credits: { increment: 1 }
+            }
         });
 
         return res.json({
             success: true,
-            momentum_score: updated.momentum_score,
-            sessions_remaining: MAX_SESSIONS_PER_DAY - drillsToday - 1,
+            momentum_score:    updated.momentum_score,
+            extra_drill_credits: updated.extra_drill_credits,
             message: `${EXTRA_SESSION_COST} pts spent. Extra drill session unlocked.`
         });
     } catch (err) {
