@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { getValidatedStreak } from '../lib/streak';
 
 /**
  * Get the authenticated student's speaking practice history
@@ -98,13 +99,15 @@ export async function getCompetencyScores(req: AuthRequest, res: Response) {
             ? Math.round((validBands.reduce((a, b) => a + b, 0) / validBands.length) * 2) / 2
             : 0;
 
+        const daily_streak = await getValidatedStreak(student);
+
         return res.json({
             success: true,
             data: matrix,
             target_band:   student.target_band ?? 7.0,
             current_band,
             momentum_score: student.momentum_score,
-            daily_streak:  student.daily_streak,
+            daily_streak,
         });
 
     } catch (error) {

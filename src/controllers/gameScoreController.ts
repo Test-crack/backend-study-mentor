@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { todayStartIST, currentISTDate } from '../lib/timezone';
 import { computeDailyDCS } from '../lib/dcs';
+import { getValidatedStreak } from '../lib/streak';
 
 const FREE_SESSIONS_PER_DAY = 3;    // 3 drills free daily
 const MAX_SESSIONS_PER_DAY  = 100;  // no hard cap — students can keep buying extra drills
@@ -23,6 +24,9 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
 
         const student = await resolveStudent(appUserId);
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        // Validate streak on every load — resets to 0 if student missed a day
+        const daily_streak = await getValidatedStreak(student);
 
         // TIMESTAMPTZ boundary for drill_sessions.created_at
         const drillCutoff  = todayStartIST();
@@ -110,7 +114,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             extra_sessions_today,
             sessions_remaining,
             momentum_score:     student.momentum_score,
-            daily_streak:       student.daily_streak,
+            daily_streak,
             daily_dcs,
             target_band:        student.target_band ?? 7.0,
             current_band,
