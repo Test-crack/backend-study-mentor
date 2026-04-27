@@ -109,6 +109,8 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             success: true,
             drills_completed_today,
             lexigrid_completed_today,
+            lexigrid_words_solved:    lexiGridRecord?.words_solved    ?? 0,
+            lexigrid_momentum_earned: lexiGridRecord?.momentum_earned ?? 0,
             dashboard_unlocked,
             next_action,
             extra_sessions_today,
