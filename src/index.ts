@@ -22,6 +22,7 @@ import readingPracticeRoutes from './routes/readingPracticeRoutes';
 import ieltsWritingRoutes from './routes/ieltsWritingRoutes';
 import drillRoutes from './routes/drillRoutes';
 import diagnosticRoutes from './routes/diagnosticRoutes';
+import iaRoutes from './routes/iaRoutes';
 import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
@@ -97,6 +98,7 @@ app.use('/api/reading-practice', readingPracticeRoutes);
 app.use('/api/ielts-writing', ieltsWritingRoutes);
 app.use('/api/drills', drillRoutes);
 app.use('/api/diagnostic', requireAuth, ensureUser, diagnosticRoutes);
+app.use('/api/ia',         requireAuth, ensureUser, iaRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {
