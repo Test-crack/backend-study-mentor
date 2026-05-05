@@ -244,6 +244,14 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             });
         }
 
+        if (student.extra_drill_credits > 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'You already have an unused extra drill session. Use it before purchasing another.',
+                extra_drill_credits: student.extra_drill_credits
+            });
+        }
+
         if (drillsToday >= MAX_SESSIONS_PER_DAY) {
             return res.status(400).json({
                 success: false,
