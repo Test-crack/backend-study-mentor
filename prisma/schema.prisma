@@ -606,13 +606,13 @@ model institute_students {
   momentum_score          Int                       @default(0)
   daily_streak            Int                       @default(0)
   last_streak_date        DateTime?                 @db.Date
-  extra_drill_credits     Int                       @default(0) // pre-paid extra sessions not yet consumed
+  extra_drill_credits     Int                       @default(0)
   AssessmentHistory       AssessmentHistory[]
+  IASession               IASession[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
+  DrillSessions           DrillSession[]
   institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  DrillSessions           DrillSession[]
-  ContentCompletions      ContentCompletion[]
   GameScores              StudentGameScore[]
 
   @@index([is_active], map: "idx_institute_students_active")
@@ -689,86 +689,39 @@ model RecommendationItem {
   @@index([skill_type, level, is_active])
 }
 
-model SubSkillDefinition {
-  id                String  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  exam_type         String
-  skill             String
-  sub_skill         String
-  drill_type        String
-  priority_order    Int
-  level_a_threshold Decimal
-  level_b_threshold Decimal
-
-  @@map("sub_skill_definitions")
-}
-
-model ContentLibrary {
-  id                  String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  skill               String
-  sub_skill           String
-  level               String   @db.Char(1)
-  title               String
-  url                 String?
-  type                String
-  watch_time_mins     Int
-  reflection_keywords String[]
-  times_served        Int      @default(0)
-  times_effective     Int      @default(0)
-
-  // Recommendation fields kept per user's requirement to replace RecommendationItem
-  content       String?
-  description   String?
-  thumbnail_url String?
-  source        String?              @db.VarChar(150)
-  skill_type    IeltsSkillType?
-  rec_level     RecommendationLevel?
-  is_active     Boolean              @default(true)
-  metadata      Json?
-
-  createdAt DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime @default(now()) @db.Timestamptz(6)
-
-  ContentCompletion ContentCompletion[]
-
-  @@index([skill_type, rec_level, is_active])
-  @@map("content_library")
-}
-
 model DrillSession {
-  id                String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id        String            @db.Uuid
+  id                String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id        String             @db.Uuid
   skill             IeltsSkillType
   sub_skill         IeltsSubSkillType
-  drill_type        String?           @db.VarChar(50)
+  drill_type        String?
   prompts_completed Int
-  correct_answers   Int               @default(0) @db.SmallInt
-  total_questions   Int               @default(5) @db.SmallInt
   momentum_earned   Int
-  is_extra_session  Boolean           @default(false)
   ai_feedback_json  Json?
-  created_at        DateTime          @default(now()) @db.Timestamptz(6)
-
-  Student institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
+  created_at        DateTime           @default(now()) @db.Timestamptz(6)
+  correct_answers   Int                @default(0) @db.SmallInt
+  total_questions   Int                @default(5) @db.SmallInt
+  is_extra_session  Boolean            @default(false)
+  Student           institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("drill_sessions")
 }
 
 model StudentGameScore {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  student_id      String   @db.Uuid
-  game_type       String   @db.VarChar(30)
-  session_date    DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
-  words_solved    Int      @default(0)
-  total_attempts  Int      @default(0)
-  bonus_eligible  Boolean  @default(false)
-  momentum_earned Int      @default(0)
-  completed       Boolean  @default(false)
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id      String             @db.Uuid
+  game_type       String             @db.VarChar(30)
+  session_date    DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  words_solved    Int                @default(0)
+  total_attempts  Int                @default(0)
+  bonus_eligible  Boolean            @default(false)
+  momentum_earned Int                @default(0)
+  completed       Boolean            @default(false)
   score_data      Json?
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  created_at      DateTime           @default(now()) @db.Timestamptz(6)
+  Student         institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "student_game_scores_student_fk")
 
-  Student institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
-
-  @@unique([student_id, game_type, session_date])
+  @@unique([student_id, game_type, session_date], map: "student_game_scores_student_game_date_uniq")
   @@index([student_id])
   @@index([session_date])
   @@map("student_game_scores")
@@ -778,7 +731,7 @@ model LexiGridWord {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   base_word    String   @db.VarChar(100)
   target_word  String   @db.VarChar(100)
-  hint         String   @db.Text
+  hint         String
   category     String?  @db.VarChar(50)
   difficulty   String   @default("INTERMEDIATE") @db.VarChar(20)
   target_band  Decimal? @default(7.0) @db.Decimal(2, 1)
@@ -787,41 +740,72 @@ model LexiGridWord {
   created_at   DateTime @default(now()) @db.Timestamptz(6)
   updated_at   DateTime @default(now()) @db.Timestamptz(6)
 
-  @@index([is_active, difficulty])
+  @@index([is_active], map: "idx_lexigrid_words_active")
   @@map("lexigrid_words")
 }
 
-model ContentCompletion {
-  id                    String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id            String   @db.Uuid
-  content_id            String   @db.Uuid
-  reflection_text       String   @db.Text
-  reflection_passed     Boolean
-  apply_drill_completed Boolean
-  completed_at          DateTime @default(now()) @db.Timestamptz(6)
-
-  Student institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
-  Content ContentLibrary     @relation(fields: [content_id], references: [id], onDelete: Cascade)
-
-  @@map("content_completions")
-}
-
 model DrillQuestion {
-  id               String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  skill            IeltsSkillType
-  sub_skill        IeltsSubSkillType
-  level            RecommendationLevel
-  drill_type       String              @db.VarChar(50)     // e.g., 'MCQ', 'FILL_UP'
-  prompt_text      String              @db.Text
-  options          Json?
-  correct_answer   Json
-  explanation      String?             @db.Text
-  is_active        Boolean             @default(true)
-  created_at       DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime            @default(now()) @db.Timestamptz(6)
+  id             String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  skill          IeltsSkillType
+  sub_skill      IeltsSubSkillType
+  level          RecommendationLevel
+  drill_type     String              @db.VarChar(50)
+  prompt_text    String
+  options        Json?
+  correct_answer Json
+  explanation    String?
+  is_active      Boolean             @default(true)
+  created_at     DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime            @default(now()) @db.Timestamptz(6)
 
   @@index([skill, sub_skill, level, is_active])
   @@map("drill_questions")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model IAQuestion {
+  id             String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  skill          IeltsSkillType
+  sub_skill      IeltsSubSkillType
+  question_type  String            @db.VarChar(30)
+  passage_id     String?           @db.VarChar(50)
+  passage_text   String?
+  audio_url      String?           @db.VarChar(500)
+  prompt_text    String
+  options        Json?
+  correct_answer Json?
+  explanation    String?
+  difficulty     DifficultyType
+  is_active      Boolean           @default(true)
+  created_at     DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@index([is_active], map: "idx_iaquestion_active")
+  @@index([difficulty], map: "idx_iaquestion_difficulty")
+  @@index([skill, sub_skill], map: "idx_iaquestion_skill_subskill")
+}
+
+model IASession {
+  id                      String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id              String             @db.Uuid
+  ia_number               Int
+  ia_date                 DateTime           @db.Date
+  status                  IASessionStatus    @default(PENDING)
+  selected_subskills      Json               @default("[]")
+  question_ids            Json               @default("[]")
+  answers                 Json               @default("{}")
+  time_started_at         DateTime?          @db.Timestamptz(6)
+  time_submitted_at       DateTime?          @db.Timestamptz(6)
+  window_closes_at        DateTime           @db.Timestamptz(6)
+  scores                  Json?
+  momentum_awarded        Int?
+  carry_forward_subskills Json               @default("[]")
+  created_at              DateTime           @default(now()) @db.Timestamptz(6)
+  institute_students      institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([student_id, ia_date], map: "uq_iasession_student_date")
+  @@index([status], map: "idx_iasession_status")
+  @@index([student_id, ia_date], map: "idx_iasession_student_date")
+  @@index([student_id], map: "idx_iasession_student_id")
 }
 
 enum IeltsSubSkillType {
@@ -888,6 +872,7 @@ enum AssessmentModeType {
   DIAGNOSTIC
   PRACTICE
   MOCK
+  INTERNAL_ASSESSMENT
 }
 
 enum RecommendationLevel {
@@ -900,4 +885,11 @@ enum RecommendationType {
   VIDEO
   BLOG
   PRACTICE_TEST
+}
+
+enum IASessionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  MISSED
 }
