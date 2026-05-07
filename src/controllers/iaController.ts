@@ -91,6 +91,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         if (drills_completed === 0) {
             return res.json({
                 success:           true,
+                missed_count:      0,
                 has_schedule:      false,
                 prerequisites_met: false,
                 avg_dcs:           0,
@@ -117,6 +118,28 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         // ── Schedule anchor: IST calendar date of the very first drill ────────
         const firstDrillDateStr = toISTDateString(allSessions[0].created_at);
         const todayStr          = toISTDateString(new Date());
+
+        // ── Miss detection: mark stale PENDING / IN_PROGRESS sessions MISSED ──
+        const staleSessions = await prisma.iASession.findMany({
+            where: {
+                student_id: student.id,
+                ia_date:    { lt: new Date(todayStr) },
+                status:     { in: ['PENDING', 'IN_PROGRESS'] as any }
+            },
+            select: { id: true, selected_subskills: true }
+        });
+        if (staleSessions.length > 0) {
+            await Promise.all(staleSessions.map(s =>
+                prisma.iASession.update({
+                    where: { id: s.id },
+                    data:  { status: 'MISSED' as any, carry_forward_subskills: s.selected_subskills as any }
+                })
+            ));
+            await prisma.institute_students.update({
+                where: { id: student.id },
+                data:  { momentum_score: { decrement: staleSessions.length * 20 } }
+            });
+        }
 
         // ── Prerequisites (non-DCS gates) ─────────────────────────────────────
         const days_since_first_drill = daysBetween(firstDrillDateStr, todayStr);
@@ -181,6 +204,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 
         return res.json({
             success:            true,
+            missed_count:       staleSessions.length,
             has_schedule:       true,
             first_drill_date:   firstDrillDateStr,
             prerequisites_met,
@@ -214,7 +238,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-const TOTAL_IA_MS       = 20 * 60 * 1000;
+const SECTION_IA_MS     = 20 * 60 * 1000;  // 20 min per section; 2 sections = 40 min total
 const SUB_SCORE_KEY_MAP: Record<string, string> = {
     GRAMMAR:       'grammarScore',
     VOCABULARY:    'vocabularyScore',
@@ -453,28 +477,35 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
                     return { skill: cfg.skill, sub_skill: cfg.sub_skill, section_type: sectionType, audio_url: audioUrl, passage_text: passageTxt, passage_id: passageId, questions: qs };
                 });
 
-                const startedAt     = existing.time_started_at?.getTime() ?? Date.now();
-                const elapsed       = Date.now() - startedAt;
-                const timeRemaining = Math.max(0, TOTAL_IA_MS - elapsed);
+                // Per-section timing: read __meta written by section-advance events
+                const allAnswers = (existing.answers as Record<string, any>) ?? {};
+                const meta = (allAnswers.__meta ?? {}) as { current_section?: number; section_started_at?: number };
+                const resumeSectionIdx  = meta.current_section ?? 0;
+                const sectionStartedAt  = meta.section_started_at ?? (existing.time_started_at?.getTime() ?? Date.now());
+                const elapsed           = Date.now() - sectionStartedAt;
+                const timeRemaining     = Math.max(0, SECTION_IA_MS - elapsed);
 
-                // Mark IN_PROGRESS if still PENDING
+                // Mark IN_PROGRESS and initialise __meta if still PENDING (first open)
                 if (existing.status === 'PENDING') {
+                    const now = Date.now();
+                    allAnswers.__meta = { current_section: 0, section_started_at: now };
                     await prisma.iASession.update({
                         where: { id: existing.id },
-                        data:  { status: 'IN_PROGRESS', time_started_at: new Date() }
+                        data:  { status: 'IN_PROGRESS', time_started_at: new Date(now), answers: allAnswers as any }
                     });
                 }
 
                 return res.json({
-                    success: true,
-                    session_id: existing.id,
+                    success:             true,
+                    session_id:          existing.id,
                     ia_number,
-                    resume: true,
-                    selected_subskills: existing.selected_subskills,
+                    resume:              true,
+                    current_section_idx: resumeSectionIdx,
+                    selected_subskills:  existing.selected_subskills,
                     sections,
-                    saved_answers:    existing.answers,
-                    window_closes_at: windowClosesAt.toISOString(),
-                    time_remaining_ms: timeRemaining
+                    saved_answers:       existing.answers,
+                    window_closes_at:    windowClosesAt.toISOString(),
+                    time_remaining_ms:   timeRemaining
                 });
             }
         }
@@ -516,7 +547,7 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
                 status:             'IN_PROGRESS',
                 selected_subskills: selectedSubskills as any,
                 question_ids:       questionIdsConfig as any,
-                answers:            {} as any,
+                answers:            { __meta: { current_section: 0, section_started_at: Date.now() } } as any,
                 time_started_at:    new Date(),
                 window_closes_at:   windowClosesAt,
                 carry_forward_subskills: [] as any
@@ -537,11 +568,151 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             sections,
             saved_answers:     {},
             window_closes_at:  windowClosesAt.toISOString(),
-            time_remaining_ms: TOTAL_IA_MS
+            current_section_idx: 0,
+            time_remaining_ms:   SECTION_IA_MS
         });
 
     } catch (err) {
         console.error('[IAQuestions] error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// ─── POST /api/ia/submit ──────────────────────────────────────────────────────
+type SectionScore = { skill: string; sub_skill: string; band: number; correct: number; total: number };
+
+export async function submitIA(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { session_id } = req.body;
+        if (!session_id) return res.status(400).json({ success: false, error: 'session_id is required.' });
+
+        // 1. Validate session
+        const session = await prisma.iASession.findUnique({ where: { id: session_id } });
+        if (!session) return res.status(404).json({ success: false, error: 'Session not found.' });
+        if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
+        if (session.status === 'COMPLETED') return res.json({ success: true, already_done: true });
+        if (session.status === 'MISSED')    return res.status(400).json({ success: false, error: 'IA window has expired.' });
+
+        // 2. Load question IDs per sub-skill + fetch correct answers
+        const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
+        const allIds = questionIdsConfig.flatMap(c => c.ids);
+
+        const questions = await prisma.iAQuestion.findMany({
+            where:  { id: { in: allIds } },
+            select: { id: true, sub_skill: true, question_type: true, correct_answer: true }
+        });
+
+        // Strip __meta (section timing metadata) — not a question answer
+        const answers = Object.fromEntries(
+            Object.entries((session.answers ?? {}) as Record<string, unknown>).filter(([k]) => k !== '__meta')
+        ) as Record<string, string>;
+
+        // 3. Grade each sub-skill
+        const sectionScores: SectionScore[] = [];
+
+        for (const cfg of questionIdsConfig) {
+            const subQs    = questions.filter(q => cfg.ids.includes(q.id));
+            const scorable = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
+
+            let correct = 0;
+            for (const q of scorable) {
+                const studentAns = (answers[q.id] ?? '').trim().toUpperCase();
+                const correctAns = String(q.correct_answer ?? '').trim().toUpperCase();
+                if (studentAns && studentAns === correctAns) correct++;
+            }
+
+            const total   = scorable.length;
+            const rawBand = total > 0 ? (correct / total) * 9 : 0;
+            const band    = Math.min(Math.round(rawBand * 2) / 2, 9.0);
+            sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total });
+        }
+
+        // 4. Momentum: compare against all past completed sessions
+        const pastSessions = await prisma.iASession.findMany({
+            where:  { student_id: student.id, status: 'COMPLETED' },
+            select: { scores: true }
+        });
+
+        // Build map: sub_skill → highest band seen in any prior session
+        const pastBands = new Map<string, number>();
+        for (const ps of pastSessions) {
+            for (const s of (ps.scores ?? []) as SectionScore[]) {
+                const prev = pastBands.get(s.sub_skill) ?? 0;
+                if (s.band > prev) pastBands.set(s.sub_skill, s.band);
+            }
+        }
+
+        let momentumAwarded = 100; // base participation
+        for (const s of sectionScores) {
+            const prevBest = pastBands.get(s.sub_skill) ?? null;
+            if (prevBest !== null && s.band > prevBest) momentumAwarded += 25; // improvement
+            if (s.band > (prevBest ?? 0))               momentumAwarded += 50; // personal best
+        }
+
+        // 5. DB transaction
+        const updatedMomentum = await prisma.$transaction(async (tx) => {
+            // a) Mark session complete
+            await tx.iASession.update({
+                where: { id: session_id },
+                data:  {
+                    status:            'COMPLETED' as any,
+                    scores:            sectionScores as any,
+                    momentum_awarded:  momentumAwarded,
+                    time_submitted_at: new Date()
+                }
+            });
+
+            // b+c) Per sub-skill: AssessmentHistory + CompetencyMatrix upsert
+            for (const s of sectionScores) {
+                const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill] ?? null;
+                const subScores   = subScoreKey ? { [subScoreKey]: s.band } : {};
+
+                await tx.assessmentHistory.create({
+                    data: {
+                        student_id: student.id,
+                        skill:      s.skill as any,
+                        mode:       'INTERNAL_ASSESSMENT' as any,
+                        band_score: s.band,
+                        sub_scores: subScores as any
+                    }
+                });
+
+                const existing = await tx.studentCompetencyMatrix.findUnique({
+                    where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
+                    select: { sub_scores: true }
+                });
+                const merged = { ...(existing?.sub_scores as object ?? {}), ...subScores };
+
+                await tx.studentCompetencyMatrix.upsert({
+                    where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
+                    update: { band_score: s.band, sub_scores: merged as any, assessments_count: { increment: 1 }, last_updated: new Date() },
+                    create: { student_id: student.id, skill: s.skill as any, band_score: s.band, sub_scores: merged as any, assessments_count: 1 }
+                });
+            }
+
+            // d) Award momentum
+            const updated = await tx.institute_students.update({
+                where:  { id: student.id },
+                data:   { momentum_score: { increment: momentumAwarded } },
+                select: { momentum_score: true }
+            });
+            return updated.momentum_score;
+        });
+
+        return res.json({
+            success:          true,
+            momentum_awarded: momentumAwarded,
+            updated_momentum: updatedMomentum,
+            section_scores:   sectionScores
+        });
+    } catch (err) {
+        console.error('[IASubmit] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }
@@ -555,10 +726,8 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { session_id, question_id, answer } = req.body;
-        if (!session_id || !question_id || answer === undefined) {
-            return res.status(400).json({ success: false, error: 'session_id, question_id, and answer are required.' });
-        }
+        const { session_id, question_id, answer, section_advance } = req.body;
+        if (!session_id) return res.status(400).json({ success: false, error: 'session_id is required.' });
 
         const session = await prisma.iASession.findUnique({ where: { id: session_id } });
         if (!session || session.student_id !== student.id) {
@@ -571,8 +740,25 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'IA window has expired.' });
         }
 
-        // Merge single answer into JSONB without overwriting the rest
-        const current = (session.answers as Record<string, string>) ?? {};
+        const current = (session.answers as Record<string, any>) ?? {};
+
+        // Section-advance: student moved to the next section — stamp new section start time
+        if (section_advance !== undefined) {
+            current.__meta = {
+                current_section:    Number(section_advance),
+                section_started_at: Date.now()
+            };
+            await prisma.iASession.update({
+                where: { id: session_id },
+                data:  { answers: current as any }
+            });
+            return res.json({ success: true, saved: true });
+        }
+
+        // Normal answer save
+        if (!question_id || answer === undefined) {
+            return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
+        }
         current[question_id] = String(answer);
 
         await prisma.iASession.update({
