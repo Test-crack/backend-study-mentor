@@ -204,9 +204,17 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         }
 
         // Active in-progress session today → gate shows "Continue Assessment" instead of "Start"
+        // Also check for completed session to show scores
         const todayActiveSession = is_ia_day
             ? await prisma.iASession.findFirst({
                 where: { student_id: student.id, ia_date: new Date(todayStr), status: { in: ['PENDING', 'IN_PROGRESS'] as any } }
+            })
+            : null;
+
+        const todayCompletedSession = is_ia_day
+            ? await prisma.iASession.findFirst({
+                where: { student_id: student.id, ia_date: new Date(todayStr), status: 'COMPLETED' as any },
+                select: { scores: true, momentum_awarded: true }
             })
             : null;
 
@@ -214,6 +222,9 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
             success: true,
             missed_count: staleSessions.length,
             has_active_session: !!todayActiveSession,
+            has_completed_session: !!todayCompletedSession,
+            completed_session_scores: todayCompletedSession?.scores ?? null,
+            completed_session_momentum: todayCompletedSession?.momentum_awarded ?? null,
             has_schedule: true,
             first_drill_date: firstDrillDateStr,
             prerequisites_met,
@@ -797,14 +808,19 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const previousBands = new Map<string, number | null>();
         for (const s of sectionScores) {
             const row = competencyPre.find(c => String(c.skill) === s.skill);
-            const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill];
-            if (subScoreKey && row?.sub_scores) {
-                const ss = row.sub_scores as Record<string, number>;
-                previousBands.set(s.sub_skill, ss[subScoreKey] ?? null);
-            } else if (row?.band_score !== null && row?.band_score !== undefined) {
-                previousBands.set(s.sub_skill, parseFloat(String(row.band_score)) || null);
+            
+            // READING/LISTENING use band_score directly (no sub-scores)
+            if (s.sub_skill === 'READING' || s.sub_skill === 'LISTENING') {
+                previousBands.set(s.sub_skill, row?.band_score ? parseFloat(String(row.band_score)) : null);
             } else {
-                previousBands.set(s.sub_skill, null);
+                // WRITING/SPEAKING use sub_scores JSONB
+                const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill];
+                if (subScoreKey && row?.sub_scores) {
+                    const ss = row.sub_scores as Record<string, number>;
+                    previousBands.set(s.sub_skill, ss[subScoreKey] ?? null);
+                } else {
+                    previousBands.set(s.sub_skill, null);
+                }
             }
         }
 
