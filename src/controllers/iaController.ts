@@ -601,6 +601,10 @@ type SectionScore = {
     correct: number;   // MCQ/TFNG correct count
     total: number;   // MCQ/TFNG total count (AI prompts not included here)
     ai_graded: boolean;
+    ai_feedback?: {    // Present only if ai_graded = true
+        rationale: string;
+        key_observations: string[];
+    };
 };
 
 // Returned in the API response (not stored)
@@ -651,7 +655,12 @@ export async function submitIA(req: AuthRequest, res: Response) {
         //
         // For each section: 8 MCQ questions (auto-scored) + up to 2 AI prompts
         // (WRITING_PROMPT or SPEAKING_PROMPT). Run all AI grading concurrently.
-        type AIJob = { sectionIdx: number; band: number };
+        type AIJob = { 
+            sectionIdx: number; 
+            band: number;
+            rationale: string;
+            key_observations: string[];
+        };
         const aiJobPromises: Promise<AIJob>[] = [];
 
         for (let i = 0; i < questionIdsConfig.length; i++) {
@@ -666,7 +675,12 @@ export async function submitIA(req: AuthRequest, res: Response) {
                     const result = q.question_type === 'WRITING_PROMPT'
                         ? await gradeIAWritingPrompt(cfg.sub_skill, q.prompt_text, text)
                         : await gradeIASpeakingPrompt(cfg.sub_skill, q.prompt_text, text);
-                    return { sectionIdx: i, band: result.band };
+                    return { 
+                        sectionIdx: i, 
+                        band: result.band,
+                        rationale: result.rationale,
+                        key_observations: result.key_observations
+                    };
                 })();
                 aiJobPromises.push(job);
             }
@@ -674,15 +688,21 @@ export async function submitIA(req: AuthRequest, res: Response) {
 
         const aiJobResults = await Promise.all(aiJobPromises);
 
-        // Group AI bands by section index
+        // Group AI results by section index (keep on 1-10 scale for weighted calculation)
         const aiBandsBySectionIdx = new Map<number, number[]>();
+        const aiFeedbackBySectionIdx = new Map<number, { rationale: string; key_observations: string[] }[]>();
+        
         for (const j of aiJobResults) {
-            const arr = aiBandsBySectionIdx.get(j.sectionIdx) ?? [];
-            arr.push(j.band);
-            aiBandsBySectionIdx.set(j.sectionIdx, arr);
+            const bandsArr = aiBandsBySectionIdx.get(j.sectionIdx) ?? [];
+            bandsArr.push(j.band); // Keep 1-10 scale
+            aiBandsBySectionIdx.set(j.sectionIdx, bandsArr);
+            
+            const feedbackArr = aiFeedbackBySectionIdx.get(j.sectionIdx) ?? [];
+            feedbackArr.push({ rationale: j.rationale, key_observations: j.key_observations });
+            aiFeedbackBySectionIdx.set(j.sectionIdx, feedbackArr);
         }
 
-        // ── 4. Score each sub-skill (MCQ + AI weighted by question count) ─────
+        // ── 4. Score each sub-skill with weighted MCQ + AI scoring ────────────
         const sectionScores: SectionScore[] = [];
 
         for (let i = 0; i < questionIdsConfig.length; i++) {
@@ -693,28 +713,68 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT'
             );
 
-            // MCQ scoring
+            // MCQ scoring on 1-10 scale
             let correct = 0;
             for (const q of mcqQs) {
                 const sa = (answers[q.id] ?? '').trim().toUpperCase();
-                const ca = String(q.correct_answer ?? '').trim().toUpperCase();
-                if (sa && sa === ca) correct++;
+                
+                // Handle correct_answer which might be stored as JSON string
+                let ca = '';
+                if (q.correct_answer !== null && q.correct_answer !== undefined) {
+                    // If it's already a string, use it
+                    if (typeof q.correct_answer === 'string') {
+                        ca = q.correct_answer.trim().toUpperCase();
+                    } else {
+                        // If it's a JSON object/value, stringify and parse
+                        ca = String(q.correct_answer).trim().toUpperCase();
+                    }
+                    // Remove surrounding quotes if present (handles "\"C\"" case)
+                    ca = ca.replace(/^["']|["']$/g, '');
+                }
+                
+                if (sa && ca && sa === ca) correct++;
             }
-            const mcqBand = mcqQs.length > 0 ? (correct / mcqQs.length) * 9 : null;
+            // MCQ score: (correct/total) × 10, clamped to 1-10
+            const mcqScore = mcqQs.length > 0 
+                ? Math.max(1, Math.min(10, (correct / mcqQs.length) * 10))
+                : null;
 
-            // AI scoring (bands already computed)
+            // AI scoring (already on 1-10 scale)
             const aiBands = aiBandsBySectionIdx.get(i) ?? [];
-            const aiAvg = aiBands.length > 0 ? aiBands.reduce((a, b) => a + b, 0) / aiBands.length : null;
+            const aiFeedbacks = aiFeedbackBySectionIdx.get(i) ?? [];
+            const aiAvgScore = aiBands.length > 0 
+                ? aiBands.reduce((a, b) => a + b, 0) / aiBands.length 
+                : null;
 
-            // Weighted combined band
-            const totalQ = mcqQs.length + aiQs.length;
-            let rawBand: number;
-            if (totalQ === 0) rawBand = 0;
-            else if (mcqBand === null) rawBand = aiAvg ?? 0;
-            else if (aiAvg === null) rawBand = mcqBand;
-            else rawBand = (mcqBand * mcqQs.length + aiAvg * aiQs.length) / totalQ;
+            // Weighted combined score: MCQ weight = 1, AI weight = 2
+            let combinedScore: number;
+            if (mcqQs.length === 0 && aiQs.length === 0) {
+                combinedScore = 1; // No questions (shouldn't happen)
+            } else if (mcqScore === null) {
+                // Only AI questions
+                combinedScore = aiAvgScore ?? 1;
+            } else if (aiAvgScore === null) {
+                // Only MCQ questions
+                combinedScore = mcqScore;
+            } else {
+                // Both MCQ and AI: weighted average
+                const mcqWeight = mcqQs.length * 1;  // 1x weight per MCQ
+                const aiWeight = aiQs.length * 2;     // 2x weight per AI question
+                const totalWeight = mcqWeight + aiWeight;
+                combinedScore = (mcqScore * mcqWeight + aiAvgScore * aiWeight) / totalWeight;
+            }
 
-            const band = Math.min(Math.round(rawBand * 2) / 2, 9.0);
+            // Scale from 1-10 to 0-9 IELTS band scale
+            // Formula: (score - 1) × (9/9) = (score - 1) × 1 = score - 1
+            // Then round to nearest 0.5
+            const ieltsRawBand = combinedScore - 1; // Now 0-9 scale
+            const band = Math.min(9.0, Math.max(0.0, Math.round(ieltsRawBand * 2) / 2));
+
+            // Aggregate AI feedback if present
+            const aiFeedback = aiFeedbacks.length > 0 ? {
+                rationale: aiFeedbacks.map(f => f.rationale).join(' | '),
+                key_observations: aiFeedbacks.flatMap(f => f.key_observations)
+            } : undefined;
 
             sectionScores.push({
                 skill: cfg.skill,
@@ -723,6 +783,7 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 correct,
                 total: mcqQs.length,
                 ai_graded: aiQs.length > 0,
+                ai_feedback: aiFeedback
             });
         }
 
@@ -812,7 +873,7 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 }
             });
 
-            // b + c) Per tested sub-skill: AssessmentHistory + precise CompetencyMatrix update
+            // b + c) Per tested sub-skill: AssessmentHistory + weighted CompetencyMatrix update
             for (const s of sectionScores) {
                 const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill] ?? null;
 
@@ -827,26 +888,69 @@ export async function submitIA(req: AuthRequest, res: Response) {
                     }
                 });
 
-                // CompetencyMatrix — preserve ALL other sub-skill scores
+                // CompetencyMatrix — weighted update with ±2 deviation cap
                 const existing = await tx.studentCompetencyMatrix.findUnique({
                     where: { student_id_skill: { student_id: student.id, skill: s.skill as any } },
                     select: { sub_scores: true, band_score: true }
                 });
-                const currentSubScores = (existing?.sub_scores as Record<string, number>) ?? {};
+                
+                const currentSubScores = (existing?.sub_scores as Record<string, any>) ?? {};
+                let updatedSubScores = { ...currentSubScores };
 
-                // Update ONLY the tested sub-skill key
-                const updatedSubScores = subScoreKey
-                    ? { ...currentSubScores, [subScoreKey]: Math.min(9, Math.max(0, s.band)) }
-                    : currentSubScores;
+                if (subScoreKey) {
+                    const oldScore = currentSubScores[subScoreKey];
+                    
+                    if (typeof oldScore === 'number' && !isNaN(oldScore)) {
+                        // Weighted update: 0.4 * old + 0.6 * new
+                        let weightedScore = 0.4 * oldScore + 0.6 * s.band;
+                        
+                        // Clamp deviation to ±2
+                        const deviation = weightedScore - oldScore;
+                        if (deviation > 2) {
+                            weightedScore = oldScore + 2;
+                        } else if (deviation < -2) {
+                            weightedScore = oldScore - 2;
+                        }
+                        
+                        // Round to nearest 0.5 and clamp to 0-9
+                        weightedScore = Math.round(weightedScore * 2) / 2;
+                        weightedScore = Math.min(9, Math.max(0, weightedScore));
+                        
+                        updatedSubScores[subScoreKey] = weightedScore;
+                    } else {
+                        // First time scoring this sub-skill - use new score directly
+                        updatedSubScores[subScoreKey] = Math.min(9, Math.max(0, s.band));
+                    }
+                }
 
-                // Recalculate skill-level band as mean of all known sub-skill scores
-                const knownBands = Object.values(updatedSubScores)
-                    .filter((v): v is number => typeof v === 'number' && !isNaN(v));
-                const calculatedBand = knownBands.length > 0
-                    ? Math.round((knownBands.reduce((a, b) => a + b, 0) / knownBands.length) * 2) / 2
-                    : s.band;
-                // Clamp to valid IELTS range (0-9) to prevent database overflow
-                const newSkillBand = Math.min(9, Math.max(0, calculatedBand));
+                // Recalculate skill-level band as mean of all 4 sub-skill scores
+                // For WRITING/SPEAKING: grammarScore, vocabularyScore, coherenceScore/fluencyScore, taskResponseScore/pronunciationScore
+                // For READING/LISTENING: use band_score directly (no sub-scores)
+                let newSkillBand: number;
+                
+                if (s.skill === 'READING' || s.skill === 'LISTENING') {
+                    // These skills don't have sub-scores, use the band directly
+                    newSkillBand = s.band;
+                } else {
+                    // WRITING or SPEAKING - calculate from 4 sub-scores
+                    const subScoreKeys = s.skill === 'WRITING' 
+                        ? ['grammarScore', 'vocabularyScore', 'coherenceScore', 'taskResponseScore']
+                        : ['grammarScore', 'vocabularyScore', 'fluencyScore', 'pronunciationScore'];
+                    
+                    const knownBands = subScoreKeys
+                        .map(key => updatedSubScores[key])
+                        .filter((v): v is number => typeof v === 'number' && !isNaN(v));
+                    
+                    if (knownBands.length > 0) {
+                        const avg = knownBands.reduce((a, b) => a + b, 0) / knownBands.length;
+                        newSkillBand = Math.round(avg * 2) / 2; // Round to nearest 0.5
+                    } else {
+                        newSkillBand = s.band; // Fallback
+                    }
+                }
+                
+                // Clamp to valid IELTS range (0-9)
+                newSkillBand = Math.min(9, Math.max(0, newSkillBand));
 
                 await tx.studentCompetencyMatrix.upsert({
                     where: { student_id_skill: { student_id: student.id, skill: s.skill as any } },
@@ -866,7 +970,10 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 });
             }
 
-            // d) Award momentum to student
+            // d) Update overall band score - calculated from StudentCompetencyMatrix
+            // Note: Overall band is not stored in institute_students, it's derived from competency matrix
+            
+            // e) Award momentum to student
             const updated = await tx.institute_students.update({
                 where: { id: student.id },
                 data: { momentum_score: { increment: momentumAwarded } },
