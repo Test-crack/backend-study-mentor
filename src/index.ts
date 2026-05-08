@@ -3,6 +3,7 @@ dotenv.config();
 
 import express, { Request, Response } from 'express';
 import http from 'http';
+import path from 'path';
 import ytStudyRoutes from './routes/ytStudyRoutes';
 import readingRoutes from './routes/readingRoutes';
 import smartNotesRoutes from './routes/smartNotesRoutes';
@@ -63,6 +64,18 @@ const corsOptions: cors.CorsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// ── Static: IA audio files ────────────────────────────────────────────────────
+// DB stores audio_url as "/ia/audio/filename.mp3".
+// Files live at  src/data/ia/audio/filename.mp3.
+// Mounted at /ia so that GET /ia/audio/filename.mp3 resolves without auth.
+app.use(
+  '/ia',
+  express.static(path.join(__dirname, '../data/ia'), {
+    maxAge: '7d',          // cache in browser for 7 days
+    immutable: true,       // safe: filenames embed difficulty/number
+  })
+);
 
 // Request logging middleware
 app.use((req: Request, _res: Response, next: any) => {

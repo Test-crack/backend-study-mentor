@@ -6,11 +6,11 @@ import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const IA_DRILL_THRESHOLD  = 6;   // total sessions required before any IA
-const IA_MIN_DAYS         = 2;   // calendar days since first drill required
-const IA_DCS_THRESHOLD    = 40;  // avg DCS % required to start the test
-const IA_INTERVAL_DAYS    = 3;   // IA schedule: first_drill + 3, +6, +9 …
-const IST_OFFSET_MS       = 5.5 * 60 * 60 * 1000;
+const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
+const IA_MIN_DAYS = 2;   // calendar days since first drill required
+const IA_DCS_THRESHOLD = 40;  // avg DCS % required to start the test
+const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 …
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // ─── IST date helpers ─────────────────────────────────────────────────────────
 
@@ -81,9 +81,9 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 
         // ── All drill sessions (cheapest single query) ────────────────────────
         const allSessions = await prisma.drillSession.findMany({
-            where:   { student_id: student.id },
+            where: { student_id: student.id },
             orderBy: { created_at: 'asc' },
-            select:  { id: true, created_at: true }
+            select: { id: true, created_at: true }
         });
 
         const drills_completed = allSessions.length;
@@ -91,41 +91,41 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         // ── No drills at all → nothing to schedule ────────────────────────────
         if (drills_completed === 0) {
             return res.json({
-                success:           true,
-                missed_count:      0,
-                has_schedule:      false,
+                success: true,
+                missed_count: 0,
+                has_schedule: false,
                 prerequisites_met: false,
-                avg_dcs:           0,
-                dcs_eligible:      false,
-                is_ia_day:         false,
+                avg_dcs: 0,
+                dcs_eligible: false,
+                is_ia_day: false,
                 current_ia_number: null,
-                can_start_test:    false,
-                next_ia:           null,
-                upcoming_ias:      [],
+                can_start_test: false,
+                next_ia: null,
+                upcoming_ias: [],
                 progress: {
-                    drills_completed:       0,
-                    drills_required:        IA_DRILL_THRESHOLD,
+                    drills_completed: 0,
+                    drills_required: IA_DRILL_THRESHOLD,
                     days_since_first_drill: 0,
-                    min_days_required:      IA_MIN_DAYS,
-                    avg_dcs:                0,
-                    dcs_required:           IA_DCS_THRESHOLD,
-                    cond_drills:            false,
-                    cond_days:              false,
-                    cond_dcs:               false
+                    min_days_required: IA_MIN_DAYS,
+                    avg_dcs: 0,
+                    dcs_required: IA_DCS_THRESHOLD,
+                    cond_drills: false,
+                    cond_days: false,
+                    cond_dcs: false
                 }
             });
         }
 
         // ── Schedule anchor: IST calendar date of the very first drill ────────
         const firstDrillDateStr = toISTDateString(allSessions[0].created_at);
-        const todayStr          = toISTDateString(new Date());
+        const todayStr = toISTDateString(new Date());
 
         // ── Miss detection: mark stale PENDING / IN_PROGRESS sessions MISSED ──
         const staleSessions = await prisma.iASession.findMany({
             where: {
                 student_id: student.id,
-                ia_date:    { lt: new Date(todayStr) },
-                status:     { in: ['PENDING', 'IN_PROGRESS'] as any }
+                ia_date: { lt: new Date(todayStr) },
+                status: { in: ['PENDING', 'IN_PROGRESS'] as any }
             },
             select: { id: true, selected_subskills: true }
         });
@@ -133,49 +133,49 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
             await Promise.all(staleSessions.map(s =>
                 prisma.iASession.update({
                     where: { id: s.id },
-                    data:  { status: 'MISSED' as any, carry_forward_subskills: s.selected_subskills as any }
+                    data: { status: 'MISSED' as any, carry_forward_subskills: s.selected_subskills as any }
                 })
             ));
             await prisma.institute_students.update({
                 where: { id: student.id },
-                data:  { momentum_score: { decrement: staleSessions.length * 20 } }
+                data: { momentum_score: { decrement: staleSessions.length * 20 } }
             });
         }
 
         // ── Prerequisites (non-DCS gates) ─────────────────────────────────────
         const days_since_first_drill = daysBetween(firstDrillDateStr, todayStr);
         const cond_drills = drills_completed >= IA_DRILL_THRESHOLD;
-        const cond_days   = days_since_first_drill >= IA_MIN_DAYS;
+        const cond_days = days_since_first_drill >= IA_MIN_DAYS;
         const prerequisites_met = cond_drills && cond_days;
 
         // ── DCS ───────────────────────────────────────────────────────────────
-        const avg_dcs    = await computeAverageDCS(student.id);
-        const cond_dcs   = avg_dcs >= IA_DCS_THRESHOLD;
+        const avg_dcs = await computeAverageDCS(student.id);
+        const cond_dcs = avg_dcs >= IA_DCS_THRESHOLD;
 
         // ── Build IA schedule: first_drill + 3, +6, +9 … up to 30 slots ──────
         // We generate enough to always find the next 2 future dates.
         const LOOKAHEAD = 30;
         const schedule = Array.from({ length: LOOKAHEAD }, (_, i) => {
-            const n    = i + 1;
+            const n = i + 1;
             const date = addCalendarDays(firstDrillDateStr, n * IA_INTERVAL_DAYS);
             return { number: n, date };
         });
 
         // ── Classify today ────────────────────────────────────────────────────
-        const todaySlot        = schedule.find(s => s.date === todayStr) ?? null;
-        const is_ia_day        = todaySlot !== null;
+        const todaySlot = schedule.find(s => s.date === todayStr) ?? null;
+        const is_ia_day = todaySlot !== null;
         const current_ia_number = todaySlot?.number ?? null;
-        const can_start_test   = is_ia_day && prerequisites_met && cond_dcs;
+        const can_start_test = is_ia_day && prerequisites_met && cond_dcs;
 
         // ── Upcoming slots (strictly future) ─────────────────────────────────
         const futureSlots = schedule
             .filter(s => s.date > todayStr)
             .slice(0, 2)
             .map(s => ({
-                number:         s.number,
-                date:           s.date,
+                number: s.number,
+                date: s.date,
                 date_formatted: formatIADate(s.date),
-                days_away:      daysBetween(todayStr, s.date)
+                days_away: daysBetween(todayStr, s.date)
             }));
 
         const next_ia = futureSlots[0] ?? null;
@@ -206,34 +206,34 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         // Active in-progress session today → gate shows "Continue Assessment" instead of "Start"
         const todayActiveSession = is_ia_day
             ? await prisma.iASession.findFirst({
-                  where: { student_id: student.id, ia_date: new Date(todayStr), status: { in: ['PENDING', 'IN_PROGRESS'] as any } }
-              })
+                where: { student_id: student.id, ia_date: new Date(todayStr), status: { in: ['PENDING', 'IN_PROGRESS'] as any } }
+            })
             : null;
 
         return res.json({
-            success:             true,
-            missed_count:        staleSessions.length,
-            has_active_session:  !!todayActiveSession,
-            has_schedule:       true,
-            first_drill_date:   firstDrillDateStr,
+            success: true,
+            missed_count: staleSessions.length,
+            has_active_session: !!todayActiveSession,
+            has_schedule: true,
+            first_drill_date: firstDrillDateStr,
             prerequisites_met,
             avg_dcs,
-            dcs_required:       IA_DCS_THRESHOLD,
-            dcs_eligible:       cond_dcs,
+            dcs_required: IA_DCS_THRESHOLD,
+            dcs_eligible: cond_dcs,
             is_ia_day,
             current_ia_number,
             can_start_test,
             suggested_subskills,
             next_ia,
-            upcoming_ias:       futureSlots,
+            upcoming_ias: futureSlots,
             reasons,
             progress: {
                 drills_completed,
-                drills_required:        IA_DRILL_THRESHOLD,
+                drills_required: IA_DRILL_THRESHOLD,
                 days_since_first_drill,
-                min_days_required:      IA_MIN_DAYS,
+                min_days_required: IA_MIN_DAYS,
                 avg_dcs,
-                dcs_required:           IA_DCS_THRESHOLD,
+                dcs_required: IA_DCS_THRESHOLD,
                 cond_drills,
                 cond_days,
                 cond_dcs
@@ -247,13 +247,13 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-const SECTION_IA_MS     = 20 * 60 * 1000;  // 20 min per section; 2 sections = 40 min total
+const SECTION_IA_MS = 20 * 60 * 1000;  // 20 min per section; 2 sections = 40 min total
 const SUB_SCORE_KEY_MAP: Record<string, string> = {
-    GRAMMAR:       'grammarScore',
-    VOCABULARY:    'vocabularyScore',
-    COHERENCE:     'coherenceScore',
+    GRAMMAR: 'grammarScore',
+    VOCABULARY: 'vocabularyScore',
+    COHERENCE: 'coherenceScore',
     TASK_RESPONSE: 'taskResponseScore',
-    FLUENCY:       'fluencyScore',
+    FLUENCY: 'fluencyScore',
     PRONUNCIATION: 'pronunciationScore',
 };
 
@@ -385,8 +385,10 @@ async function fetchSectionQuestions(
     let finalMCQ = shuffle([...mcqs]).slice(0, 8);
     if (finalMCQ.length < 8) {
         const extra = await prisma.iAQuestion.findMany({
-            where: { skill: skill as any, sub_skill: subSkill as any, question_type: 'MCQ', is_active: true,
-                     id: { notIn: finalMCQ.map(q => q.id) } },
+            where: {
+                skill: skill as any, sub_skill: subSkill as any, question_type: 'MCQ', is_active: true,
+                id: { notIn: finalMCQ.map(q => q.id) }
+            },
             select: { id: true, question_type: true, prompt_text: true, options: true }
         });
         finalMCQ = [...finalMCQ, ...shuffle(extra)].slice(0, 8);
@@ -395,8 +397,10 @@ async function fetchSectionQuestions(
     let finalPrompts = shuffle([...prompts]).slice(0, 2);
     if (finalPrompts.length < 2) {
         const extra = await prisma.iAQuestion.findMany({
-            where: { skill: skill as any, sub_skill: subSkill as any, question_type: promptType as any, is_active: true,
-                     id: { notIn: finalPrompts.map(q => q.id) } },
+            where: {
+                skill: skill as any, sub_skill: subSkill as any, question_type: promptType as any, is_active: true,
+                id: { notIn: finalPrompts.map(q => q.id) }
+            },
             select: { id: true, question_type: true, prompt_text: true, options: true }
         });
         finalPrompts = [...finalPrompts, ...shuffle(extra)].slice(0, 2);
@@ -404,10 +408,10 @@ async function fetchSectionQuestions(
 
     return {
         section_type: 'MCQ_MIX',
-        audio_url:    null,
+        audio_url: null,
         passage_text: null,
-        passage_id:   null,
-        questions:    [...finalMCQ, ...finalPrompts]
+        passage_id: null,
+        questions: [...finalMCQ, ...finalPrompts]
     };
 }
 
@@ -419,10 +423,10 @@ function buildPassageSection(
     const passageText = pool.find(q => q.passage_id === chosenPassageId && q.passage_text)?.passage_text ?? null;
     return {
         section_type: 'PASSAGE',
-        audio_url:    null,
+        audio_url: null,
         passage_text: passageText,
-        passage_id:   chosenPassageId,
-        questions:    grouped.map(q => ({ id: q.id, question_type: q.question_type, prompt_text: q.prompt_text, options: q.options }))
+        passage_id: chosenPassageId,
+        questions: grouped.map(q => ({ id: q.id, question_type: q.question_type, prompt_text: q.prompt_text, options: q.options }))
     };
 }
 
@@ -479,8 +483,8 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
                         .map(id => questionRows.find(q => q.id === id))
                         .filter(Boolean)
                         .map(q => ({ id: q!.id, question_type: q!.question_type, prompt_text: q!.prompt_text, options: q!.options }));
-                    const audioUrl   = questionRows.find(q => cfg.ids.includes(q.id) && q.audio_url)?.audio_url ?? null;
-                    const passageId  = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_id)?.passage_id ?? null;
+                    const audioUrl = questionRows.find(q => cfg.ids.includes(q.id) && q.audio_url)?.audio_url ?? null;
+                    const passageId = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_id)?.passage_id ?? null;
                     const passageTxt = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_text)?.passage_text ?? null;
                     const sectionType = audioUrl ? 'AUDIO' : passageId ? 'PASSAGE' : 'MCQ_MIX';
                     return { skill: cfg.skill, sub_skill: cfg.sub_skill, section_type: sectionType, audio_url: audioUrl, passage_text: passageTxt, passage_id: passageId, questions: qs };
@@ -489,10 +493,10 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
                 // Per-section timing: read __meta written by section-advance events
                 const allAnswers = (existing.answers as Record<string, any>) ?? {};
                 const meta = (allAnswers.__meta ?? {}) as { current_section?: number; section_started_at?: number };
-                const resumeSectionIdx  = meta.current_section ?? 0;
-                const sectionStartedAt  = meta.section_started_at ?? (existing.time_started_at?.getTime() ?? Date.now());
-                const elapsed           = Date.now() - sectionStartedAt;
-                const timeRemaining     = Math.max(0, SECTION_IA_MS - elapsed);
+                const resumeSectionIdx = meta.current_section ?? 0;
+                const sectionStartedAt = meta.section_started_at ?? (existing.time_started_at?.getTime() ?? Date.now());
+                const elapsed = Date.now() - sectionStartedAt;
+                const timeRemaining = Math.max(0, SECTION_IA_MS - elapsed);
 
                 // Mark IN_PROGRESS and initialise __meta if still PENDING (first open)
                 if (existing.status === 'PENDING') {
@@ -500,21 +504,21 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
                     allAnswers.__meta = { current_section: 0, section_started_at: now };
                     await prisma.iASession.update({
                         where: { id: existing.id },
-                        data:  { status: 'IN_PROGRESS', time_started_at: new Date(now), answers: allAnswers as any }
+                        data: { status: 'IN_PROGRESS', time_started_at: new Date(now), answers: allAnswers as any }
                     });
                 }
 
                 return res.json({
-                    success:             true,
-                    session_id:          existing.id,
+                    success: true,
+                    session_id: existing.id,
                     ia_number,
-                    resume:              true,
+                    resume: true,
                     current_section_idx: resumeSectionIdx,
-                    selected_subskills:  existing.selected_subskills,
+                    selected_subskills: existing.selected_subskills,
                     sections,
-                    saved_answers:       existing.answers,
-                    window_closes_at:    windowClosesAt.toISOString(),
-                    time_remaining_ms:   timeRemaining
+                    saved_answers: existing.answers,
+                    window_closes_at: windowClosesAt.toISOString(),
+                    time_remaining_ms: timeRemaining
                 });
             }
         }
@@ -523,62 +527,62 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
         const { primary, secondary } = await selectPrioritySubSkills(student.id);
 
         const competency = await prisma.studentCompetencyMatrix.findMany({
-            where:  { student_id: student.id },
+            where: { student_id: student.id },
             select: { skill: true, band_score: true, sub_scores: true }
         });
         const competencyPlain = competency.map(r => ({ skill: String(r.skill), band_score: r.band_score, sub_scores: r.sub_scores }));
 
-        const diff1 = getDifficulty(getBandForSubSkill(primary.skill,   primary.sub_skill,   competencyPlain));
+        const diff1 = getDifficulty(getBandForSubSkill(primary.skill, primary.sub_skill, competencyPlain));
         const diff2 = getDifficulty(getBandForSubSkill(secondary.skill, secondary.sub_skill, competencyPlain));
 
         const [rawSection1, rawSection2] = await Promise.all([
-            fetchSectionQuestions(primary.skill,   primary.sub_skill,   diff1),
+            fetchSectionQuestions(primary.skill, primary.sub_skill, diff1),
             fetchSectionQuestions(secondary.skill, secondary.sub_skill, diff2)
         ]);
 
         // Build structured question_ids for session persistence
         const questionIdsConfig = [
-            { skill: primary.skill,   sub_skill: primary.sub_skill,   ids: rawSection1.questions.map((q: any) => q.id) },
+            { skill: primary.skill, sub_skill: primary.sub_skill, ids: rawSection1.questions.map((q: any) => q.id) },
             { skill: secondary.skill, sub_skill: secondary.sub_skill, ids: rawSection2.questions.map((q: any) => q.id) }
         ];
 
         const selectedSubskills = [
-            { skill: primary.skill,   sub_skill: primary.sub_skill },
+            { skill: primary.skill, sub_skill: primary.sub_skill },
             { skill: secondary.skill, sub_skill: secondary.sub_skill }
         ];
 
         // ── 4. Create session row ─────────────────────────────────────────────
         const session = await prisma.iASession.create({
             data: {
-                student_id:         student.id,
+                student_id: student.id,
                 ia_number,
-                ia_date:            new Date(todayStr),
-                status:             'IN_PROGRESS',
+                ia_date: new Date(todayStr),
+                status: 'IN_PROGRESS',
                 selected_subskills: selectedSubskills as any,
-                question_ids:       questionIdsConfig as any,
-                answers:            { __meta: { current_section: 0, section_started_at: Date.now() } } as any,
-                time_started_at:    new Date(),
-                window_closes_at:   windowClosesAt,
+                question_ids: questionIdsConfig as any,
+                answers: { __meta: { current_section: 0, section_started_at: Date.now() } } as any,
+                time_started_at: new Date(),
+                window_closes_at: windowClosesAt,
                 carry_forward_subskills: [] as any
             }
         });
 
         const sections = [
-            { skill: primary.skill,   sub_skill: primary.sub_skill,   ...rawSection1, questions: sanitizeQuestions(rawSection1.questions) },
+            { skill: primary.skill, sub_skill: primary.sub_skill, ...rawSection1, questions: sanitizeQuestions(rawSection1.questions) },
             { skill: secondary.skill, sub_skill: secondary.sub_skill, ...rawSection2, questions: sanitizeQuestions(rawSection2.questions) }
         ];
 
         return res.json({
-            success:           true,
-            session_id:        session.id,
+            success: true,
+            session_id: session.id,
             ia_number,
-            resume:            false,
+            resume: false,
             selected_subskills: selectedSubskills,
             sections,
-            saved_answers:     {},
-            window_closes_at:  windowClosesAt.toISOString(),
+            saved_answers: {},
+            window_closes_at: windowClosesAt.toISOString(),
             current_section_idx: 0,
-            time_remaining_ms:   SECTION_IA_MS
+            time_remaining_ms: SECTION_IA_MS
         });
 
     } catch (err) {
@@ -591,18 +595,18 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
 
 // Stored in ia_sessions.scores JSONB
 type SectionScore = {
-    skill:      string;
-    sub_skill:  string;
-    band:       number;
-    correct:    number;   // MCQ/TFNG correct count
-    total:      number;   // MCQ/TFNG total count (AI prompts not included here)
-    ai_graded:  boolean;
+    skill: string;
+    sub_skill: string;
+    band: number;
+    correct: number;   // MCQ/TFNG correct count
+    total: number;   // MCQ/TFNG total count (AI prompts not included here)
+    ai_graded: boolean;
 };
 
 // Returned in the API response (not stored)
 type SectionScoreResponse = SectionScore & {
     previous_band: number | null;
-    delta:         number | null;
+    delta: number | null;
 };
 
 const SUB_SKILL_LABEL: Record<string, string> = {
@@ -627,14 +631,14 @@ export async function submitIA(req: AuthRequest, res: Response) {
         if (!session) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
         if (session.status === 'COMPLETED') return res.json({ success: true, already_done: true });
-        if (session.status === 'MISSED')    return res.status(400).json({ success: false, error: 'IA window has expired.' });
+        if (session.status === 'MISSED') return res.status(400).json({ success: false, error: 'IA window has expired.' });
 
         // ── 2. Load question IDs, fetch questions (with prompt_text for AI) ──
         const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
         const allIds = questionIdsConfig.flatMap(c => c.ids);
 
         const questions = await prisma.iAQuestion.findMany({
-            where:  { id: { in: allIds } },
+            where: { id: { in: allIds } },
             select: { id: true, sub_skill: true, question_type: true, correct_answer: true, prompt_text: true }
         });
 
@@ -651,14 +655,14 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const aiJobPromises: Promise<AIJob>[] = [];
 
         for (let i = 0; i < questionIdsConfig.length; i++) {
-            const cfg     = questionIdsConfig[i];
-            const subQs   = questions.filter(q => cfg.ids.includes(q.id));
-            const aiQs    = subQs.filter(q =>
+            const cfg = questionIdsConfig[i];
+            const subQs = questions.filter(q => cfg.ids.includes(q.id));
+            const aiQs = subQs.filter(q =>
                 q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT'
             );
             for (const q of aiQs) {
                 const text = (answers[q.id] ?? '').trim();
-                const job  = (async (): Promise<AIJob> => {
+                const job = (async (): Promise<AIJob> => {
                     const result = q.question_type === 'WRITING_PROMPT'
                         ? await gradeIAWritingPrompt(cfg.sub_skill, q.prompt_text, text)
                         : await gradeIASpeakingPrompt(cfg.sub_skill, q.prompt_text, text);
@@ -682,10 +686,10 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const sectionScores: SectionScore[] = [];
 
         for (let i = 0; i < questionIdsConfig.length; i++) {
-            const cfg     = questionIdsConfig[i];
-            const subQs   = questions.filter(q => cfg.ids.includes(q.id));
-            const mcqQs   = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
-            const aiQs    = subQs.filter(q =>
+            const cfg = questionIdsConfig[i];
+            const subQs = questions.filter(q => cfg.ids.includes(q.id));
+            const mcqQs = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
+            const aiQs = subQs.filter(q =>
                 q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT'
             );
 
@@ -699,25 +703,25 @@ export async function submitIA(req: AuthRequest, res: Response) {
             const mcqBand = mcqQs.length > 0 ? (correct / mcqQs.length) * 9 : null;
 
             // AI scoring (bands already computed)
-            const aiBands  = aiBandsBySectionIdx.get(i) ?? [];
-            const aiAvg    = aiBands.length > 0 ? aiBands.reduce((a, b) => a + b, 0) / aiBands.length : null;
+            const aiBands = aiBandsBySectionIdx.get(i) ?? [];
+            const aiAvg = aiBands.length > 0 ? aiBands.reduce((a, b) => a + b, 0) / aiBands.length : null;
 
             // Weighted combined band
-            const totalQ   = mcqQs.length + aiQs.length;
+            const totalQ = mcqQs.length + aiQs.length;
             let rawBand: number;
-            if (totalQ === 0)            rawBand = 0;
-            else if (mcqBand === null)   rawBand = aiAvg ?? 0;
-            else if (aiAvg  === null)    rawBand = mcqBand;
+            if (totalQ === 0) rawBand = 0;
+            else if (mcqBand === null) rawBand = aiAvg ?? 0;
+            else if (aiAvg === null) rawBand = mcqBand;
             else rawBand = (mcqBand * mcqQs.length + aiAvg * aiQs.length) / totalQ;
 
             const band = Math.min(Math.round(rawBand * 2) / 2, 9.0);
 
             sectionScores.push({
-                skill:     cfg.skill,
+                skill: cfg.skill,
                 sub_skill: cfg.sub_skill,
                 band,
                 correct,
-                total:     mcqQs.length,
+                total: mcqQs.length,
                 ai_graded: aiQs.length > 0,
             });
         }
@@ -725,16 +729,16 @@ export async function submitIA(req: AuthRequest, res: Response) {
         // ── 5. Pre-fetch competency matrix for delta display ──────────────────
         const uniqueSkills = [...new Set(sectionScores.map(s => s.skill))];
         const competencyPre = await prisma.studentCompetencyMatrix.findMany({
-            where:  { student_id: student.id, skill: { in: uniqueSkills as any } },
+            where: { student_id: student.id, skill: { in: uniqueSkills as any } },
             select: { skill: true, band_score: true, sub_scores: true }
         });
 
         const previousBands = new Map<string, number | null>();
         for (const s of sectionScores) {
-            const row         = competencyPre.find(c => String(c.skill) === s.skill);
+            const row = competencyPre.find(c => String(c.skill) === s.skill);
             const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill];
             if (subScoreKey && row?.sub_scores) {
-                const ss  = row.sub_scores as Record<string, number>;
+                const ss = row.sub_scores as Record<string, number>;
                 previousBands.set(s.sub_skill, ss[subScoreKey] ?? null);
             } else if (row?.band_score !== null && row?.band_score !== undefined) {
                 previousBands.set(s.sub_skill, parseFloat(String(row.band_score)) || null);
@@ -750,12 +754,12 @@ export async function submitIA(req: AuthRequest, res: Response) {
         // +50  new personal best ever for this sub-skill
         const [lastSession, allPastSessions] = await Promise.all([
             prisma.iASession.findFirst({
-                where:   { student_id: student.id, status: 'COMPLETED' },
+                where: { student_id: student.id, status: 'COMPLETED' },
                 orderBy: { created_at: 'desc' },
-                select:  { scores: true }
+                select: { scores: true }
             }),
             prisma.iASession.findMany({
-                where:  { student_id: student.id, status: 'COMPLETED' },
+                where: { student_id: student.id, status: 'COMPLETED' },
                 select: { scores: true }
             })
         ]);
@@ -781,8 +785,8 @@ export async function submitIA(req: AuthRequest, res: Response) {
         let momentumAwarded = 100;
 
         for (const s of sectionScores) {
-            const label      = SUB_SKILL_LABEL[s.sub_skill] ?? s.sub_skill;
-            const lastBand   = lastBands.get(s.sub_skill)    ?? null;
+            const label = SUB_SKILL_LABEL[s.sub_skill] ?? s.sub_skill;
+            const lastBand = lastBands.get(s.sub_skill) ?? null;
             const allTimeBest = allTimeBests.get(s.sub_skill) ?? 0;
 
             if (lastBand !== null && s.band > lastBand) {
@@ -800,10 +804,10 @@ export async function submitIA(req: AuthRequest, res: Response) {
             // a) Mark session COMPLETED
             await tx.iASession.update({
                 where: { id: session_id },
-                data:  {
-                    status:            'COMPLETED' as any,
-                    scores:            sectionScores as any,
-                    momentum_awarded:  momentumAwarded,
+                data: {
+                    status: 'COMPLETED' as any,
+                    scores: sectionScores as any,
+                    momentum_awarded: momentumAwarded,
                     time_submitted_at: new Date()
                 }
             });
@@ -816,8 +820,8 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 await tx.assessmentHistory.create({
                     data: {
                         student_id: student.id,
-                        skill:      s.skill as any,
-                        mode:       'INTERNAL_ASSESSMENT' as any,
+                        skill: s.skill as any,
+                        mode: 'INTERNAL_ASSESSMENT' as any,
                         band_score: s.band,
                         sub_scores: subScoreKey ? { [subScoreKey]: s.band } : {} as any
                     }
@@ -825,36 +829,38 @@ export async function submitIA(req: AuthRequest, res: Response) {
 
                 // CompetencyMatrix — preserve ALL other sub-skill scores
                 const existing = await tx.studentCompetencyMatrix.findUnique({
-                    where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
+                    where: { student_id_skill: { student_id: student.id, skill: s.skill as any } },
                     select: { sub_scores: true, band_score: true }
                 });
                 const currentSubScores = (existing?.sub_scores as Record<string, number>) ?? {};
 
                 // Update ONLY the tested sub-skill key
                 const updatedSubScores = subScoreKey
-                    ? { ...currentSubScores, [subScoreKey]: s.band }
+                    ? { ...currentSubScores, [subScoreKey]: Math.min(9, Math.max(0, s.band)) }
                     : currentSubScores;
 
                 // Recalculate skill-level band as mean of all known sub-skill scores
-                const knownBands  = Object.values(updatedSubScores)
+                const knownBands = Object.values(updatedSubScores)
                     .filter((v): v is number => typeof v === 'number' && !isNaN(v));
-                const newSkillBand = knownBands.length > 0
+                const calculatedBand = knownBands.length > 0
                     ? Math.round((knownBands.reduce((a, b) => a + b, 0) / knownBands.length) * 2) / 2
                     : s.band;
+                // Clamp to valid IELTS range (0-9) to prevent database overflow
+                const newSkillBand = Math.min(9, Math.max(0, calculatedBand));
 
                 await tx.studentCompetencyMatrix.upsert({
-                    where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
+                    where: { student_id_skill: { student_id: student.id, skill: s.skill as any } },
                     update: {
-                        band_score:        newSkillBand,
-                        sub_scores:        updatedSubScores as any,
+                        band_score: newSkillBand,
+                        sub_scores: updatedSubScores as any,
                         assessments_count: { increment: 1 },
-                        last_updated:      new Date()
+                        last_updated: new Date()
                     },
                     create: {
-                        student_id:        student.id,
-                        skill:             s.skill as any,
-                        band_score:        newSkillBand,
-                        sub_scores:        updatedSubScores as any,
+                        student_id: student.id,
+                        skill: s.skill as any,
+                        band_score: newSkillBand,
+                        sub_scores: updatedSubScores as any,
                         assessments_count: 1
                     }
                 });
@@ -862,8 +868,8 @@ export async function submitIA(req: AuthRequest, res: Response) {
 
             // d) Award momentum to student
             const updated = await tx.institute_students.update({
-                where:  { id: student.id },
-                data:   { momentum_score: { increment: momentumAwarded } },
+                where: { id: student.id },
+                data: { momentum_score: { increment: momentumAwarded } },
                 select: { momentum_score: true }
             });
             return updated.momentum_score;
@@ -872,17 +878,17 @@ export async function submitIA(req: AuthRequest, res: Response) {
         // ── 8. Build response with delta and breakdown ────────────────────────
         const sectionScoresResponse: SectionScoreResponse[] = sectionScores.map(s => {
             const prevBand = previousBands.get(s.sub_skill) ?? null;
-            const delta    = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
+            const delta = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
             return { ...s, previous_band: prevBand, delta };
         });
 
         return res.json({
-            success:             true,
-            is_first_ia:         allPastSessions.length === 0,
-            momentum_awarded:    momentumAwarded,
-            momentum_breakdown:  momentumBreakdown,
-            updated_momentum:    updatedMomentum,
-            section_scores:      sectionScoresResponse
+            success: true,
+            is_first_ia: allPastSessions.length === 0,
+            momentum_awarded: momentumAwarded,
+            momentum_breakdown: momentumBreakdown,
+            updated_momentum: updatedMomentum,
+            section_scores: sectionScoresResponse
         });
     } catch (err) {
         console.error('[IASubmit] error:', err);
@@ -918,12 +924,12 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         // Section-advance: student moved to the next section — stamp new section start time
         if (section_advance !== undefined) {
             current.__meta = {
-                current_section:    Number(section_advance),
+                current_section: Number(section_advance),
                 section_started_at: Date.now()
             };
             await prisma.iASession.update({
                 where: { id: session_id },
-                data:  { answers: current as any }
+                data: { answers: current as any }
             });
             return res.json({ success: true, saved: true });
         }
@@ -936,7 +942,7 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
 
         await prisma.iASession.update({
             where: { id: session_id },
-            data:  { answers: current as any, status: 'IN_PROGRESS' }
+            data: { answers: current as any, status: 'IN_PROGRESS' }
         });
 
         return res.json({ success: true, saved: true });
