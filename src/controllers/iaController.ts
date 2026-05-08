@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { computeAverageDCS } from '../lib/dcs';
 import { selectPrioritySubSkills } from '../lib/subskillSelector';
+import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const IA_DRILL_THRESHOLD  = 6;   // total sessions required before any IA
@@ -587,7 +588,28 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
 }
 
 // ─── POST /api/ia/submit ──────────────────────────────────────────────────────
-type SectionScore = { skill: string; sub_skill: string; band: number; correct: number; total: number };
+
+// Stored in ia_sessions.scores JSONB
+type SectionScore = {
+    skill:      string;
+    sub_skill:  string;
+    band:       number;
+    correct:    number;   // MCQ/TFNG correct count
+    total:      number;   // MCQ/TFNG total count (AI prompts not included here)
+    ai_graded:  boolean;
+};
+
+// Returned in the API response (not stored)
+type SectionScoreResponse = SectionScore & {
+    previous_band: number | null;
+    delta:         number | null;
+};
+
+const SUB_SKILL_LABEL: Record<string, string> = {
+    GRAMMAR: 'Grammar', VOCABULARY: 'Vocabulary', COHERENCE: 'Coherence',
+    TASK_RESPONSE: 'Task Response', FLUENCY: 'Fluency', PRONUNCIATION: 'Pronunciation',
+    READING: 'Reading', LISTENING: 'Listening',
+};
 
 export async function submitIA(req: AuthRequest, res: Response) {
     try {
@@ -600,72 +622,182 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const { session_id } = req.body;
         if (!session_id) return res.status(400).json({ success: false, error: 'session_id is required.' });
 
-        // 1. Validate session
+        // ── 1. Validate session ───────────────────────────────────────────────
         const session = await prisma.iASession.findUnique({ where: { id: session_id } });
         if (!session) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
         if (session.status === 'COMPLETED') return res.json({ success: true, already_done: true });
         if (session.status === 'MISSED')    return res.status(400).json({ success: false, error: 'IA window has expired.' });
 
-        // 2. Load question IDs per sub-skill + fetch correct answers
+        // ── 2. Load question IDs, fetch questions (with prompt_text for AI) ──
         const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
         const allIds = questionIdsConfig.flatMap(c => c.ids);
 
         const questions = await prisma.iAQuestion.findMany({
             where:  { id: { in: allIds } },
-            select: { id: true, sub_skill: true, question_type: true, correct_answer: true }
+            select: { id: true, sub_skill: true, question_type: true, correct_answer: true, prompt_text: true }
         });
 
-        // Strip __meta (section timing metadata) — not a question answer
+        // Strip __meta (section timing metadata — not a question answer)
         const answers = Object.fromEntries(
             Object.entries((session.answers ?? {}) as Record<string, unknown>).filter(([k]) => k !== '__meta')
         ) as Record<string, string>;
 
-        // 3. Grade each sub-skill
+        // ── 3. Launch all AI grading jobs in parallel ─────────────────────────
+        //
+        // For each section: 8 MCQ questions (auto-scored) + up to 2 AI prompts
+        // (WRITING_PROMPT or SPEAKING_PROMPT). Run all AI grading concurrently.
+        type AIJob = { sectionIdx: number; band: number };
+        const aiJobPromises: Promise<AIJob>[] = [];
+
+        for (let i = 0; i < questionIdsConfig.length; i++) {
+            const cfg     = questionIdsConfig[i];
+            const subQs   = questions.filter(q => cfg.ids.includes(q.id));
+            const aiQs    = subQs.filter(q =>
+                q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT'
+            );
+            for (const q of aiQs) {
+                const text = (answers[q.id] ?? '').trim();
+                const job  = (async (): Promise<AIJob> => {
+                    const result = q.question_type === 'WRITING_PROMPT'
+                        ? await gradeIAWritingPrompt(cfg.sub_skill, q.prompt_text, text)
+                        : await gradeIASpeakingPrompt(cfg.sub_skill, q.prompt_text, text);
+                    return { sectionIdx: i, band: result.band };
+                })();
+                aiJobPromises.push(job);
+            }
+        }
+
+        const aiJobResults = await Promise.all(aiJobPromises);
+
+        // Group AI bands by section index
+        const aiBandsBySectionIdx = new Map<number, number[]>();
+        for (const j of aiJobResults) {
+            const arr = aiBandsBySectionIdx.get(j.sectionIdx) ?? [];
+            arr.push(j.band);
+            aiBandsBySectionIdx.set(j.sectionIdx, arr);
+        }
+
+        // ── 4. Score each sub-skill (MCQ + AI weighted by question count) ─────
         const sectionScores: SectionScore[] = [];
 
-        for (const cfg of questionIdsConfig) {
-            const subQs    = questions.filter(q => cfg.ids.includes(q.id));
-            const scorable = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
+        for (let i = 0; i < questionIdsConfig.length; i++) {
+            const cfg     = questionIdsConfig[i];
+            const subQs   = questions.filter(q => cfg.ids.includes(q.id));
+            const mcqQs   = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
+            const aiQs    = subQs.filter(q =>
+                q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT'
+            );
 
+            // MCQ scoring
             let correct = 0;
-            for (const q of scorable) {
-                const studentAns = (answers[q.id] ?? '').trim().toUpperCase();
-                const correctAns = String(q.correct_answer ?? '').trim().toUpperCase();
-                if (studentAns && studentAns === correctAns) correct++;
+            for (const q of mcqQs) {
+                const sa = (answers[q.id] ?? '').trim().toUpperCase();
+                const ca = String(q.correct_answer ?? '').trim().toUpperCase();
+                if (sa && sa === ca) correct++;
             }
+            const mcqBand = mcqQs.length > 0 ? (correct / mcqQs.length) * 9 : null;
 
-            const total   = scorable.length;
-            const rawBand = total > 0 ? (correct / total) * 9 : 0;
-            const band    = Math.min(Math.round(rawBand * 2) / 2, 9.0);
-            sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total });
+            // AI scoring (bands already computed)
+            const aiBands  = aiBandsBySectionIdx.get(i) ?? [];
+            const aiAvg    = aiBands.length > 0 ? aiBands.reduce((a, b) => a + b, 0) / aiBands.length : null;
+
+            // Weighted combined band
+            const totalQ   = mcqQs.length + aiQs.length;
+            let rawBand: number;
+            if (totalQ === 0)            rawBand = 0;
+            else if (mcqBand === null)   rawBand = aiAvg ?? 0;
+            else if (aiAvg  === null)    rawBand = mcqBand;
+            else rawBand = (mcqBand * mcqQs.length + aiAvg * aiQs.length) / totalQ;
+
+            const band = Math.min(Math.round(rawBand * 2) / 2, 9.0);
+
+            sectionScores.push({
+                skill:     cfg.skill,
+                sub_skill: cfg.sub_skill,
+                band,
+                correct,
+                total:     mcqQs.length,
+                ai_graded: aiQs.length > 0,
+            });
         }
 
-        // 4. Momentum: compare against all past completed sessions
-        const pastSessions = await prisma.iASession.findMany({
-            where:  { student_id: student.id, status: 'COMPLETED' },
-            select: { scores: true }
+        // ── 5. Pre-fetch competency matrix for delta display ──────────────────
+        const uniqueSkills = [...new Set(sectionScores.map(s => s.skill))];
+        const competencyPre = await prisma.studentCompetencyMatrix.findMany({
+            where:  { student_id: student.id, skill: { in: uniqueSkills as any } },
+            select: { skill: true, band_score: true, sub_scores: true }
         });
 
-        // Build map: sub_skill → highest band seen in any prior session
-        const pastBands = new Map<string, number>();
-        for (const ps of pastSessions) {
-            for (const s of (ps.scores ?? []) as SectionScore[]) {
-                const prev = pastBands.get(s.sub_skill) ?? 0;
-                if (s.band > prev) pastBands.set(s.sub_skill, s.band);
+        const previousBands = new Map<string, number | null>();
+        for (const s of sectionScores) {
+            const row         = competencyPre.find(c => String(c.skill) === s.skill);
+            const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill];
+            if (subScoreKey && row?.sub_scores) {
+                const ss  = row.sub_scores as Record<string, number>;
+                previousBands.set(s.sub_skill, ss[subScoreKey] ?? null);
+            } else if (row?.band_score !== null && row?.band_score !== undefined) {
+                previousBands.set(s.sub_skill, parseFloat(String(row.band_score)) || null);
+            } else {
+                previousBands.set(s.sub_skill, null);
             }
         }
 
-        let momentumAwarded = 100; // base participation
-        for (const s of sectionScores) {
-            const prevBest = pastBands.get(s.sub_skill) ?? null;
-            if (prevBest !== null && s.band > prevBest) momentumAwarded += 25; // improvement
-            if (s.band > (prevBest ?? 0))               momentumAwarded += 50; // personal best
+        // ── 6. Momentum calculation ────────────────────────────────────────────
+        //
+        // +100 base participation
+        // +25  improved vs last IA band for this sub-skill
+        // +50  new personal best ever for this sub-skill
+        const [lastSession, allPastSessions] = await Promise.all([
+            prisma.iASession.findFirst({
+                where:   { student_id: student.id, status: 'COMPLETED' },
+                orderBy: { created_at: 'desc' },
+                select:  { scores: true }
+            }),
+            prisma.iASession.findMany({
+                where:  { student_id: student.id, status: 'COMPLETED' },
+                select: { scores: true }
+            })
+        ]);
+
+        const lastBands = new Map<string, number>();
+        if (lastSession?.scores) {
+            for (const s of lastSession.scores as SectionScore[]) {
+                lastBands.set(s.sub_skill, s.band);
+            }
         }
 
-        // 5. DB transaction
+        const allTimeBests = new Map<string, number>();
+        for (const ps of allPastSessions) {
+            for (const s of (ps.scores ?? []) as SectionScore[]) {
+                const prev = allTimeBests.get(s.sub_skill) ?? 0;
+                if (s.band > prev) allTimeBests.set(s.sub_skill, s.band);
+            }
+        }
+
+        const momentumBreakdown: { reason: string; points: number }[] = [
+            { reason: 'Participation', points: 100 }
+        ];
+        let momentumAwarded = 100;
+
+        for (const s of sectionScores) {
+            const label      = SUB_SKILL_LABEL[s.sub_skill] ?? s.sub_skill;
+            const lastBand   = lastBands.get(s.sub_skill)    ?? null;
+            const allTimeBest = allTimeBests.get(s.sub_skill) ?? 0;
+
+            if (lastBand !== null && s.band > lastBand) {
+                momentumAwarded += 25;
+                momentumBreakdown.push({ reason: `Improved — ${label}`, points: 25 });
+            }
+            if (s.band > allTimeBest) {
+                momentumAwarded += 50;
+                momentumBreakdown.push({ reason: `Personal Best — ${label}`, points: 50 });
+            }
+        }
+
+        // ── 7. DB transaction ─────────────────────────────────────────────────
         const updatedMomentum = await prisma.$transaction(async (tx) => {
-            // a) Mark session complete
+            // a) Mark session COMPLETED
             await tx.iASession.update({
                 where: { id: session_id },
                 data:  {
@@ -676,35 +808,59 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 }
             });
 
-            // b+c) Per sub-skill: AssessmentHistory + CompetencyMatrix upsert
+            // b + c) Per tested sub-skill: AssessmentHistory + precise CompetencyMatrix update
             for (const s of sectionScores) {
                 const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill] ?? null;
-                const subScores   = subScoreKey ? { [subScoreKey]: s.band } : {};
 
+                // AssessmentHistory — one row per sub-skill tested
                 await tx.assessmentHistory.create({
                     data: {
                         student_id: student.id,
                         skill:      s.skill as any,
                         mode:       'INTERNAL_ASSESSMENT' as any,
                         band_score: s.band,
-                        sub_scores: subScores as any
+                        sub_scores: subScoreKey ? { [subScoreKey]: s.band } : {} as any
                     }
                 });
 
+                // CompetencyMatrix — preserve ALL other sub-skill scores
                 const existing = await tx.studentCompetencyMatrix.findUnique({
                     where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
-                    select: { sub_scores: true }
+                    select: { sub_scores: true, band_score: true }
                 });
-                const merged = { ...(existing?.sub_scores as object ?? {}), ...subScores };
+                const currentSubScores = (existing?.sub_scores as Record<string, number>) ?? {};
+
+                // Update ONLY the tested sub-skill key
+                const updatedSubScores = subScoreKey
+                    ? { ...currentSubScores, [subScoreKey]: s.band }
+                    : currentSubScores;
+
+                // Recalculate skill-level band as mean of all known sub-skill scores
+                const knownBands  = Object.values(updatedSubScores)
+                    .filter((v): v is number => typeof v === 'number' && !isNaN(v));
+                const newSkillBand = knownBands.length > 0
+                    ? Math.round((knownBands.reduce((a, b) => a + b, 0) / knownBands.length) * 2) / 2
+                    : s.band;
 
                 await tx.studentCompetencyMatrix.upsert({
                     where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
-                    update: { band_score: s.band, sub_scores: merged as any, assessments_count: { increment: 1 }, last_updated: new Date() },
-                    create: { student_id: student.id, skill: s.skill as any, band_score: s.band, sub_scores: merged as any, assessments_count: 1 }
+                    update: {
+                        band_score:        newSkillBand,
+                        sub_scores:        updatedSubScores as any,
+                        assessments_count: { increment: 1 },
+                        last_updated:      new Date()
+                    },
+                    create: {
+                        student_id:        student.id,
+                        skill:             s.skill as any,
+                        band_score:        newSkillBand,
+                        sub_scores:        updatedSubScores as any,
+                        assessments_count: 1
+                    }
                 });
             }
 
-            // d) Award momentum
+            // d) Award momentum to student
             const updated = await tx.institute_students.update({
                 where:  { id: student.id },
                 data:   { momentum_score: { increment: momentumAwarded } },
@@ -713,11 +869,20 @@ export async function submitIA(req: AuthRequest, res: Response) {
             return updated.momentum_score;
         });
 
+        // ── 8. Build response with delta and breakdown ────────────────────────
+        const sectionScoresResponse: SectionScoreResponse[] = sectionScores.map(s => {
+            const prevBand = previousBands.get(s.sub_skill) ?? null;
+            const delta    = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
+            return { ...s, previous_band: prevBand, delta };
+        });
+
         return res.json({
-            success:          true,
-            momentum_awarded: momentumAwarded,
-            updated_momentum: updatedMomentum,
-            section_scores:   sectionScores
+            success:             true,
+            is_first_ia:         allPastSessions.length === 0,
+            momentum_awarded:    momentumAwarded,
+            momentum_breakdown:  momentumBreakdown,
+            updated_momentum:    updatedMomentum,
+            section_scores:      sectionScoresResponse
         });
     } catch (err) {
         console.error('[IASubmit] error:', err);
