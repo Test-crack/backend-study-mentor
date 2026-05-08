@@ -202,9 +202,17 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
             } catch { /* non-fatal — gate still opens without preview */ }
         }
 
+        // Active in-progress session today → gate shows "Continue Assessment" instead of "Start"
+        const todayActiveSession = is_ia_day
+            ? await prisma.iASession.findFirst({
+                  where: { student_id: student.id, ia_date: new Date(todayStr), status: { in: ['PENDING', 'IN_PROGRESS'] as any } }
+              })
+            : null;
+
         return res.json({
-            success:            true,
-            missed_count:       staleSessions.length,
+            success:             true,
+            missed_count:        staleSessions.length,
+            has_active_session:  !!todayActiveSession,
             has_schedule:       true,
             first_drill_date:   firstDrillDateStr,
             prerequisites_met,
