@@ -620,9 +620,21 @@ type SectionScore = {
 
 // Returned in the API response (not stored)
 type SectionScoreResponse = SectionScore & {
-    previous_band: number | null;
-    delta: number | null;
+    previous_band:   number | null;
+    delta:           number | null;
+    /** Sub-skill score in the competency matrix after 0.4×old + 0.6×new smoothing (±2 cap). */
+    new_matrix_band: number;
 };
+
+/** Mirrors the weighted update in the transaction so the API response can show the smoothed value. */
+function computeNewMatrixBand(iaBand: number, prevBand: number | null): number {
+    if (prevBand === null) return Math.min(9, Math.max(0, iaBand));
+    let weighted = 0.4 * prevBand + 0.6 * iaBand;
+    const deviation = weighted - prevBand;
+    if (deviation >  2) weighted = prevBand + 2;
+    if (deviation < -2) weighted = prevBand - 2;
+    return Math.min(9, Math.max(0, Math.round(weighted * 2) / 2));
+}
 
 const SUB_SKILL_LABEL: Record<string, string> = {
     GRAMMAR: 'Grammar', VOCABULARY: 'Vocabulary', COHERENCE: 'Coherence',
@@ -646,7 +658,15 @@ export async function submitIA(req: AuthRequest, res: Response) {
         if (!session) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
         if (session.status === 'COMPLETED') return res.json({ success: true, already_done: true });
-        if (session.status === 'MISSED') return res.status(400).json({ success: false, error: 'IA window has expired.' });
+        if (session.status === 'MISSED')    return res.status(400).json({ success: false, error: 'IA window has expired.' });
+        if (new Date() > session.window_closes_at) {
+            // Mark MISSED now — window lapsed between answer-save and submit
+            await prisma.iASession.update({
+                where: { id: session_id },
+                data:  { status: 'MISSED' as any, carry_forward_subskills: session.selected_subskills as any }
+            });
+            return res.status(400).json({ success: false, error: 'IA window has closed. Session marked as missed.' });
+        }
 
         // ── 2. Load question IDs, fetch questions (with prompt_text for AI) ──
         const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
@@ -681,7 +701,9 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT'
             );
             for (const q of aiQs) {
-                const text = (answers[q.id] ?? '').trim();
+                // Treat the '[no transcript]' sentinel (set when browser mic fails) as empty
+                const rawText = (answers[q.id] ?? '').trim();
+                const text = rawText === '[no transcript]' ? '' : rawText;
                 const job = (async (): Promise<AIJob> => {
                     const result = q.question_type === 'WRITING_PROMPT'
                         ? await gradeIAWritingPrompt(cfg.sub_skill, q.prompt_text, text)
@@ -1000,9 +1022,10 @@ export async function submitIA(req: AuthRequest, res: Response) {
 
         // ── 8. Build response with delta and breakdown ────────────────────────
         const sectionScoresResponse: SectionScoreResponse[] = sectionScores.map(s => {
-            const prevBand = previousBands.get(s.sub_skill) ?? null;
-            const delta = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
-            return { ...s, previous_band: prevBand, delta };
+            const prevBand      = previousBands.get(s.sub_skill) ?? null;
+            const delta         = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
+            const newMatrixBand = computeNewMatrixBand(s.band, prevBand);
+            return { ...s, previous_band: prevBand, delta, new_matrix_band: newMatrixBand };
         });
 
         return res.json({

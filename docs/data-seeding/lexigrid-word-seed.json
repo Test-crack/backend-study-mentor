@@ -1,0 +1,602 @@
+[
+  {
+    "base_word": "BIG",
+    "target_word": "LARGE",
+    "hint": "Of considerable or relatively great size.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "SMALL",
+    "target_word": "TINY",
+    "hint": "Very small in size or amount.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "HAPPY",
+    "target_word": "CHEERFUL",
+    "hint": "Noticeably happy and optimistic.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "SAD",
+    "target_word": "UNHAPPY",
+    "hint": "Not happy; feeling sorrow.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "PRETTY",
+    "target_word": "ATTRACTIVE",
+    "hint": "Pleasing or appealing to look at.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "FAST",
+    "target_word": "QUICK",
+    "hint": "Moving or done with great speed.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "OLD",
+    "target_word": "ANCIENT",
+    "hint": "Belonging to the very distant past.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "COLD",
+    "target_word": "CHILLY",
+    "hint": "Uncomfortably cool or cold.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "TIRED",
+    "target_word": "EXHAUSTED",
+    "hint": "Drained of energy or strength; very tired.",
+    "category": "descriptive",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "BUY",
+    "target_word": "PURCHASE",
+    "hint": "To acquire something by paying for it.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "GET",
+    "target_word": "OBTAIN",
+    "hint": "To come to have; to receive.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "HELP",
+    "target_word": "ASSIST",
+    "hint": "To give support or aid to someone.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "ASK",
+    "target_word": "REQUEST",
+    "hint": "To politely or formally ask for something.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "SAY",
+    "target_word": "STATE",
+    "hint": "To express something definitely or clearly.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "BEGIN",
+    "target_word": "COMMENCE",
+    "hint": "To start or begin (formal).",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "END",
+    "target_word": "CONCLUDE",
+    "hint": "To bring something to a finish.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "GIVE",
+    "target_word": "PROVIDE",
+    "hint": "To make something available to someone.",
+    "category": "formal",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "SHOW",
+    "target_word": "DEMONSTRATE",
+    "hint": "To clearly show something through evidence or examples.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "USE",
+    "target_word": "UTILIZE",
+    "hint": "To make practical use of something.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "KEEP",
+    "target_word": "MAINTAIN",
+    "hint": "To cause something to continue at the same level or condition.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "FIND",
+    "target_word": "IDENTIFY",
+    "hint": "To recognise or distinguish something.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "MAKE",
+    "target_word": "PRODUCE",
+    "hint": "To create or bring something into existence.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "SHOW",
+    "target_word": "ILLUSTRATE",
+    "hint": "To make something clear by giving examples.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "THINK",
+    "target_word": "CONSIDER",
+    "hint": "To think carefully about something.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "TELL",
+    "target_word": "INFORM",
+    "hint": "To give information to someone.",
+    "category": "academic",
+    "difficulty": "BEGINNER",
+    "target_band": 5.0
+  },
+  {
+    "base_word": "BEAUTIFUL",
+    "target_word": "STUNNING",
+    "hint": "Extremely impressive or attractive.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "ANGRY",
+    "target_word": "FURIOUS",
+    "hint": "Extremely angry.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "SCARED",
+    "target_word": "TERRIFIED",
+    "hint": "Very frightened.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "HUNGRY",
+    "target_word": "FAMISHED",
+    "hint": "Extremely hungry.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "FUNNY",
+    "target_word": "HILARIOUS",
+    "hint": "Extremely amusing.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "DIRTY",
+    "target_word": "FILTHY",
+    "hint": "Disgustingly dirty.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "BORING",
+    "target_word": "TEDIOUS",
+    "hint": "Too long, slow, or dull; tiresome.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "INTERESTING",
+    "target_word": "FASCINATING",
+    "hint": "Extremely interesting; captivating.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "STRANGE",
+    "target_word": "PECULIAR",
+    "hint": "Unusual or odd in a way that arouses curiosity.",
+    "category": "descriptive",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "TELL",
+    "target_word": "NOTIFY",
+    "hint": "To inform someone formally about something.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "SHOW",
+    "target_word": "EXHIBIT",
+    "hint": "To display or present publicly.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "TRY",
+    "target_word": "ENDEAVOUR",
+    "hint": "To try hard to do or achieve something.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "NEED",
+    "target_word": "REQUIRE",
+    "hint": "To need something for a particular purpose.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "ABOUT",
+    "target_word": "REGARDING",
+    "hint": "Concerning; with respect to.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "ALSO",
+    "target_word": "FURTHERMORE",
+    "hint": "In addition; used to introduce another point.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "LATER",
+    "target_word": "SUBSEQUENTLY",
+    "hint": "After a particular thing or event has happened.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "BUT",
+    "target_word": "NEVERTHELESS",
+    "hint": "Despite that; in spite of what has just been said.",
+    "category": "formal",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "IMPORTANT",
+    "target_word": "SIGNIFICANT",
+    "hint": "Sufficiently great or important to be worthy of attention.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "CAUSE",
+    "target_word": "TRIGGER",
+    "hint": "To set off or initiate a particular reaction or event.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "EFFECT",
+    "target_word": "IMPACT",
+    "hint": "A marked effect or influence on something.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "PROBLEM",
+    "target_word": "ISSUE",
+    "hint": "An important topic or problem for debate or discussion.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "ANSWER",
+    "target_word": "SOLUTION",
+    "hint": "A means of solving a problem or dealing with a difficulty.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.0
+  },
+  {
+    "base_word": "RESULT",
+    "target_word": "OUTCOME",
+    "hint": "The way a thing turns out; a consequence.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "STUDY",
+    "target_word": "INVESTIGATE",
+    "hint": "To carry out research or systematic enquiry into something.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "IDEA",
+    "target_word": "CONCEPT",
+    "hint": "An abstract idea; a general notion.",
+    "category": "academic",
+    "difficulty": "INTERMEDIATE",
+    "target_band": 6.5
+  },
+  {
+    "base_word": "BAD",
+    "target_word": "DETRIMENTAL",
+    "hint": "Tending to cause harm; harmful or damaging.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "GOOD",
+    "target_word": "EXEMPLARY",
+    "hint": "Serving as a desirable model; representing the best of its kind.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "POOR",
+    "target_word": "DESTITUTE",
+    "hint": "Without the basic necessities of life; in a state of extreme poverty.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "RICH",
+    "target_word": "AFFLUENT",
+    "hint": "Having a great deal of money; wealthy.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "QUIET",
+    "target_word": "TRANQUIL",
+    "hint": "Free from disturbance; calm and peaceful.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "WISE",
+    "target_word": "SAGACIOUS",
+    "hint": "Showing keen mental discernment and good judgement.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 8.0
+  },
+  {
+    "base_word": "STUBBORN",
+    "target_word": "OBSTINATE",
+    "hint": "Stubbornly refusing to change one's opinion or course of action.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "LAZY",
+    "target_word": "INDOLENT",
+    "hint": "Wanting to avoid activity or exertion; habitually idle.",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 8.0
+  },
+  {
+    "base_word": "BRAVE",
+    "target_word": "INTREPID",
+    "hint": "Fearless; adventurous (often used for explorers).",
+    "category": "descriptive",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "SHOW",
+    "target_word": "MANIFEST",
+    "hint": "To display or reveal clearly; to make evident.",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "STOP",
+    "target_word": "CEASE",
+    "hint": "To bring or come to an end (formal).",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "MEET",
+    "target_word": "CONVENE",
+    "hint": "To come or bring together for a meeting or activity.",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "AGREE",
+    "target_word": "CONCUR",
+    "hint": "To be of the same opinion; to agree (formal).",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "SO",
+    "target_word": "CONSEQUENTLY",
+    "hint": "As a result; therefore.",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "BIG WORDS",
+    "target_word": "GRANDILOQUENT",
+    "hint": "Pompous or extravagant in language, style, or manner.",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 8.0
+  },
+  {
+    "base_word": "NEED",
+    "target_word": "NECESSITATE",
+    "hint": "To make necessary as a result or consequence.",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "DELAY",
+    "target_word": "PROCRASTINATE",
+    "hint": "To delay or postpone action; to put off doing something.",
+    "category": "formal",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "PROVE",
+    "target_word": "SUBSTANTIATE",
+    "hint": "To provide evidence to support or prove the truth of.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "EXPLAIN",
+    "target_word": "ELUCIDATE",
+    "hint": "To make something clear; to explain in detail.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 8.0
+  },
+  {
+    "base_word": "SUPPORT",
+    "target_word": "CORROBORATE",
+    "hint": "To confirm or give support to a statement, theory or finding.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 8.0
+  },
+  {
+    "base_word": "GET WORSE",
+    "target_word": "EXACERBATE",
+    "hint": "To make a problem, situation, or feeling worse.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "REDUCE",
+    "target_word": "MITIGATE",
+    "hint": "To make less severe, serious, or painful.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 7.5
+  },
+  {
+    "base_word": "DIFFERENCE",
+    "target_word": "DISCREPANCY",
+    "hint": "A lack of compatibility or similarity between two or more facts.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  },
+  {
+    "base_word": "SAME EVERYWHERE",
+    "target_word": "UBIQUITOUS",
+    "hint": "Present, appearing, or found everywhere.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 8.0
+  },
+  {
+    "base_word": "STRONG ARGUMENT",
+    "target_word": "COMPELLING",
+    "hint": "Evoking interest or admiration in a powerfully irresistible way; convincing.",
+    "category": "academic",
+    "difficulty": "ADVANCED",
+    "target_band": 7.0
+  }
+]

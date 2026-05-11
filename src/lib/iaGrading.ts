@@ -115,10 +115,10 @@ async function callGemini(prompt: string): Promise<IAGradeResult> {
     
     const parsed = JSON.parse(raw);
     
-    // Ensure band is an integer between 1 and 10
+    // Allow 0.5-increment values (e.g. 6.5) so submitIA can produce proper IELTS half-bands
     let band = Number(parsed.band);
-    band = Math.round(band); // Convert to integer
-    band = Math.min(10, Math.max(1, band)); // Clamp to 1-10 range
+    band = Math.round(band * 2) / 2;       // round to nearest 0.5
+    band = Math.min(10, Math.max(1, band)); // clamp to 1–10
     
     parsed.band = band;
     
