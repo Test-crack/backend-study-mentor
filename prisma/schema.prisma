@@ -613,6 +613,7 @@ model institute_students {
   DrillSessions           DrillSession[]
   institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  mocksessions            mocksessions[]
   GameScores              StudentGameScore[]
 
   @@index([is_active], map: "idx_institute_students_active")
@@ -808,6 +809,50 @@ model IASession {
   @@index([student_id], map: "idx_iasession_student_id")
 }
 
+model mockquestions {
+  id             String             @id(map: "pk_mock_questions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  skill          IeltsSkillType
+  sub_skill      IeltsSubSkillType?
+  question_type  String             @db.VarChar(30)
+  task_type      String?            @db.VarChar(20)
+  passage_id     String?            @db.VarChar(50)
+  passage_text   String?
+  audio_url      String?            @db.VarChar(500)
+  prompt_text    String
+  options        Json?
+  correct_answer Json?
+  explanation    String?
+  is_active      Boolean            @default(true)
+  created_at     DateTime           @default(now()) @db.Timestamptz(6)
+
+  @@index([skill, is_active], map: "idx_mock_questions_skill_active")
+  @@index([skill, question_type], map: "idx_mock_questions_skill_type")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model mocksessions {
+  id                 String             @id(map: "pk_mock_sessions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id         String             @db.Uuid
+  attempt_type       MockAttemptType    @default(STANDARD)
+  month_year         String             @db.VarChar(7)
+  status             MockSessionStatus  @default(PENDING)
+  question_ids       Json               @default("[]")
+  answers            Json               @default("{}")
+  time_started_at    DateTime?          @db.Timestamptz(6)
+  time_submitted_at  DateTime?          @db.Timestamptz(6)
+  window_closes_at   DateTime           @db.Timestamptz(6)
+  scores             Json?
+  real_band_score    Decimal?           @db.Decimal(2, 1)
+  momentum_awarded   Int?
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  institute_students institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_sessions_student")
+
+  @@unique([student_id, month_year, attempt_type], map: "uq_mock_sessions_student_month_type")
+  @@index([status], map: "idx_mock_sessions_status")
+  @@index([student_id], map: "idx_mock_sessions_student_id")
+  @@index([student_id, month_year], map: "idx_mock_sessions_student_month")
+}
+
 enum IeltsSubSkillType {
   LISTENING
   READING
@@ -892,4 +937,16 @@ enum IASessionStatus {
   IN_PROGRESS
   COMPLETED
   MISSED
+}
+
+enum MockAttemptType {
+  STANDARD
+  EARNED
+}
+
+enum MockSessionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
 }
