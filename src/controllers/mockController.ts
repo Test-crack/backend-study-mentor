@@ -496,6 +496,7 @@ type MockSubSkillScore = {
     correct:    number;
     total_mcq:  number;
     ai_band:    number | null;  // 0-9 IELTS equivalent of AI score
+    ai_feedback?: { rationale: string; key_observations: string[] };
 };
 
 type MockSkillScore = {
@@ -549,7 +550,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
 
         // ── 3. Launch AI grading for W/S prompts in parallel ─────────────────
         // Track by sectionIdx:sub_skill key for per-sub-skill retrieval
-        type AIJob = { key: string; band: number };
+        type AIJob = { key: string; band: number; rationale: string; key_observations: string[] };
         const aiJobs: Promise<AIJob>[] = [];
 
         for (let i = 0; i < questionIdsConfig.length; i++) {
@@ -567,13 +568,17 @@ export async function submitMock(req: AuthRequest, res: Response) {
                     const result = q.question_type === 'WRITING_PROMPT'
                         ? await gradeIAWritingPrompt(subSkill, q.prompt_text, text)
                         : await gradeIASpeakingPrompt(subSkill, q.prompt_text, text);
-                    return { key, band: result.band };
+                    return { key, band: result.band, rationale: result.rationale, key_observations: result.key_observations };
                 })());
             }
         }
-        const aiResults       = await Promise.all(aiJobs);
-        const aiByKey         = new Map<string, number>();
-        for (const j of aiResults) aiByKey.set(j.key, j.band);
+        const aiResults           = await Promise.all(aiJobs);
+        const aiByKey             = new Map<string, number>();
+        const aiFeedbackByKey     = new Map<string, { rationale: string; key_observations: string[] }>();
+        for (const j of aiResults) {
+            aiByKey.set(j.key, j.band);
+            if (j.rationale) aiFeedbackByKey.set(j.key, { rationale: j.rationale, key_observations: j.key_observations });
+        }
 
         // ── 4. Score each skill ────────────────────────────────────────────────
         const skillScores: MockSkillScore[] = [];
@@ -631,10 +636,18 @@ export async function submitMock(req: AuthRequest, res: Response) {
                     else if (aiScore1to10 === null)                            combined1to10 = mcqScore1to10;
                     else    combined1to10 = (mcqScore1to10 * 1 + aiScore1to10 * 2) / 3;
 
-                    const ssBand   = scaleToIELTS(combined1to10);
-                    const aiIELTS  = aiScore1to10 !== null ? scaleToIELTS(aiScore1to10) : null;
+                    const ssBand      = scaleToIELTS(combined1to10);
+                    const aiIELTS     = aiScore1to10 !== null ? scaleToIELTS(aiScore1to10) : null;
+                    const feedbackKey = `${i}:${ss}`;
 
-                    subSkillScores.push({ sub_skill: ss, band: ssBand, correct: ssCorrect, total_mcq: ssMCQ.length, ai_band: aiIELTS });
+                    subSkillScores.push({
+                        sub_skill:   ss,
+                        band:        ssBand,
+                        correct:     ssCorrect,
+                        total_mcq:   ssMCQ.length,
+                        ai_band:     aiIELTS,
+                        ai_feedback: aiFeedbackByKey.get(feedbackKey),
+                    });
                 }
 
                 // Overall skill band = avg of 4 sub-skill bands, rounded to 0.5

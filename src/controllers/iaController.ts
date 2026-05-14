@@ -10,6 +10,7 @@ const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
 const IA_MIN_DAYS = 2;   // calendar days since first drill required
 const IA_DCS_THRESHOLD = 40;  // avg DCS % required to start the test
 const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 …
+const IA_MIN_WINDOW_MS = 20 * 60 * 1000;  // block new session if <20 min remain in today's window
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // ─── IST date helpers ─────────────────────────────────────────────────────────
@@ -534,7 +535,20 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             }
         }
 
-        // ── 3. New session: select sub-skills + fetch questions ───────────────
+        // ── 3. Guard: block new session if too little time remains in window ────
+        // Prevents the edge case where a student opens the test at 11:58 PM IST
+        // (2 minutes left), can't possibly finish, and gets MISSED + -20 momentum.
+        const timeRemainingInWindow = windowClosesAt.getTime() - Date.now();
+        if (timeRemainingInWindow < IA_MIN_WINDOW_MS) {
+            const minutesLeft = Math.floor(timeRemainingInWindow / 60000);
+            return res.status(400).json({
+                success: false,
+                error:   'window_closing_soon',
+                message: `Only ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''} remain in today's IA window — not enough time to start. Your next IA slot opens in a few days.`,
+            });
+        }
+
+        // ── 4. New session: select sub-skills + fetch questions ───────────────
         const { primary, secondary } = await selectPrioritySubSkills(student.id);
 
         const competency = await prisma.studentCompetencyMatrix.findMany({
@@ -562,7 +576,7 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             { skill: secondary.skill, sub_skill: secondary.sub_skill }
         ];
 
-        // ── 4. Create session row ─────────────────────────────────────────────
+        // ── 5. Create session row ─────────────────────────────────────────────
         const session = await prisma.iASession.create({
             data: {
                 student_id: student.id,
