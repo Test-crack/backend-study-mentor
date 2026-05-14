@@ -234,6 +234,21 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
+        // ── Abandoned sweep: mark sessions whose 72-hour window has expired ──
+        // No momentum penalty (unlike IA's -20). Student simply loses their monthly slot.
+        // Runs on every status call so the dashboard always reflects current reality.
+        const expiredSessions = await prisma.mocksessions.findMany({
+            where: { student_id: student.id, window_closes_at: { lt: new Date() }, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+            select: { id: true }
+        });
+        const abandonedCount = expiredSessions.length;
+        if (abandonedCount > 0) {
+            await prisma.mocksessions.updateMany({
+                where: { id: { in: expiredSessions.map(s => s.id) } },
+                data:  { status: 'ABANDONED' as any }
+            });
+        }
+
         const eligibility = await checkEligibility(student.id);
         const monthYear   = currentMonthYear();
 
@@ -264,6 +279,7 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
 
         return res.json({
             success:                   true,
+            abandoned_count:           abandonedCount,
             is_eligible:               eligibility.isEligible,
             eligibility_reasons:       eligibility.reasons,
             can_start_mock:            eligibility.isEligible && !standardUsed && !activeSession,
