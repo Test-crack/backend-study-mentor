@@ -35,7 +35,10 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
 
-app.use(express.json());
+// Body size raised to 50 MB — diagnostic/mock speaking submissions include
+// base64-encoded audio which easily exceeds the default 100 kb limit.
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 
 // Define allowed origins
@@ -64,7 +67,6 @@ const corsOptions: cors.CorsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
 
 // ── Static: IA audio files ────────────────────────────────────────────────────
 // DB stores audio_url as "/ia/audio/filename.mp3".
