@@ -853,6 +853,28 @@ model mocksessions {
   @@index([student_id, month_year], map: "idx_mock_sessions_student_month")
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model diagnostic_questions {
+  id             String         @id(map: "pk_diagnostic_questions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  level          String         @db.Char(1)
+  skill          IeltsSkillType
+  question_type  String         @db.VarChar(30)
+  set_id         String         @db.VarChar(60)
+  passage_text   String?
+  audio_url      String?        @db.VarChar(500)
+  prompt_text    String
+  options        Json?
+  correct_answer String?        @db.VarChar(30)
+  min_words      Int?
+  sequence       Int            @default(1) @db.SmallInt
+  is_active      Boolean        @default(true)
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+
+  @@index([level, skill, is_active], map: "idx_dq_level_skill_active")
+  @@index([set_id], map: "idx_dq_set_id")
+  @@index([set_id, sequence], map: "idx_dq_set_sequence")
+}
+
 enum IeltsSubSkillType {
   LISTENING
   READING
