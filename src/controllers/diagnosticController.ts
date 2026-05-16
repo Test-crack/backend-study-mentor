@@ -306,21 +306,42 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
 
         try {
             const analysis = await analyzeSpeaking(topic, req.file.path, req.file.mimetype || 'audio/webm');
-            bandScore  = Math.max(4.0, Math.min(Math.round((Number(analysis.bandScore) || 0) * 2) / 2, 9.0));
-            transcript = analysis.transcript;
+
+            // ── Edge case: empty audio / pure noise — ask student to retry ──
+            if (analysis.needs_retry) {
+                fs.unlink(req.file.path, () => {});
+                return res.status(422).json({
+                    error:      'no_speech_detected',
+                    can_retry:  true,
+                    message:    'No audible speech was detected in your recording. Please check your microphone and try again.',
+                    feedback:   analysis.feedback?.priority_action ?? null,
+                });
+            }
+
+            // Cap minimum at 1.0 (never let AI Fallback give 4+ for silence)
+            bandScore  = Math.min(Math.round((Number(analysis.bandScore) || 1.0) * 2) / 2, 9.0);
+            bandScore  = Math.max(bandScore, 1.0);
+            transcript = analysis.transcript ?? '';
             subScores  = {
-                fluencyScore:      analysis.fluencyScore,
-                vocabularyScore:   analysis.vocabularyScore,
-                grammarScore:      analysis.grammarScore,
+                content_assessment: analysis.content_assessment,
+                fluencyScore:       analysis.fluencyScore,
+                vocabularyScore:    analysis.vocabularyScore,
+                grammarScore:       analysis.grammarScore,
                 pronunciationScore: analysis.pronunciationScore,
-                feedback:          analysis.feedback
+                feedback:           analysis.feedback,
             };
         } catch (aiErr) {
             console.error('[analyzeSpeaking] Failure:', aiErr);
-            bandScore = 6.0;
-            subScores = { error: 'Failed to evaluate audio', fallback: true };
-        } finally {
+            // Real failure (API error, network, etc.) — do NOT save a fake 6.0
             fs.unlink(req.file.path, () => {});
+            return res.status(502).json({
+                error:     'ai_grading_failed',
+                can_retry: true,
+                message:   'AI evaluation failed. Please try submitting again.',
+            });
+        } finally {
+            // Clean up — safe to call even if already unlinked
+            try { fs.unlinkSync(req.file.path); } catch { /* already removed */ }
         }
 
         await saveDiagnosticAssessment(student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
