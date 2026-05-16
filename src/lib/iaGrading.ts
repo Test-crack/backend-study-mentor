@@ -106,14 +106,18 @@ Band 1 — Unintelligible. Cannot be understood.`,
 async function callGemini(prompt: string): Promise<IAGradeResult> {
     const model  = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
-    let   raw    = result.response.text().trim();
-    
+    let raw = result.response.text().trim();
+
     // Remove markdown code fences if present
     if (raw.startsWith('```')) {
-        raw = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        raw = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     }
-    
-    const parsed = JSON.parse(raw);
+
+    // Extract only the JSON object — Gemini sometimes appends text after it
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON object found in AI response.');
+
+    const parsed = JSON.parse(jsonMatch[0]);
     
     // Allow 0.5-increment values (e.g. 6.5) so submitIA can produce proper IELTS half-bands
     let band = Number(parsed.band);

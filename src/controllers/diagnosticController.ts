@@ -17,14 +17,16 @@ function resolveLevel(targetBand: number): DiagnosticLevel {
 
 /** Pick one random set_id for the given level + skill. */
 async function pickRandomSetId(level: string, skill: string): Promise<string | null> {
+    // GROUP BY deduplicates set_ids without the DISTINCT+ORDER BY restriction
     const rows: any[] = await prisma.$queryRaw`
-        SELECT DISTINCT set_id
-        FROM   diagnostic_questions
-        WHERE  level     = ${level}
-        AND    skill     = ${skill}::"IeltsSkillType"
-        AND    is_active = TRUE
-        ORDER  BY RANDOM()
-        LIMIT  1
+        SELECT   set_id
+        FROM     diagnostic_questions
+        WHERE    level     = ${level}
+        AND      skill     = ${skill}::"IeltsSkillType"
+        AND      is_active = TRUE
+        GROUP BY set_id
+        ORDER BY RANDOM()
+        LIMIT    1
     `;
     return rows[0]?.set_id ?? null;
 }

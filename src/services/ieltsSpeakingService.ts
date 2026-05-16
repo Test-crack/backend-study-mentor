@@ -228,11 +228,21 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsState;
 
     let rawText = result.response.text().trim();
+
+    // Strip markdown code fences (```json ... ``` or ``` ... ```)
     if (rawText.startsWith('```')) {
-      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     }
 
-    const evaluation = JSON.parse(rawText);
+    // Gemini sometimes appends explanatory text after the JSON object.
+    // Extract only the first complete JSON object to avoid parse errors.
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('[analyzeSpeaking] No JSON found in response:', rawText.slice(0, 300));
+      throw new Error('No JSON object found in AI response.');
+    }
+
+    const evaluation = JSON.parse(jsonMatch[0]);
 
     // ── Layer 3: Hard score enforcement ──────────────────────────────────────
     // Regardless of what Gemini returned in the numeric fields, apply our

@@ -152,13 +152,20 @@ Return ONLY valid JSON with no markdown, no code fences, no preamble:
   try {
     const result = await model.generateContent(prompt);
     let rawText = result.response.text().trim();
-    
+
     // Strip markdown fences if present
     if (rawText.startsWith('```')) {
-      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     }
 
-    const evaluation = JSON.parse(rawText);
+    // Gemini sometimes appends commentary after the JSON — extract just the object
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('[analyzeWriting] No JSON found in response:', rawText.slice(0, 300));
+      throw new Error('No JSON object found in AI response.');
+    }
+
+    const evaluation = JSON.parse(jsonMatch[0]);
 
     // Validate the band score arithmetic yourself
     const criteria = [
