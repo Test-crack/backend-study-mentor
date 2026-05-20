@@ -31,8 +31,6 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             where: { student_id: student.id }
         });
 
-        const MAX_DAILY_SESSIONS = 5;
-
         const practicedSessions = await prisma.drillSession.findMany({
             where: {
                 student_id: student.id,
@@ -40,18 +38,8 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             }
         });
 
-        if (practicedSessions.length >= MAX_DAILY_SESSIONS) {
-            return res.json({
-                success: true,
-                recommended_drills: [],
-                daily_sessions_completed: practicedSessions.length,
-                daily_limit: MAX_DAILY_SESSIONS,
-                message: "You've completed your maximum drill sessions for today. Great work!"
-            });
-        }
-
-        // Store as ALL UPPERCASE for case-insensitive matching
-        const practicedSet = new Set(practicedSessions.map(s => `${s.skill.toUpperCase()}-${s.sub_skill.toUpperCase()}`));
+        // DB enum values are already uppercase — build keys directly
+        const practicedSet = new Set(practicedSessions.map(s => `${s.skill}-${s.sub_skill}`));
 
 
         const items: DrillItem[] = [];
@@ -60,33 +48,46 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             const skillBandScore = Number(matrix.band_score || 0);
             const subScores = (matrix.sub_scores as Record<string, any>) || {};
 
+            // Use DB enum values for sub_skill (uppercase) so the practicedSet filter
+            // matches correctly. Use the *Score-suffixed keys from sub_scores JSONB
+            // (grammarScore, taskResponseScore, etc.) to match what IA/diagnostic stores.
             if (matrix.skill === 'WRITING') {
-                const subs = ['grammar', 'coherence', 'vocabulary', 'taskResponse'];
-                subs.forEach(s => items.push({
-                    skill: 'Writing',
-                    sub_skill: s,
+                const subs: { sub: string; scoreKey: string }[] = [
+                    { sub: 'GRAMMAR',       scoreKey: 'grammarScore' },
+                    { sub: 'COHERENCE',     scoreKey: 'coherenceScore' },
+                    { sub: 'VOCABULARY',    scoreKey: 'vocabularyScore' },
+                    { sub: 'TASK_RESPONSE', scoreKey: 'taskResponseScore' },
+                ];
+                subs.forEach(({ sub, scoreKey }) => items.push({
+                    skill: 'WRITING',
+                    sub_skill: sub,
                     skill_band_score: skillBandScore,
-                    sub_skill_score: Number(subScores[s] ?? skillBandScore)
+                    sub_skill_score: Number(subScores[scoreKey] ?? skillBandScore)
                 }));
             } else if (matrix.skill === 'SPEAKING') {
-                const subs = ['fluency', 'grammar', 'vocabulary', 'pronunciation'];
-                subs.forEach(s => items.push({
-                    skill: 'Speaking',
-                    sub_skill: s,
+                const subs: { sub: string; scoreKey: string }[] = [
+                    { sub: 'FLUENCY',       scoreKey: 'fluencyScore' },
+                    { sub: 'GRAMMAR',       scoreKey: 'grammarScore' },
+                    { sub: 'VOCABULARY',    scoreKey: 'vocabularyScore' },
+                    { sub: 'PRONUNCIATION', scoreKey: 'pronunciationScore' },
+                ];
+                subs.forEach(({ sub, scoreKey }) => items.push({
+                    skill: 'SPEAKING',
+                    sub_skill: sub,
                     skill_band_score: skillBandScore,
-                    sub_skill_score: Number(subScores[s] ?? skillBandScore)
+                    sub_skill_score: Number(subScores[scoreKey] ?? skillBandScore)
                 }));
             } else if (matrix.skill === 'READING') {
                 items.push({
-                    skill: 'Reading',
-                    sub_skill: 'Reading',
+                    skill: 'READING',
+                    sub_skill: 'READING',
                     skill_band_score: skillBandScore,
                     sub_skill_score: skillBandScore
                 });
             } else if (matrix.skill === 'LISTENING') {
                 items.push({
-                    skill: 'Listening',
-                    sub_skill: 'Listening',
+                    skill: 'LISTENING',
+                    sub_skill: 'LISTENING',
                     skill_band_score: skillBandScore,
                     sub_skill_score: skillBandScore
                 });
@@ -128,21 +129,17 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             }
         }
 
-        // Filter out sub-skills already practiced today (case-insensitive)
+        // Items now use DB enum values (uppercase) — keys match practicedSet directly
         const recommended_drills = interleaved.filter(item =>
-            !practicedSet.has(`${item.skill.toUpperCase()}-${item.sub_skill.toUpperCase().replace(/\s+/g, '_')}`)
+            !practicedSet.has(`${item.skill}-${item.sub_skill}`)
         );
-
-        const sessionsLeft = MAX_DAILY_SESSIONS - practicedSessions.length;
 
         return res.json({
             success: true,
             recommended_drills,
             daily_sessions_completed: practicedSessions.length,
-            daily_limit: MAX_DAILY_SESSIONS,
-            sessions_remaining: sessionsLeft,
             message: recommended_drills.length > 0
-                ? `${sessionsLeft} drill session${sessionsLeft !== 1 ? 's' : ''} remaining today.`
+                ? "Here are your prioritised drills."
                 : "You have completed all available sub-skills for today!"
         });
 

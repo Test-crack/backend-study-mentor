@@ -3,7 +3,7 @@ import { Request, Response } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
 import { extractTextFromFile } from "../services/textExtractor.service";
 import { generateMaterial } from "../services/youtubeNotes/summarizeService";
 
@@ -24,7 +24,7 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (_req: any, file: any, cb: any) => {
-    const uniqueName = `${uuidv4()}-${file.originalname}`;
+    const uniqueName = `${crypto.randomUUID()}-${file.originalname}`;
     console.log(`[MULTER] Filename generated: ${uniqueName}`);
     cb(null, uniqueName);
   },
