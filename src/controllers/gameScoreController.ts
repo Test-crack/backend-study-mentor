@@ -7,7 +7,7 @@ import { getValidatedStreak } from '../lib/streak';
 
 const FREE_SESSIONS_PER_DAY = 3;    // 3 drills free daily
 const MAX_SESSIONS_PER_DAY  = 100;  // no hard cap — students can keep buying extra drills
-const EXTRA_SESSION_COST    = 75;
+const EXTRA_SESSION_COST    = 150;
 const DCS_EXTRA_THRESHOLD   = 40;   // DCS% required to unlock extra drill
 const LEXIGRID_BASE_PTS     = 10;
 const LEXIGRID_BONUS_PTS    = 5;
