@@ -2,7 +2,7 @@
  * Competency Score helpers
  *
  * computeDailyDCS   — today's sessions only
- *                     Used for: extra-drill gate (must be ≥ 75%)
+ *                     Used for: extra-drill gate (must be ≥ 40%)
  *
  * computeAverageDCS — all-time sessions
  *                     Used for: IA eligibility gate (must be ≥ 40%)

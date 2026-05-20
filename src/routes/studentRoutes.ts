@@ -6,7 +6,7 @@ import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
 import { getSpeakingHistory, getCompetencyScores } from '../controllers/studentController';
-import { getRecommendations } from '../controllers/recommendationController';
+import { getRecommendations, getDrillRecommendation } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
 import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
 import { getLexiGridWords } from '../controllers/lexiGridController';
@@ -48,7 +48,8 @@ router.get('/speaking-history', getSpeakingHistory);
 router.get('/competency-scores', getCompetencyScores);
 
 // GET /api/student/recommendations — Student's AI recommendations
-router.get('/recommendations', getRecommendations);
+router.get('/recommendations',       getRecommendations);
+router.get('/drill-recommendation', getDrillRecommendation);  // ?skill=X&sub_skill=Y
 
 // GET /api/student/lexigrid-words?difficulty=INTERMEDIATE — Daily word set for LexiGrid
 router.get('/lexigrid-words', getLexiGridWords);

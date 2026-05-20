@@ -686,6 +686,7 @@ model RecommendationItem {
   is_active     Boolean             @default(true)
   createdAt     DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime            @default(now()) @db.Timestamptz(6)
+  sub_skill     IeltsSubSkillType?
 
   @@index([skill_type, level, is_active])
 }
