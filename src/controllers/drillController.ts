@@ -297,6 +297,63 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
 }
 
 /**
+ * POST /api/drills/save-reflection
+ * Body: { session_id, reflection_text }
+ * Saves the student's reflection text to the DrillSession and awards +25 momentum.
+ * Idempotent: if reflection_text is already saved, skips the momentum award.
+ */
+export async function saveReflection(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { session_id, reflection_text } = req.body;
+
+        if (!session_id || !reflection_text?.trim()) {
+            return res.status(400).json({ success: false, error: 'session_id and reflection_text are required.' });
+        }
+
+        const session = await prisma.drillSession.findUnique({ where: { id: session_id } });
+        if (!session) return res.status(404).json({ success: false, error: 'Drill session not found.' });
+        if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
+
+        // Idempotent: already saved — skip momentum award
+        if (session.reflection_text) {
+            return res.json({
+                success: true,
+                already_saved: true,
+                momentum_earned: 0,
+                momentum_score: student.momentum_score,
+            });
+        }
+
+        const REFLECTION_BONUS = 25;
+        const [, updated] = await prisma.$transaction([
+            prisma.drillSession.update({
+                where: { id: session_id },
+                data:  { reflection_text: reflection_text.trim() },
+            }),
+            prisma.institute_students.update({
+                where: { id: student.id },
+                data:  { momentum_score: { increment: REFLECTION_BONUS } },
+            }),
+        ]);
+
+        return res.json({
+            success: true,
+            momentum_earned: REFLECTION_BONUS,
+            momentum_score: updated.momentum_score,
+        });
+    } catch (error) {
+        console.error('[DrillController] saveReflection error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
  * POST /api/drills/apply-complete
  * Awards +30 momentum pts when the student completes the Apply Drill step.
  */
