@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { DrillSessionStatus } from '@prisma/client';
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 
 interface DrillItem {
@@ -34,6 +35,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         const practicedSessions = await prisma.drillSession.findMany({
             where: {
                 student_id: student.id,
+                status:     { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] },
                 created_at: { gte: todayStartIST() }
             }
         });
@@ -378,6 +380,364 @@ export async function completeApplyDrill(req: AuthRequest, res: Response) {
         });
     } catch (error) {
         console.error('[DrillController] completeApplyDrill error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * PATCH /api/drills/session/:id/progress
+ * Body: { answers: Record<string, string> }
+ * Persists current answers mid-session (fire-and-forget from client).
+ * Only updates STARTED sessions — silently skips anything already DRILL_DONE/APPLY_DONE.
+ */
+export async function saveDrillProgress(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { id } = req.params;
+        const session = await prisma.drillSession.findUnique({ where: { id } });
+        if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
+        if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
+
+        // Silently skip if session is already past STARTED — idempotent
+        if (session.status !== DrillSessionStatus.STARTED) {
+            return res.json({ success: true, skipped: true });
+        }
+
+        const { answers } = req.body;
+        if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+            return res.status(400).json({ success: false, error: 'answers must be an object.' });
+        }
+
+        await prisma.drillSession.update({
+            where: { id },
+            data:  { answers }
+        });
+
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('[DrillController] saveDrillProgress error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// ─── Task 3: Stateful Drill Session Endpoints ────────────────────────────────
+
+/**
+ * POST /api/drills/start
+ * Body: { skill, sub_skill, level, is_extra_session? }
+ * Creates a new STARTED session + returns questions. Resumes today's STARTED session if one exists.
+ */
+export async function startDrillSession(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { skill, sub_skill, level, is_extra_session } = req.body;
+        if (!skill || !sub_skill || !level) {
+            return res.status(400).json({ success: false, error: 'skill, sub_skill, and level are required.' });
+        }
+
+        const skillUp    = String(skill).toUpperCase();
+        const subSkillUp = String(sub_skill).toUpperCase().replace(/\s+/g, '_');
+        const levelUp    = String(level).toUpperCase();
+        const QUESTIONS_PER_SESSION = 5;
+
+        // Resume today's STARTED session (same skill/sub_skill)
+        const existing = await prisma.drillSession.findFirst({
+            where: {
+                student_id: student.id,
+                skill:      skillUp as any,
+                sub_skill:  subSkillUp as any,
+                status:     DrillSessionStatus.STARTED,
+                created_at: { gte: todayStartIST() },
+            }
+        });
+
+        if (existing) {
+            const questionIds = existing.question_ids as string[];
+            const unordered   = await prisma.drillQuestion.findMany({
+                where:  { id: { in: questionIds } },
+                select: { id: true, skill: true, sub_skill: true, level: true, drill_type: true,
+                          prompt_text: true, options: true, correct_answer: true, explanation: true, is_active: true }
+            });
+            const questions   = questionIds.map(id => unordered.find(q => q.id === id)).filter(Boolean);
+            const savedAnswers = (existing.answers as Record<string, string>) ?? {};
+
+            return res.json({
+                success:      true,
+                session_id:   existing.id,
+                questions,
+                resume:       true,
+                saved_answers: savedAnswers,
+                resume_index: Object.keys(savedAnswers).length,
+            });
+        }
+
+        // Fetch fresh random questions
+        const questions: any[] = await prisma.$queryRaw`
+            SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
+            FROM drill_questions
+            WHERE skill     = ${skillUp}::"IeltsSkillType"
+              AND sub_skill = ${subSkillUp}::"IeltsSubSkillType"
+              AND level     = ${levelUp}::"RecommendationLevel"
+              AND is_active = true
+            ORDER BY RANDOM()
+            LIMIT ${QUESTIONS_PER_SESSION}
+        `;
+
+        if (questions.length === 0) {
+            return res.status(404).json({ success: false, error: 'No drill questions found for the given parameters.' });
+        }
+
+        const questionIds  = questions.map((q: any) => q.id);
+        const extraSession = is_extra_session === true || is_extra_session === 'true';
+
+        const session = await prisma.drillSession.create({
+            data: {
+                student_id:        student.id,
+                skill:             skillUp as any,
+                sub_skill:         subSkillUp as any,
+                status:            DrillSessionStatus.STARTED,
+                question_ids:      questionIds,
+                answers:           {},
+                prompts_completed: 0,
+                correct_answers:   0,
+                total_questions:   questions.length,
+                momentum_earned:   0,
+                is_extra_session:  extraSession,
+            }
+        });
+
+        return res.json({
+            success:      true,
+            session_id:   session.id,
+            questions,
+            resume:       false,
+            saved_answers: {},
+            resume_index: 0,
+        });
+    } catch (error) {
+        console.error('[DrillController] startDrillSession error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * GET /api/drills/active?skill=X&sub_skill=Y
+ * Returns today's STARTED or DRILL_DONE session for the given skill/sub_skill.
+ * STARTED: includes questions + saved_answers for resume.
+ * DRILL_DONE: just session data so the client can jump to the result card.
+ */
+export async function getActiveDrillSession(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { skill, sub_skill } = req.query;
+        if (!skill || !sub_skill) {
+            return res.status(400).json({ success: false, error: 'skill and sub_skill query params are required.' });
+        }
+
+        const session = await prisma.drillSession.findFirst({
+            where: {
+                student_id: student.id,
+                skill:      (skill as string).toUpperCase() as any,
+                sub_skill:  (sub_skill as string).toUpperCase().replace(/\s+/g, '_') as any,
+                status:     { in: [DrillSessionStatus.STARTED, DrillSessionStatus.DRILL_DONE] },
+                created_at: { gte: todayStartIST() },
+            },
+            orderBy: { created_at: 'desc' }
+        });
+
+        if (!session) return res.json({ success: true, session: null });
+
+        if (session.status === DrillSessionStatus.STARTED) {
+            const questionIds  = session.question_ids as string[];
+            const unordered    = await prisma.drillQuestion.findMany({
+                where:  { id: { in: questionIds } },
+                select: { id: true, skill: true, sub_skill: true, level: true, drill_type: true,
+                          prompt_text: true, options: true, correct_answer: true, explanation: true, is_active: true }
+            });
+            const questions    = questionIds.map(id => unordered.find(q => q.id === id)).filter(Boolean);
+            const savedAnswers = (session.answers as Record<string, string>) ?? {};
+
+            return res.json({
+                success:      true,
+                session:      { ...session, saved_answers: savedAnswers },
+                questions,
+                resume_index: Object.keys(savedAnswers).length,
+            });
+        }
+
+        return res.json({ success: true, session });
+    } catch (error) {
+        console.error('[DrillController] getActiveDrillSession error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * POST /api/drills/session/:id/complete
+ * Body: { answers, correct_answers, is_extra_session? }
+ * Transitions STARTED → DRILL_DONE and awards momentum. Idempotent if already DRILL_DONE.
+ */
+export async function completeDrillSession(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { id } = req.params;
+        const session = await prisma.drillSession.findUnique({ where: { id } });
+        if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
+        if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
+
+        // Idempotent guard
+        if (session.status === DrillSessionStatus.DRILL_DONE || session.status === DrillSessionStatus.APPLY_DONE) {
+            return res.json({
+                success:        true,
+                already_done:   true,
+                data:           session,
+                momentum_earned: session.momentum_earned,
+                momentum_score: student.momentum_score,
+                daily_streak:   student.daily_streak,
+            });
+        }
+
+        const { answers, correct_answers, is_extra_session } = req.body;
+
+        const DRILL_BASE_PTS    = 15;
+        const DRILL_PER_CORRECT = 10;
+        const correctCount      = Math.max(0, parseInt(correct_answers ?? '0'));
+        const momentum_earned   = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
+        const extraSession      = (is_extra_session === true || is_extra_session === 'true') || session.is_extra_session;
+        const consumeCredit     = extraSession && student.extra_drill_credits > 0;
+        const totalQuestions    = (session.question_ids as string[] ?? []).length || 5;
+
+        const [updatedSession, updatedStudent] = await prisma.$transaction([
+            prisma.drillSession.update({
+                where: { id },
+                data: {
+                    status:             DrillSessionStatus.DRILL_DONE,
+                    answers:            answers ?? {},
+                    correct_answers:    correctCount,
+                    prompts_completed:  totalQuestions,
+                    total_questions:    totalQuestions,
+                    momentum_earned,
+                    drill_completed_at: new Date(),
+                }
+            }),
+            prisma.institute_students.update({
+                where: { id: student.id },
+                data: {
+                    momentum_score: { increment: momentum_earned },
+                    ...(consumeCredit ? { extra_drill_credits: { decrement: 1 } } : {})
+                }
+            })
+        ]);
+
+        // Streak: fires when today's DRILL_DONE count crosses exactly 2
+        const drillCutoff = todayStartIST();
+        const drillsToday = await prisma.drillSession.count({
+            where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: drillCutoff } }
+        });
+
+        let newDailyStreak = updatedStudent.daily_streak;
+
+        if (drillsToday === 2) {
+            const todayIST     = currentISTDate();
+            const yesterdayIST = yesterdayISTDate();
+
+            const { daily_streak: prevStreak, last_streak_date: lastDate } =
+                await prisma.institute_students.findUnique({
+                    where:  { id: student.id },
+                    select: { daily_streak: true, last_streak_date: true }
+                }) ?? { daily_streak: 0, last_streak_date: null };
+
+            if (lastDate
+                && lastDate.getTime() >= yesterdayIST.getTime()
+                && lastDate.getTime() <  todayIST.getTime()) {
+                newDailyStreak = prevStreak + 1;
+            } else {
+                newDailyStreak = 1;
+            }
+
+            await prisma.institute_students.update({
+                where: { id: student.id },
+                data:  { daily_streak: newDailyStreak, last_streak_date: todayIST }
+            });
+        }
+
+        return res.json({
+            success:        true,
+            data:           updatedSession,
+            momentum_earned,
+            momentum_score: updatedStudent.momentum_score,
+            daily_streak:   newDailyStreak,
+        });
+    } catch (error) {
+        console.error('[DrillController] completeDrillSession error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * POST /api/drills/session/:id/apply-done
+ * Transitions DRILL_DONE → APPLY_DONE and awards +30 momentum. Idempotent if already APPLY_DONE.
+ */
+export async function completeApplyDrillSession(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { id } = req.params;
+        const session = await prisma.drillSession.findUnique({ where: { id } });
+        if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
+        if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
+
+        if (session.status === DrillSessionStatus.APPLY_DONE) {
+            return res.json({ success: true, already_done: true, momentum_earned: 0, momentum_score: student.momentum_score });
+        }
+
+        if (session.status !== DrillSessionStatus.DRILL_DONE) {
+            return res.status(400).json({ success: false, error: 'Session must be in DRILL_DONE status to complete Apply Drill.' });
+        }
+
+        const APPLY_DRILL_BONUS = 30;
+        const [, updated] = await prisma.$transaction([
+            prisma.drillSession.update({
+                where: { id },
+                data:  { status: DrillSessionStatus.APPLY_DONE, apply_completed_at: new Date() }
+            }),
+            prisma.institute_students.update({
+                where: { id: student.id },
+                data:  { momentum_score: { increment: APPLY_DRILL_BONUS } }
+            })
+        ]);
+
+        return res.json({
+            success:        true,
+            momentum_earned: APPLY_DRILL_BONUS,
+            momentum_score: updated.momentum_score,
+        });
+    } catch (error) {
+        console.error('[DrillController] completeApplyDrillSession error:', error);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }

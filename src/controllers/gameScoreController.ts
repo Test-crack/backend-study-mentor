@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { DrillSessionStatus } from '@prisma/client';
 import { todayStartIST, currentISTDate } from '../lib/timezone';
 import { computeDailyDCS } from '../lib/dcs';
 import { getValidatedStreak } from '../lib/streak';
@@ -39,7 +40,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
 
         const [drillSessions, lexiGridRecord, competencyMatrix] = await Promise.all([
             prisma.drillSession.findMany({
-                where: { student_id: student.id, created_at: { gte: drillCutoff } },
+                where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: drillCutoff } },
                 select: { id: true, is_extra_session: true }
             }),
             prisma.studentGameScore.findFirst({
@@ -234,7 +235,7 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const drillsToday = await prisma.drillSession.count({
-            where: { student_id: student.id, created_at: { gte: todayStartIST() } }
+            where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: todayStartIST() } }
         });
 
         if (drillsToday < FREE_SESSIONS_PER_DAY) {
