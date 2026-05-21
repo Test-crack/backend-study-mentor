@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { getValidatedStreak } from '../lib/streak';
+import { AssessmentModeType } from '@prisma/client';
 
 /**
  * Get the authenticated student's speaking practice history
@@ -113,5 +114,82 @@ export async function getCompetencyScores(req: AuthRequest, res: Response) {
     } catch (error) {
         console.error('[StudentController] getCompetencyScores error:', error);
         return res.status(500).json({ success: false, error: 'Internal server error while fetching competency scores.' });
+    }
+}
+
+/**
+ * GET /api/student/assessment-history
+ * Returns all INTERNAL_ASSESSMENT and MOCK entries for the student, newest first.
+ */
+export async function getAssessmentHistory(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const entries = await prisma.assessmentHistory.findMany({
+            where: {
+                student_id: student.id,
+                mode: { in: [AssessmentModeType.INTERNAL_ASSESSMENT, AssessmentModeType.MOCK] },
+            },
+            orderBy: { created_at: 'desc' },
+            select: {
+                id: true,
+                skill: true,
+                mode: true,
+                band_score: true,
+                sub_scores: true,
+                feedback_json: true,
+                created_at: true,
+            },
+        });
+
+        return res.json({
+            success: true,
+            data: entries.map(e => ({ ...e, band_score: parseFloat(String(e.band_score)) })),
+        });
+    } catch (error) {
+        console.error('[StudentController] getAssessmentHistory error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * GET /api/student/diagnostic-report
+ * Returns the first DIAGNOSTIC entry per skill — the student's baseline scores.
+ */
+export async function getDiagnosticReport(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const entries = await prisma.assessmentHistory.findMany({
+            where: { student_id: student.id, mode: AssessmentModeType.DIAGNOSTIC },
+            orderBy: { created_at: 'asc' },
+            select: {
+                id: true,
+                skill: true,
+                band_score: true,
+                sub_scores: true,
+                feedback_json: true,
+                created_at: true,
+            },
+        });
+
+        // Keep only the first (oldest) entry per skill — that is the initial diagnostic baseline
+        const seenSkills = new Set<string>();
+        const report = entries
+            .filter(e => { if (seenSkills.has(e.skill)) return false; seenSkills.add(e.skill); return true; })
+            .map(e => ({ ...e, band_score: parseFloat(String(e.band_score)) }));
+
+        return res.json({ success: true, data: report });
+    } catch (error) {
+        console.error('[StudentController] getDiagnosticReport error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }

@@ -5,7 +5,7 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
-import { getSpeakingHistory, getCompetencyScores } from '../controllers/studentController';
+import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport } from '../controllers/studentController';
 import { getRecommendations, getDrillRecommendation } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
 import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
@@ -53,5 +53,11 @@ router.get('/drill-recommendation', getDrillRecommendation);  // ?skill=X&sub_sk
 
 // GET /api/student/lexigrid-words?difficulty=INTERMEDIATE — Daily word set for LexiGrid
 router.get('/lexigrid-words', getLexiGridWords);
+
+// GET /api/student/assessment-history — IA + Mock entries, newest first
+router.get('/assessment-history', getAssessmentHistory);
+
+// GET /api/student/diagnostic-report — Initial diagnostic baseline per skill
+router.get('/diagnostic-report', getDiagnosticReport);
 
 export default router;
