@@ -91,52 +91,65 @@ export async function addStudent(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        // Check if already a student of this institute
-        let dbUser = await prisma.user.findUnique({ where: { email: studentEmail } });
+        const email = studentEmail.trim().toLowerCase();
+        const name  = studentName.trim();
+
+        // 1. Check existing User record
+        let dbUser = await prisma.user.findUnique({ where: { email } });
         if (dbUser) {
             if (dbUser.role !== UserRoleType.STUDENT) {
-                return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
+                return res.status(409).json({ error: 'Email already linked with a non-student account. Contact blinkgrid@gmail.com' });
             }
-            const alreadyEnrolled = await prisma.institute_students.findFirst({
-                where: { user_id: dbUser.id, institute_id: instituteId },
+
+            // Check enrollment across ALL institutes (user_id is unique in institute_students)
+            const existingEnrollment = await prisma.institute_students.findUnique({
+                where: { user_id: dbUser.id },
             });
-            if (alreadyEnrolled) {
-                return res.status(409).json({ error: 'This student is already enrolled in your institute.' });
+            if (existingEnrollment) {
+                if (existingEnrollment.institute_id === instituteId) {
+                    return res.status(409).json({ error: 'This student is already enrolled in your institute.' });
+                }
+                return res.status(409).json({ error: 'This student is already enrolled at another institute.' });
             }
         }
 
-        // 1. Send Supabase invite email
+        // 2. Send Supabase invite email
         const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-            studentEmail,
+            email,
             {
-                data: { full_name: studentName, role: 'STUDENT' },
+                data: { full_name: name, role: 'STUDENT' },
                 redirectTo: `${process.env.FRONTEND_URL ?? 'http://localhost:8080'}/login`,
             }
         );
 
-        if (inviteError && !inviteError.message.includes('already been registered')) {
+        const alreadyRegistered = !!inviteError?.message?.includes('already been registered');
+        if (inviteError && !alreadyRegistered) {
             throw inviteError;
         }
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Upsert User row
+        // 3. Create User row if needed; update supabase ID if we now have a real one
         if (!dbUser) {
             dbUser = await prisma.user.create({
                 data: {
-                    email: studentEmail,
-                    name: studentName,
+                    email,
+                    name,
                     role: UserRoleType.STUDENT,
+                    // pending-* self-heals on first login via ensureUser email-linking
                     supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
                 },
             });
+        } else if (supabaseUserId && dbUser.supabaseuserid.startsWith('pending-')) {
+            dbUser = await prisma.user.update({
+                where: { id: dbUser.id },
+                data:  { supabaseuserid: supabaseUserId },
+            });
         }
 
-        // 3. Upsert institute_students row
-        await prisma.institute_students.upsert({
-            where: { user_id: dbUser.id },
-            update: { institute_id: instituteId, is_active: true },
-            create: { user_id: dbUser.id, institute_id: instituteId },
+        // 4. Create institute_students record (plain create — safe because we checked above)
+        await prisma.institute_students.create({
+            data: { user_id: dbUser.id, institute_id: instituteId, is_active: true },
         });
 
         return res.status(201).json({
