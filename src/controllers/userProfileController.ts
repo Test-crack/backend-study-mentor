@@ -80,6 +80,8 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
       instituteIsActive = user.institute_admins.institutes.is_active;
     }
 
+    const isEnrolled = user.role === 'STUDENT' ? !!user.institute_students : true;
+
     let isDiagnosed = false;
     let recommendationSeeded = false;
     let targetBand = null;
@@ -93,7 +95,7 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     delete (user as any).institute_admins;
     delete (user as any).institute_students;
 
-    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand } });
+    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand, isEnrolled } });
   } catch (error) {
     console.error('[getUserProfile] Error:', error);
     res.status(500).json({ error: 'Failed to fetch user profile' });
