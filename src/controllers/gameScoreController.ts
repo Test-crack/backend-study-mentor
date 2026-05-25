@@ -7,8 +7,8 @@ import { computeDailyDCS } from '../lib/dcs';
 import { getValidatedStreak } from '../lib/streak';
 
 const FREE_SESSIONS_PER_DAY = 3;    // 3 drills free daily
-const MAX_SESSIONS_PER_DAY  = 100;  // no hard cap — students can keep buying extra drills
-const EXTRA_SESSION_COST    = 150;
+const MAX_SESSIONS_PER_DAY  = 4;    // 3 free + 1 purchasable extra = 4 max per day
+const EXTRA_SESSION_COST    = 300;  // 300 momentum pts to unlock the 4th drill
 const DCS_EXTRA_THRESHOLD   = 40;   // DCS% required to unlock extra drill
 const LEXIGRID_BASE_PTS     = 10;
 const LEXIGRID_BONUS_PTS    = 5;
@@ -33,10 +33,6 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         const drillCutoff  = todayStartIST();
         // DATE boundary for student_game_scores.session_date
         const sessionToday = currentISTDate();
-
-        // DEBUG — remove before prod
-        console.log('[TZ] drillCutoff (IST midnight as UTC) :', drillCutoff.toISOString());
-        console.log('[TZ] sessionToday (IST date as UTC 00:00):', sessionToday.toISOString());
 
         const [drillSessions, lexiGridRecord, competencyMatrix] = await Promise.all([
             prisma.drillSession.findMany({
@@ -91,6 +87,9 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             next_action = 'DRILL_2';
         } else if (drills_completed_today === 2) {
             next_action = 'DRILL_3';
+        } else if (drills_completed_today >= MAX_SESSIONS_PER_DAY) {
+            // All 4 drills done — hard cap reached for today
+            next_action = 'DAILY_LIMIT_REACHED';
         } else if (drills_completed_today >= FREE_SESSIONS_PER_DAY) {
             if (pendingCredit) {
                 // Student already paid — go straight to drill, no re-payment
@@ -123,7 +122,8 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
             current_band,
             extra_drill_credits: student.extra_drill_credits,
             can_buy_extra:      !pendingCredit && hasDCSForExtra && hasMomForExtra
-                                && drills_completed_today >= FREE_SESSIONS_PER_DAY,
+                                && drills_completed_today >= FREE_SESSIONS_PER_DAY
+                                && drills_completed_today < MAX_SESSIONS_PER_DAY,
             free_sessions:      FREE_SESSIONS_PER_DAY,
             extra_session_cost: EXTRA_SESSION_COST,
             dcs_threshold:      DCS_EXTRA_THRESHOLD

@@ -32,16 +32,16 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             where: { student_id: student.id }
         });
 
-        const practicedSessions = await prisma.drillSession.findMany({
-            where: {
-                student_id: student.id,
-                status:     { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] },
-                created_at: { gte: todayStartIST() }
-            }
-        });
-
-        // DB enum values are already uppercase — build keys directly
-        const practicedSet = new Set(practicedSessions.map(s => `${s.skill}-${s.sub_skill}`));
+        // Cursor = total all-time completed drills. Persists across days without a DB column.
+        // Each completion advances the cursor by 1; the next fetch starts one step ahead.
+        const [totalCompleted, todayCompleted] = await Promise.all([
+            prisma.drillSession.count({
+                where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] } }
+            }),
+            prisma.drillSession.count({
+                where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: todayStartIST() } }
+            })
+        ]);
 
 
         const items: DrillItem[] = [];
@@ -50,9 +50,8 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             const skillBandScore = Number(matrix.band_score || 0);
             const subScores = (matrix.sub_scores as Record<string, any>) || {};
 
-            // Use DB enum values for sub_skill (uppercase) so the practicedSet filter
-            // matches correctly. Use the *Score-suffixed keys from sub_scores JSONB
-            // (grammarScore, taskResponseScore, etc.) to match what IA/diagnostic stores.
+            // Use DB enum values (uppercase) for sub_skill.
+            // *Score-suffixed keys match what IA/diagnostic stores in sub_scores JSONB.
             if (matrix.skill === 'WRITING') {
                 const subs: { sub: string; scoreKey: string }[] = [
                     { sub: 'GRAMMAR',       scoreKey: 'grammarScore' },
@@ -131,18 +130,29 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             }
         }
 
-        // Items now use DB enum values (uppercase) — keys match practicedSet directly
-        const recommended_drills = interleaved.filter(item =>
-            !practicedSet.has(`${item.skill}-${item.sub_skill}`)
-        );
+        // Round-robin cursor: slice the ordered array starting at (totalCompleted % N).
+        // This persists across days — each completion advances the cursor by 1 globally,
+        // so students never repeat the same rotation position two days in a row.
+        const N = interleaved.length;
+        const MAX_DRILLS_PER_DAY = 4; // 3 free + 1 purchasable extra
+        const remainingToday = Math.max(0, MAX_DRILLS_PER_DAY - todayCompleted);
+        const startIndex     = N > 0 ? totalCompleted % N : 0;
+
+        const recommended_drills: DrillItem[] = [];
+        for (let i = 0; i < remainingToday && N > 0; i++) {
+            recommended_drills.push(interleaved[(startIndex + i) % N]);
+        }
 
         return res.json({
             success: true,
             recommended_drills,
-            daily_sessions_completed: practicedSessions.length,
+            daily_sessions_completed: todayCompleted,
+            total_completed: totalCompleted,
             message: recommended_drills.length > 0
                 ? "Here are your prioritised drills."
-                : "You have completed all available sub-skills for today!"
+                : todayCompleted >= MAX_DRILLS_PER_DAY
+                    ? "Daily limit reached. Come back tomorrow for your next drills!"
+                    : "You have completed all available sub-skills for today!"
         });
 
     } catch (error) {
@@ -623,7 +633,7 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
         const DRILL_PER_CORRECT = 10;
         const correctCount      = Math.max(0, parseInt(correct_answers ?? '0'));
         const momentum_earned   = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
-        const extraSession      = (is_extra_session === true || is_extra_session === 'true') || session.is_extra_session;
+        const extraSession      = session.is_extra_session; // trust DB flag only — ignore client body
         const consumeCredit     = extraSession && student.extra_drill_credits > 0;
         const totalQuestions    = (session.question_ids as string[] ?? []).length || 5;
 
