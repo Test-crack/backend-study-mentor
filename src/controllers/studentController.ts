@@ -206,6 +206,88 @@ export async function getDiagnosticReport(req: AuthRequest, res: Response) {
 }
 
 /**
+ * GET /api/student/mock-history
+ * Returns all COMPLETED mock sessions, newest first.
+ * Includes scores[] array, real_band_score (IELTS overall), and momentum_awarded.
+ */
+export async function getMockHistory(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const sessions = await prisma.mocksessions.findMany({
+            where: { student_id: student.id, status: MockSessionStatus.COMPLETED },
+            orderBy: { created_at: 'desc' },
+            select: {
+                id: true,
+                month_year: true,
+                attempt_type: true,
+                status: true,
+                time_submitted_at: true,
+                scores: true,
+                real_band_score: true,
+                momentum_awarded: true,
+            },
+        });
+
+        return res.json({
+            success: true,
+            data: sessions.map(s => ({
+                ...s,
+                real_band_score: s.real_band_score != null ? parseFloat(String(s.real_band_score)) : null,
+            })),
+        });
+    } catch (error) {
+        console.error('[StudentController] getMockHistory error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * GET /api/student/ia-history
+ * Returns all COMPLETED IA sessions, newest first.
+ * Each entry includes the full scores[] array (SectionScore) with AI feedback and momentum_awarded.
+ */
+export async function getIAHistory(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const sessions = await prisma.iASession.findMany({
+            where: { student_id: student.id, status: IASessionStatus.COMPLETED },
+            orderBy: { ia_date: 'desc' },
+            select: {
+                id: true,
+                ia_number: true,
+                ia_date: true,
+                time_submitted_at: true,
+                scores: true,
+                momentum_awarded: true,
+            },
+        });
+
+        return res.json({
+            success: true,
+            data: sessions.map(s => ({
+                ...s,
+                ia_date: s.ia_date instanceof Date
+                    ? s.ia_date.toISOString().split('T')[0]
+                    : s.ia_date,
+            })),
+        });
+    } catch (error) {
+        console.error('[StudentController] getIAHistory error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
  * GET /api/student/pending-notifications
  * Returns today's pending/in-progress IA + this month's pending/in-progress Mock.
  * Used by the DailyNotices dashboard widget.

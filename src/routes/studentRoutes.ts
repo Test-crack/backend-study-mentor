@@ -5,7 +5,7 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
-import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport, getPendingNotifications } from '../controllers/studentController';
+import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport, getPendingNotifications, getIAHistory, getMockHistory } from '../controllers/studentController';
 import { getRecommendations, getDrillRecommendation } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
 import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
@@ -56,6 +56,12 @@ router.get('/lexigrid-words', getLexiGridWords);
 
 // GET /api/student/assessment-history — IA + Mock entries, newest first
 router.get('/assessment-history', getAssessmentHistory);
+
+// GET /api/student/ia-history — Completed IA sessions with full scores & AI feedback
+router.get('/ia-history', getIAHistory);
+
+// GET /api/student/mock-history — Completed mock sessions with skill/sub-skill scores
+router.get('/mock-history', getMockHistory);
 
 // GET /api/student/diagnostic-report — Initial diagnostic baseline per skill
 router.get('/diagnostic-report', getDiagnosticReport);
