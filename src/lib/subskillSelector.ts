@@ -129,7 +129,7 @@ function getBandForPair(
 
 // ─── Core selection ───────────────────────────────────────────────────────────
 
-async function _selectInternal(studentId: string): Promise<SelectedSubSkills> {
+async function _selectInternal(studentId: string, excludeSubSkills?: Set<string>): Promise<SelectedSubSkills> {
 
     // ── 1. Drill history: aggregate accuracy per (skill, sub_skill) ───────────
     const drillGroups = await prisma.drillSession.groupBy({
@@ -148,9 +148,12 @@ async function _selectInternal(studentId: string): Promise<SelectedSubSkills> {
         competencyRows.map(r => ({ skill: String(r.skill), band_score: r.band_score, sub_scores: r.sub_scores }))
     );
 
+    const shouldExclude = (sub_skill: string) =>
+        excludeSubSkills != null && excludeSubSkills.size > 0 && excludeSubSkills.has(sub_skill);
+
     // ── 3. Score every drilled (skill, sub_skill) pair ────────────────────────
     const drilledScored: ScoredPair[] = drillGroups
-        .filter(g => (g._sum.total_questions ?? 0) > 0)
+        .filter(g => (g._sum.total_questions ?? 0) > 0 && !shouldExclude(String(g.sub_skill)))
         .map(g => {
             const total    = g._sum.total_questions ?? 1;
             const correct  = g._sum.correct_answers ?? 0;
@@ -178,7 +181,7 @@ async function _selectInternal(studentId: string): Promise<SelectedSubSkills> {
 
     // Score ALL IA-targetable pairs that the student has NOT yet drilled
     const matrixScored: ScoredPair[] = ALL_IA_PAIRS
-        .filter(p => !drilledKeySet.has(pairKey(p.skill, p.sub_skill)))
+        .filter(p => !drilledKeySet.has(pairKey(p.skill, p.sub_skill)) && !shouldExclude(p.sub_skill))
         .map(p => {
             const band = getBandForPair(p.skill, p.sub_skill, competencyLookup);
             return {
@@ -190,7 +193,26 @@ async function _selectInternal(studentId: string): Promise<SelectedSubSkills> {
         .sort((a, b) => b.weakness - a.weakness);
 
     // Merge: drilled (if any) first, then best from matrix
-    const merged: ScoredPair[] = [...drilledScored, ...matrixScored];
+    // Fallback: if all pairs are excluded, ignore the exclusion set and use full pool
+    let merged: ScoredPair[] = [...drilledScored, ...matrixScored];
+    if (merged.length < 2 && excludeSubSkills && excludeSubSkills.size > 0) {
+        const allDrilledScored: ScoredPair[] = drillGroups
+            .filter(g => (g._sum.total_questions ?? 0) > 0)
+            .map(g => {
+                const total    = g._sum.total_questions ?? 1;
+                const correct  = g._sum.correct_answers ?? 0;
+                const accuracy = correct / total;
+                const band     = getBandForPair(String(g.skill), String(g.sub_skill), competencyLookup);
+                return { skill: String(g.skill), sub_skill: String(g.sub_skill), weakness: weaknessScore(accuracy, band) };
+            })
+            .sort((a, b) => b.weakness - a.weakness);
+        const allDrilledKeySet = new Set(allDrilledScored.map(p => pairKey(p.skill, p.sub_skill)));
+        const allMatrixScored: ScoredPair[] = ALL_IA_PAIRS
+            .filter(p => !allDrilledKeySet.has(pairKey(p.skill, p.sub_skill)))
+            .map(p => ({ skill: p.skill, sub_skill: p.sub_skill, weakness: weaknessScore(1.0, getBandForPair(p.skill, p.sub_skill, competencyLookup)) }))
+            .sort((a, b) => b.weakness - a.weakness);
+        merged = [...allDrilledScored, ...allMatrixScored];
+    }
 
     if (merged.length >= 2) {
         return {
@@ -234,12 +256,15 @@ async function _selectInternal(studentId: string): Promise<SelectedSubSkills> {
 /**
  * Selects the 2 most-needed (skill, sub_skill) pairs for the student's next IA.
  *
+ * @param excludeSubSkills - Optional set of sub_skill strings to skip (2-week uniqueness rule).
+ *                           If all pairs are excluded, the constraint is relaxed automatically.
+ *
  * Never throws — any Prisma or runtime error falls back to HARDCODED_DEFAULTS
  * so the IA gate never fails due to the selector.
  */
-export async function selectPrioritySubSkills(studentId: string): Promise<SelectedSubSkills> {
+export async function selectPrioritySubSkills(studentId: string, excludeSubSkills?: Set<string>): Promise<SelectedSubSkills> {
     try {
-        const result = await _selectInternal(studentId);
+        const result = await _selectInternal(studentId, excludeSubSkills);
 
         // Final type-safety guard: ensure both pairs are non-null valid objects
         const primary   = result.primary   ?? HARDCODED_DEFAULTS[0];

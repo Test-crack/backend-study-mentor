@@ -260,15 +260,20 @@ export async function getIAHistory(req: AuthRequest, res: Response) {
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const sessions = await prisma.iASession.findMany({
-            where: { student_id: student.id, status: IASessionStatus.COMPLETED },
+            where: {
+                student_id: student.id,
+                status: { in: [IASessionStatus.COMPLETED, IASessionStatus.MISSED] },
+            },
             orderBy: { ia_date: 'desc' },
             select: {
                 id: true,
                 ia_number: true,
                 ia_date: true,
+                status: true,
                 time_submitted_at: true,
                 scores: true,
                 momentum_awarded: true,
+                carry_forward_subskills: true,
             },
         });
 
@@ -328,6 +333,31 @@ export async function getPendingNotifications(req: AuthRequest, res: Response) {
                 ia_date:         todayStr,
                 window_closes_at: iaSession.window_closes_at,
                 answers_saved:   Object.keys(answers).length,
+            });
+        }
+
+        // ── Recently missed IAs (last 7 days, newest first, max 3) ─────────────
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const recentMissed = await prisma.iASession.findMany({
+            where: {
+                student_id: student.id,
+                status:     IASessionStatus.MISSED,
+                ia_date:    { gte: sevenDaysAgo },
+            },
+            orderBy: { ia_date: 'desc' },
+            take: 3,
+            select: { id: true, ia_number: true, ia_date: true, momentum_awarded: true },
+        });
+
+        for (const missed of recentMissed) {
+            const missedDateStr = missed.ia_date instanceof Date
+                ? missed.ia_date.toISOString().split('T')[0]
+                : String(missed.ia_date);
+            notifications.push({
+                type:               'IA_MISSED',
+                ia_number:          missed.ia_number,
+                ia_date:            missedDateStr,
+                momentum_deducted:  Math.abs(missed.momentum_awarded ?? 20),
             });
         }
 

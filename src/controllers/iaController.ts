@@ -122,25 +122,58 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         const todayStr = toISTDateString(new Date());
 
         // ── Miss detection: mark stale PENDING / IN_PROGRESS sessions MISSED ──
+        // Escalating penalty: -20 for 1st consecutive miss, -40 for 2nd+.
+        // "Consecutive" is determined by counting MISSED sessions strictly before
+        // each stale session's ia_date within the last 30 days — a COMPLETED
+        // session in between resets the streak.
         const staleSessions = await prisma.iASession.findMany({
             where: {
                 student_id: student.id,
                 ia_date: { lt: new Date(todayStr) },
                 status: { in: ['PENDING', 'IN_PROGRESS'] as any }
             },
-            select: { id: true, selected_subskills: true }
+            orderBy: { ia_date: 'asc' },        // process oldest first for correct escalation
+            select: { id: true, selected_subskills: true, ia_date: true, ia_number: true }
         });
+
+        const penaltiesApplied: { ia_number: number; penalty: number; ia_date: string }[] = [];
+
         if (staleSessions.length > 0) {
-            await Promise.all(staleSessions.map(s =>
-                prisma.iASession.update({
-                    where: { id: s.id },
-                    data: { status: 'MISSED' as any, carry_forward_subskills: s.selected_subskills as any }
-                })
-            ));
-            await prisma.institute_students.update({
-                where: { id: student.id },
-                data: { momentum_score: { decrement: staleSessions.length * 20 } }
+            let totalDeduction = 0;
+
+            for (const stale of staleSessions) {
+                const penalty = 20;   // flat -20 per missed IA
+                totalDeduction += penalty;
+
+                await prisma.iASession.update({
+                    where: { id: stale.id },
+                    data: {
+                        status:                  'MISSED' as any,
+                        carry_forward_subskills: stale.selected_subskills as any,
+                        momentum_awarded:        -penalty,
+                    },
+                });
+
+                penaltiesApplied.push({
+                    ia_number: stale.ia_number,
+                    penalty,
+                    ia_date: stale.ia_date instanceof Date
+                        ? stale.ia_date.toISOString().split('T')[0]
+                        : String(stale.ia_date),
+                });
+            }
+
+            // Clamp: never let momentum go below 0
+            const current = await prisma.institute_students.findUnique({
+                where: { id: student.id }, select: { momentum_score: true }
             });
+            const safeDeduction = Math.min(totalDeduction, current?.momentum_score ?? 0);
+            if (safeDeduction > 0) {
+                await prisma.institute_students.update({
+                    where: { id: student.id },
+                    data: { momentum_score: { decrement: safeDeduction } },
+                });
+            }
         }
 
         // ── Prerequisites (non-DCS gates) ─────────────────────────────────────
@@ -222,6 +255,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         return res.json({
             success: true,
             missed_count: staleSessions.length,
+            penalties_applied: penaltiesApplied,
             has_active_session: !!todayActiveSession,
             has_completed_session: !!todayCompletedSession,
             completed_session_scores: todayCompletedSession?.scores ?? null,
@@ -548,8 +582,53 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             });
         }
 
-        // ── 4. New session: select sub-skills + fetch questions ───────────────
-        const { primary, secondary } = await selectPrioritySubSkills(student.id);
+        // ── 4. New session: carry-forward + 2-week uniqueness + select ──────────
+
+        // 4a. Sub-skills from COMPLETED sessions in the last 14 days — don't repeat
+        const cutoff14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+        const recentCompleted = await prisma.iASession.findMany({
+            where: { student_id: student.id, status: 'COMPLETED' as any, ia_date: { gte: cutoff14 } },
+            select: { selected_subskills: true },
+        });
+        const recentlyTestedSet = new Set<string>(
+            recentCompleted.flatMap(s => (s.selected_subskills as any[] ?? []).map((x: any) => x.sub_skill))
+        );
+
+        // 4b. Carry-forward from most recent MISSED session (only if not recently completed)
+        const lastMissed = await prisma.iASession.findFirst({
+            where: { student_id: student.id, status: 'MISSED' as any },
+            orderBy: { ia_date: 'desc' },
+            select: { carry_forward_subskills: true },
+        });
+        const carryForward: { skill: string; sub_skill: string }[] = (
+            (lastMissed?.carry_forward_subskills as any[] ?? []) as { skill: string; sub_skill: string }[]
+        ).filter(s => !recentlyTestedSet.has(s.sub_skill));
+
+        // 4c. Build final 2-subskill list: carry-forward has priority
+        let selectedSubskills: { skill: string; sub_skill: string }[];
+
+        if (carryForward.length >= 2) {
+            selectedSubskills = carryForward.slice(0, 2);
+        } else if (carryForward.length === 1) {
+            const exclude = new Set([...recentlyTestedSet, carryForward[0].sub_skill]);
+            const fresh = await selectPrioritySubSkills(student.id, exclude);
+            selectedSubskills = [carryForward[0], { skill: fresh.primary.skill, sub_skill: fresh.primary.sub_skill }];
+        } else {
+            const fresh = await selectPrioritySubSkills(student.id, recentlyTestedSet);
+            selectedSubskills = [
+                { skill: fresh.primary.skill, sub_skill: fresh.primary.sub_skill },
+                { skill: fresh.secondary.skill, sub_skill: fresh.secondary.sub_skill },
+            ];
+        }
+
+        // Dedup guard — if both resolve to same sub_skill (edge case), force a fresh pick
+        if (selectedSubskills[0].sub_skill === selectedSubskills[1].sub_skill) {
+            const exclude = new Set([...recentlyTestedSet, selectedSubskills[0].sub_skill]);
+            const fallback = await selectPrioritySubSkills(student.id, exclude);
+            selectedSubskills[1] = { skill: fallback.primary.skill, sub_skill: fallback.primary.sub_skill };
+        }
+
+        const [primary, secondary] = selectedSubskills;
 
         const competency = await prisma.studentCompetencyMatrix.findMany({
             where: { student_id: student.id },
@@ -569,11 +648,6 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
         const questionIdsConfig = [
             { skill: primary.skill, sub_skill: primary.sub_skill, ids: rawSection1.questions.map((q: any) => q.id) },
             { skill: secondary.skill, sub_skill: secondary.sub_skill, ids: rawSection2.questions.map((q: any) => q.id) }
-        ];
-
-        const selectedSubskills = [
-            { skill: primary.skill, sub_skill: primary.sub_skill },
-            { skill: secondary.skill, sub_skill: secondary.sub_skill }
         ];
 
         // ── 5. Create session row ─────────────────────────────────────────────
