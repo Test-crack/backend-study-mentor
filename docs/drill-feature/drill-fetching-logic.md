@@ -1,7 +1,7 @@
 # Drill Fetching Logic - Complete Documentation
 
 ## Overview
-This document explains how drills are fetched, ordered, and prioritized for students in the frontend based on their competency scores.
+This document explains how drills are fetched, ordered, and prioritized for students in the frontend based on their competency scores using a **persistent cursor-based round-robin system**.
 
 ---
 
@@ -9,7 +9,7 @@ This document explains how drills are fetched, ordered, and prioritized for stud
 
 **Endpoint:** `GET /api/student/next-action-drill`
 
-**Purpose:** Returns a prioritized list of drills for the student to practice, ordered by weakest skills first.
+**Purpose:** Returns a prioritized list of drills for the student to practice, ordered by weakest skills first, with a rotating cursor that persists across days.
 
 ---
 
@@ -32,21 +32,30 @@ const matrices = await prisma.studentCompetencyMatrix.findMany({
 
 ---
 
-### 2. Check Today's Completed Drills
+### 2. Count Completed Drills (All-Time & Today)
 ```typescript
-const practicedSessions = await prisma.drillSession.findMany({
-  where: {
-    student_id: student.id,
-    status: { in: ['DRILL_DONE', 'APPLY_DONE'] },
-    created_at: { gte: todayStartIST() }
-  }
-});
+const [totalCompleted, todayCompleted] = await Promise.all([
+  // All-time completed drills (cursor position)
+  prisma.drillSession.count({
+    where: { 
+      student_id: student.id, 
+      status: { in: ['DRILL_DONE', 'APPLY_DONE'] } 
+    }
+  }),
+  // Today's completed drills (daily limit check)
+  prisma.drillSession.count({
+    where: { 
+      student_id: student.id, 
+      status: { in: ['DRILL_DONE', 'APPLY_DONE'] },
+      created_at: { gte: todayStartIST() }
+    }
+  })
+]);
 ```
 
-**Creates a Set:**
-```typescript
-const practicedSet = new Set(['WRITING-GRAMMAR', 'SPEAKING-FLUENCY', ...]);
-```
+**Key Difference from Old Logic:**
+- ❌ Old: Filtered out today's completed drills from the list
+- ✅ New: Uses **all-time count as a persistent cursor** that advances with each completion
 
 ---
 
@@ -188,15 +197,54 @@ while (any queue has items) {
 
 ---
 
-### 7. Filter Out Completed Drills
+### 7. Apply Cursor-Based Rotation (NEW LOGIC)
+
+**The Game-Changer:** Instead of filtering out completed drills, we use a **persistent cursor** that rotates through the entire drill array.
 
 ```typescript
-const recommended_drills = interleaved.filter(item =>
-  !practicedSet.has(`${item.skill}-${item.sub_skill}`)
-);
+const N = interleaved.length;  // Total drills (e.g., 10)
+const MAX_DRILLS_PER_DAY = 4;  // 3 free + 1 purchasable extra
+
+// Calculate remaining drills for today
+const remainingToday = Math.max(0, MAX_DRILLS_PER_DAY - todayCompleted);
+
+// Cursor position based on ALL-TIME completions
+const startIndex = N > 0 ? totalCompleted % N : 0;
+
+// Slice the next drills from cursor position
+const recommended_drills = [];
+for (let i = 0; i < remainingToday && N > 0; i++) {
+  recommended_drills.push(interleaved[(startIndex + i) % N]);
+}
 ```
 
-**Removes drills already completed today.**
+**How It Works:**
+
+**Day 1:** Student has completed 0 drills all-time
+- Cursor: `0 % 10 = 0`
+- Shows: Drills [0, 1, 2, 3]
+- Student completes 2 drills → `totalCompleted = 2`
+
+**Day 2:** Student has completed 2 drills all-time
+- Cursor: `2 % 10 = 2`
+- Shows: Drills [2, 3, 4, 5]
+- Student completes 3 drills → `totalCompleted = 5`
+
+**Day 3:** Student has completed 5 drills all-time
+- Cursor: `5 % 10 = 5`
+- Shows: Drills [5, 6, 7, 8]
+- Student completes 4 drills → `totalCompleted = 9`
+
+**Day 4:** Student has completed 9 drills all-time
+- Cursor: `9 % 10 = 9`
+- Shows: Drills [9, 0, 1, 2] ← Wraps around!
+
+**Benefits:**
+- ✅ **Never repeats same position** across days
+- ✅ **Ensures variety** in daily practice
+- ✅ **Persists without DB column** (calculated on-the-fly)
+- ✅ **Covers all skills** over time
+- ✅ **Students can practice same drill** on different days (no daily filter)
 
 ---
 
@@ -217,12 +265,30 @@ const recommended_drills = interleaved.filter(item =>
       "sub_skill": "FLUENCY",
       "skill_band_score": 6.0,
       "sub_skill_score": 5.0
+    },
+    {
+      "skill": "LISTENING",
+      "sub_skill": "LISTENING",
+      "skill_band_score": 6.0,
+      "sub_skill_score": 6.0
+    },
+    {
+      "skill": "READING",
+      "sub_skill": "READING",
+      "skill_band_score": 6.5,
+      "sub_skill_score": 6.5
     }
   ],
   "daily_sessions_completed": 2,
+  "total_completed": 15,
   "message": "Here are your prioritised drills."
 }
 ```
+
+**Response Messages:**
+- `remainingToday > 0`: "Here are your prioritised drills."
+- `todayCompleted >= 4`: "Daily limit reached. Come back tomorrow for your next drills!"
+- `remainingToday = 0` (other): "You have completed all available sub-skills for today!"
 
 ---
 
@@ -233,6 +299,7 @@ const recommended_drills = interleaved.filter(item =>
 2. **Lowest skill_band_score** (tiebreaker)
 3. **Round-robin distribution** across skills
 4. **Alphabetical skill name** (deterministic fallback)
+5. **Cursor-based rotation** (persists across days)
 
 ### Example Scenario:
 
@@ -242,17 +309,41 @@ const recommended_drills = interleaved.filter(item =>
 - Reading: 6.5
 - Listening: 6.0
 
-**Drill Order:**
-1. Writing - Grammar (4.5) ← Weakest
-2. Writing - Vocabulary (5.0)
-3. Speaking - Fluency (5.0)
-4. Writing - Coherence (5.5)
-5. Speaking - Grammar (5.5)
-6. Listening - Listening (6.0)
-7. Speaking - Vocabulary (6.0)
-8. Writing - Task Response (6.0)
-9. Reading - Reading (6.5)
-10. Speaking - Pronunciation (6.5)
+**Master Drill Array (Interleaved):**
+```javascript
+[
+  0: Writing - Grammar (4.5),           // Weakest overall
+  1: Speaking - Fluency (5.0),
+  2: Writing - Vocabulary (5.0),
+  3: Listening - Listening (6.0),
+  4: Writing - Coherence (5.5),
+  5: Speaking - Grammar (5.5),
+  6: Reading - Reading (6.5),
+  7: Writing - Task Response (6.0),
+  8: Speaking - Vocabulary (6.0),
+  9: Speaking - Pronunciation (6.5)
+]
+```
+
+**Day 1 (totalCompleted = 0):**
+- Cursor: `0 % 10 = 0`
+- Shows: [0, 1, 2, 3] → Grammar, Fluency, Vocabulary, Listening
+- Student completes 2 → `totalCompleted = 2`
+
+**Day 2 (totalCompleted = 2):**
+- Cursor: `2 % 10 = 2`
+- Shows: [2, 3, 4, 5] → Vocabulary, Listening, Coherence, Grammar (Speaking)
+- Student completes 3 → `totalCompleted = 5`
+
+**Day 3 (totalCompleted = 5):**
+- Cursor: `5 % 10 = 5`
+- Shows: [5, 6, 7, 8] → Grammar (Speaking), Reading, Task Response, Vocabulary (Speaking)
+- Student completes 4 → `totalCompleted = 9`
+
+**Day 4 (totalCompleted = 9):**
+- Cursor: `9 % 10 = 9`
+- Shows: [9, 0, 1, 2] → Pronunciation, Grammar (Writing), Fluency, Vocabulary (Writing)
+- Wraps around to beginning!
 
 ---
 
@@ -301,16 +392,24 @@ const level = band <= 4.5 ? 'BEGINNER'
 ## Key Features
 
 ### ✅ Adaptive Prioritization
-- Always shows weakest skills first
+- Always shows weakest skills first in the master array
 - Updates based on latest competency scores
 
-### ✅ Daily Reset
-- Completed drills filter resets at midnight IST
-- Students can practice same drills on different days
+### ✅ Persistent Cursor System (NEW)
+- **Cursor = totalCompleted % N**
+- Advances with each drill completion (all-time)
+- Never shows same starting position two days in a row
+- No DB column needed (calculated on-the-fly)
+
+### ✅ Daily Limit Enforcement
+- **Max 4 drills per day** (3 free + 1 purchasable extra)
+- `remainingToday = MAX_DRILLS_PER_DAY - todayCompleted`
+- Resets at midnight IST
 
 ### ✅ Round-Robin Distribution
 - Prevents skill fatigue
 - Ensures variety in practice
+- Covers all skills over time
 
 ### ✅ Sub-Skill Granularity
 - Writing & Speaking: 4 sub-skills each
@@ -320,6 +419,7 @@ const level = band <= 4.5 ? 'BEGINNER'
 - Primary: Sub-skill score (most important)
 - Secondary: Overall skill band score
 - Tertiary: Skill name (alphabetical)
+- Quaternary: Cursor rotation (temporal)
 
 ---
 
@@ -327,9 +427,10 @@ const level = band <= 4.5 ? 'BEGINNER'
 
 ### Typical Flow:
 
-1. **Student Opens Dashboard**
+1. **Student Opens Dashboard (Day 1, totalCompleted = 0)**
    ```javascript
    GET /api/student/next-action-drill
+   // Response: 4 drills starting from index 0
    ```
 
 2. **Frontend Displays First Drill**
@@ -352,6 +453,7 @@ const level = band <= 4.5 ? 'BEGINNER'
    ```javascript
    POST /api/drills/session/:id/complete
    Body: { answers: {...}, correct_answers: 4 }
+   // totalCompleted increments to 1
    ```
 
 5. **Show Recommendation**
@@ -360,10 +462,18 @@ const level = band <= 4.5 ? 'BEGINNER'
    // Display video recommendation
    ```
 
-6. **Refresh Drill List**
+6. **Refresh Drill List (Still Day 1)**
    ```javascript
    GET /api/student/next-action-drill
-   // Now excludes completed WRITING-GRAMMAR
+   // Response: 3 remaining drills (same starting position)
+   // todayCompleted = 1, remainingToday = 3
+   ```
+
+7. **Next Day (Day 2, totalCompleted = 2)**
+   ```javascript
+   GET /api/student/next-action-drill
+   // Response: 4 NEW drills starting from index 2
+   // Cursor advanced! Different drills shown.
    ```
 
 ---
@@ -399,13 +509,16 @@ uuid-a  | WRITING    | GRAMMAR   | INTERMEDIATE | VIDEO | https://...
 
 ### No Competency Matrix
 - Returns empty array
-- Message: "Complete diagnostic test first"
+- `recommended_drills: []`
 
-### All Drills Completed Today
+### Daily Limit Reached (4 drills completed today)
 ```json
 {
+  "success": true,
   "recommended_drills": [],
-  "message": "You have completed all available sub-skills for today!"
+  "daily_sessions_completed": 4,
+  "total_completed": 27,
+  "message": "Daily limit reached. Come back tomorrow for your next drills!"
 }
 ```
 
@@ -419,18 +532,69 @@ uuid-a  | WRITING    | GRAMMAR   | INTERMEDIATE | VIDEO | https://...
 sub_skill_score: Number(subScores[scoreKey] ?? skillBandScore)
 ```
 
+### Cursor Wrap-Around
+- When `totalCompleted >= N`, cursor wraps: `totalCompleted % N`
+- Example: 10 drills, completed 23 → cursor at `23 % 10 = 3`
+- Ensures infinite rotation through all drills
+
 ---
 
 ## Summary
 
-**The drill fetching logic prioritizes student weaknesses:**
+**The drill fetching logic uses a persistent cursor-based rotation system:**
 
 1. Fetches competency matrix (band scores + sub-scores)
-2. Builds drill items for all skills/sub-skills
-3. Sorts within each skill (weakest first)
-4. Prioritizes skills by weakest score
-5. Interleaves across skills (round-robin)
-6. Filters out today's completed drills
-7. Returns ordered array to frontend
+2. Counts all-time completed drills (`totalCompleted`) and today's drills (`todayCompleted`)
+3. Builds drill items for all skills/sub-skills
+4. Sorts within each skill (weakest first)
+5. Prioritizes skills by weakest score
+6. Interleaves across skills (round-robin)
+7. **Applies cursor rotation:** `startIndex = totalCompleted % N`
+8. Returns next 4 drills (or remaining for today) from cursor position
 
-**Result:** Students always see their weakest areas first, with variety across different skills.
+**Result:** 
+- ✅ Students always see their weakest areas first in the master array
+- ✅ Cursor advances with each completion, ensuring variety across days
+- ✅ Never repeats same starting position two days in a row
+- ✅ Daily limit of 4 drills enforced
+- ✅ Covers all skills over time through rotation
+
+---
+
+## Visual Example: Cursor Movement
+
+```
+Master Array (10 drills, sorted by weakness):
+┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+│ 0 │ 1 │ 2 │ 3 │ 4 │ 5 │ 6 │ 7 │ 8 │ 9 │
+└───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+
+Day 1 (totalCompleted = 0):
+  ↓
+┌───┬───┬───┬───┐
+│ 0 │ 1 │ 2 │ 3 │  ← Shows these 4
+└───┴───┴───┴───┘
+Student completes 2 → totalCompleted = 2
+
+Day 2 (totalCompleted = 2):
+      ↓
+    ┌───┬───┬───┬───┐
+    │ 2 │ 3 │ 4 │ 5 │  ← Shows these 4
+    └───┴───┴───┴───┘
+Student completes 3 → totalCompleted = 5
+
+Day 3 (totalCompleted = 5):
+              ↓
+            ┌───┬───┬───┬───┐
+            │ 5 │ 6 │ 7 │ 8 │  ← Shows these 4
+            └───┴───┴───┴───┘
+Student completes 4 → totalCompleted = 9
+
+Day 4 (totalCompleted = 9):
+                      ↓
+                    ┌───┬───┬───┬───┬───┐
+                    │ 9 │ 0 │ 1 │ 2 │...│  ← Wraps around!
+                    └───┴───┴───┴───┴───┘
+```
+
+**Key Insight:** The cursor position is **never stored in the database**—it's calculated on-the-fly using `totalCompleted % N`, making it stateless yet persistent!

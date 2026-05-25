@@ -2,7 +2,18 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { getValidatedStreak } from '../lib/streak';
-import { AssessmentModeType } from '@prisma/client';
+import { AssessmentModeType, IASessionStatus, MockSessionStatus } from '@prisma/client';
+import { currentISTDate } from '../lib/timezone';
+
+function todayISTString(): string {
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const now = new Date(Date.now() + IST_OFFSET_MS);
+    return [
+        now.getUTCFullYear(),
+        String(now.getUTCMonth() + 1).padStart(2, '0'),
+        String(now.getUTCDate()).padStart(2, '0'),
+    ].join('-');
+}
 
 /**
  * Get the authenticated student's speaking practice history
@@ -190,6 +201,86 @@ export async function getDiagnosticReport(req: AuthRequest, res: Response) {
         return res.json({ success: true, data: report });
     } catch (error) {
         console.error('[StudentController] getDiagnosticReport error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+/**
+ * GET /api/student/pending-notifications
+ * Returns today's pending/in-progress IA + this month's pending/in-progress Mock.
+ * Used by the DailyNotices dashboard widget.
+ */
+export async function getPendingNotifications(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const todayStr  = todayISTString();            // "YYYY-MM-DD"
+        const monthYear = todayStr.slice(0, 7);        // "YYYY-MM"
+        const todayDate = currentISTDate();            // midnight-UTC Date matching ia_date storage
+
+        const notifications: Record<string, any>[] = [];
+
+        // ── IA — look up today's session via the unique (student_id, ia_date) key ──
+        const iaSession = await prisma.iASession.findUnique({
+            where: { student_id_ia_date: { student_id: student.id, ia_date: todayDate } },
+            select: { id: true, ia_number: true, ia_date: true, status: true, answers: true, window_closes_at: true },
+        });
+
+        if (iaSession?.status === IASessionStatus.PENDING) {
+            notifications.push({
+                type:            'IA_PENDING',
+                ia_number:       iaSession.ia_number,
+                ia_date:         todayStr,
+                window_closes_at: iaSession.window_closes_at,
+            });
+        } else if (iaSession?.status === IASessionStatus.IN_PROGRESS) {
+            const answers = (iaSession.answers as Record<string, any>) ?? {};
+            notifications.push({
+                type:            'IA_IN_PROGRESS',
+                ia_number:       iaSession.ia_number,
+                session_id:      iaSession.id,
+                ia_date:         todayStr,
+                window_closes_at: iaSession.window_closes_at,
+                answers_saved:   Object.keys(answers).length,
+            });
+        }
+
+        // ── Mock — look up this month's PENDING or IN_PROGRESS session ──
+        const mockSession = await prisma.mocksessions.findFirst({
+            where: {
+                student_id: student.id,
+                month_year: monthYear,
+                status:     { in: [MockSessionStatus.PENDING, MockSessionStatus.IN_PROGRESS] },
+            },
+            select: { id: true, month_year: true, attempt_type: true, status: true, answers: true, window_closes_at: true },
+        });
+
+        if (mockSession?.status === MockSessionStatus.PENDING) {
+            notifications.push({
+                type:            'MOCK_PENDING',
+                month_year:      mockSession.month_year,
+                attempt_type:    mockSession.attempt_type,
+                window_closes_at: mockSession.window_closes_at,
+            });
+        } else if (mockSession?.status === MockSessionStatus.IN_PROGRESS) {
+            const answers = (mockSession.answers as Record<string, any>) ?? {};
+            notifications.push({
+                type:            'MOCK_IN_PROGRESS',
+                session_id:      mockSession.id,
+                month_year:      mockSession.month_year,
+                attempt_type:    mockSession.attempt_type,
+                window_closes_at: mockSession.window_closes_at,
+                answers_saved:   Object.keys(answers).length,
+            });
+        }
+
+        return res.json({ success: true, notifications });
+    } catch (error) {
+        console.error('[StudentController] getPendingNotifications error:', error);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }

@@ -5,7 +5,7 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
-import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport } from '../controllers/studentController';
+import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport, getPendingNotifications } from '../controllers/studentController';
 import { getRecommendations, getDrillRecommendation } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
 import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
@@ -59,5 +59,8 @@ router.get('/assessment-history', getAssessmentHistory);
 
 // GET /api/student/diagnostic-report — Initial diagnostic baseline per skill
 router.get('/diagnostic-report', getDiagnosticReport);
+
+// GET /api/student/pending-notifications — Today's IA + this month's Mock status
+router.get('/pending-notifications', getPendingNotifications);
 
 export default router;
