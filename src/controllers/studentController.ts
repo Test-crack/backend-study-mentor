@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { getValidatedStreak } from '../lib/streak';
 import { AssessmentModeType, IASessionStatus, MockSessionStatus } from '@prisma/client';
 import { currentISTDate } from '../lib/timezone';
+import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
 
 function todayISTString(): string {
     const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -308,6 +309,10 @@ export async function getPendingNotifications(req: AuthRequest, res: Response) {
         const todayStr  = todayISTString();            // "YYYY-MM-DD"
         const monthYear = todayStr.slice(0, 7);        // "YYYY-MM"
         const todayDate = currentISTDate();            // midnight-UTC Date matching ia_date storage
+
+        // Always sweep for stale sessions first — this is the primary trigger
+        // for miss detection when the student only visits the dashboard (never the IA page).
+        await detectAndMarkMissedIAs(student.id);
 
         const notifications: Record<string, any>[] = [];
 
