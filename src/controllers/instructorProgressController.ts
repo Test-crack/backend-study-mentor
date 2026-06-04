@@ -451,7 +451,7 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
                     active_yesterday: yesterdayStudents.size,
                     avg_dcs_yesterday: avgDcsYesterday,
                 },
-                at_risk:      atRisk.slice(0, 6),
+                at_risk:      atRisk,   // no cap — frontend paginates
                 band_overview: bandOverview,
                 period_summary: {
                     ia_completed_last_7_days: iaLast7Days,
