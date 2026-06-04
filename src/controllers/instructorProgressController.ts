@@ -200,6 +200,7 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
             recentCompletedIAs,
             iaLast7Days,
             mockThisMonth,
+            lexigridToday,
         ] = await Promise.all([
             // today's drills (for active/DCS/unlocked counts)
             prisma.drillSession.findMany({
@@ -249,6 +250,15 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
                     status: 'COMPLETED' as any,
                     month_year: currentMonthYear,
                 },
+            }),
+            // LexiGrid completions today (for activity grid)
+            (prisma as any).studentGameScore.findMany({
+                where: {
+                    student_id:   { in: instStudentIds },
+                    game_type:    'LEXIGRID',
+                    session_date: { gte: todayStart },
+                },
+                select: { student_id: true, completed: true, words_solved: true },
             }),
         ]);
 
@@ -329,22 +339,30 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
             current_band: number | null;
         }> = [];
 
+        // Build LexiGrid lookup: student_id → { done, words }
+        const lexiByStudentId = new Map<string, { done: boolean; words: number }>();
+        for (const l of (lexigridToday as any[])) {
+            lexiByStudentId.set(l.student_id, { done: l.completed, words: l.words_solved ?? 0 });
+        }
+
         const nowMs = Date.now();
 
         for (const s of instStudents) {
             const flags: string[] = [];
             const user = userByInstId.get(s.id);
-            const missedCount = missedCountByStudentId.get(s.id) ?? 0;
-            const lastDrill   = lastDrillByStudentId.get(s.id) ?? null;
+            const missedCount  = missedCountByStudentId.get(s.id) ?? 0;
+            const lastDrill    = lastDrillByStudentId.get(s.id) ?? null;
+            // Use -1 as "never drilled" sentinel — avoids "999 days" in flag text
             const daysInactive = lastDrill
                 ? Math.floor((nowMs - lastDrill.getTime()) / (24 * 60 * 60 * 1000))
-                : 999;
+                : -1;
 
-            if (!s.isDiagnosed)                     flags.push('Not yet diagnosed');
-            if (daysInactive >= 3)                  flags.push(`No activity for ${daysInactive} day${daysInactive !== 1 ? 's' : ''}`);
-            if (missedCount >= 2)                   flags.push(`Missed ${missedCount} internal assessments`);
-            if (s.daily_streak === 0 && daysInactive > 1) flags.push('Streak broken');
-            if (s.momentum_score < 100)             flags.push('Low momentum');
+            if (!s.isDiagnosed)                              flags.push('Not yet diagnosed');
+            if (daysInactive === -1)                         flags.push('Never drilled');
+            else if (daysInactive >= 3)                      flags.push(`No activity for ${daysInactive} day${daysInactive !== 1 ? 's' : ''}`);
+            if (missedCount >= 2)                            flags.push(`Missed ${missedCount} internal assessments`);
+            if (s.daily_streak === 0 && daysInactive !== -1 && daysInactive > 1) flags.push('Streak broken');
+            if (s.momentum_score < 100)                      flags.push('Low momentum');
 
             // Band declining: last 2 IAs trending down
             const last2IAs = recentIAsByStudent.get(s.id) ?? [];
@@ -375,10 +393,13 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
             return b.days_inactive - a.days_inactive;
         });
 
+        // Build at-risk lookup for activity grid
+        const atRiskById = new Map(atRisk.map(r => [r.student_id, r]));
+
         // ── band_overview ─────────────────────────────────────────────────────
         const bandOverview = instStudents.map(s => {
-            const user        = userByInstId.get(s.id);
-            const competency  = competencyByStudentId.get(s.id) ?? [];
+            const user         = userByInstId.get(s.id);
+            const competency   = competencyByStudentId.get(s.id) ?? [];
             const current_band = computeCurrentBand(competency);
             const target_band  = s.target_band ? parseFloat(String(s.target_band)) : null;
             const gap          = current_band !== null && target_band !== null
@@ -386,16 +407,28 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
                 : null;
             const lastIADate   = lastIAByStudentId.get(s.id) ?? null;
             const last2IAs     = recentIAsByStudent.get(s.id) ?? [];
+            const drillsToday  = todayDrillsByStudent.get(s.id) ?? [];
+            const lexi         = lexiByStudentId.get(s.id) ?? null;
+            const riskEntry    = atRiskById.get(s.id) ?? null;
 
             return {
-                student_id:   s.id,
-                name:         user?.name ?? 'Unknown',
-                avatar:       (user as any)?.profileImage ?? null,
+                student_id:          s.id,
+                name:                user?.name ?? 'Unknown',
+                avatar:              (user as any)?.profileImage ?? null,
                 current_band,
                 target_band,
                 gap,
-                last_ia_date: lastIADate ? lastIADate.toISOString().split('T')[0] : null,
-                band_trend:   computeBandTrend(last2IAs),
+                last_ia_date:        lastIADate ? lastIADate.toISOString().split('T')[0] : null,
+                band_trend:          computeBandTrend(last2IAs),
+                // Per-student today fields — for the activity grid
+                drilled_today:       drillsToday.length > 0,
+                drills_count_today:  drillsToday.length,
+                streak:              s.daily_streak,
+                lexigrid_done_today: lexi?.done ?? false,
+                lexigrid_words_today: lexi?.words ?? null,
+                // At-risk signal embedded so grid can show a badge
+                is_at_risk:          riskEntry !== null,
+                risk_primary_flag:   riskEntry?.primary_flag ?? null,
             };
         });
 
