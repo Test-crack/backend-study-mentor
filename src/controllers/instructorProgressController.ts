@@ -330,6 +330,7 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
         // ── at_risk list ──────────────────────────────────────────────────────
         const atRisk: Array<{
             student_id: string;
+            user_id: string;
             name: string;
             avatar: string | null;
             flags: string[];
@@ -375,6 +376,7 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
 
             atRisk.push({
                 student_id:     s.id,
+                user_id:        s.user_id,
                 name:           user?.name ?? 'Unknown',
                 avatar:         (user as any)?.profileImage ?? null,
                 flags,
@@ -413,6 +415,7 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
 
             return {
                 student_id:          s.id,
+                user_id:             s.user_id,
                 name:                user?.name ?? 'Unknown',
                 avatar:              (user as any)?.profileImage ?? null,
                 current_band,
@@ -539,10 +542,10 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
                     time_submitted_at: true,
                 },
             }),
-            // All-time drills — for avg_dcs_lifetime
+            // All-time drills — for avg_dcs_lifetime + sub-skill breakdown
             prisma.drillSession.findMany({
                 where:  { student_id: instStudent.id },
-                select: { correct_answers: true, total_questions: true, sub_skill: true, created_at: true },
+                select: { correct_answers: true, total_questions: true, skill: true, sub_skill: true, created_at: true },
             }),
             // Last 30 days — for calendar + last 14 DCS chart (superset)
             prisma.drillSession.findMany({
@@ -591,18 +594,20 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         }
 
         // ── drill_stats.sub_skill_counts ─────────────────────────────────────
-        const subSkillMap = new Map<string, { count: number; correct: number; total: number }>();
+        // Key by "SKILL::SUB_SKILL" so WRITING/GRAMMAR and SPEAKING/GRAMMAR are tracked separately
+        const subSkillMap = new Map<string, { skill: string; sub_skill: string; count: number; correct: number; total: number }>();
         for (const d of allDrillsLifetime) {
-            const key   = String(d.sub_skill);
-            const entry = subSkillMap.get(key) ?? { count: 0, correct: 0, total: 0 };
+            const key   = `${String(d.skill)}::${String(d.sub_skill)}`;
+            const entry = subSkillMap.get(key) ?? { skill: String(d.skill), sub_skill: String(d.sub_skill), count: 0, correct: 0, total: 0 };
             entry.count++;
             entry.correct += d.correct_answers;
             entry.total   += d.total_questions;
             subSkillMap.set(key, entry);
         }
-        const subSkillCounts = Array.from(subSkillMap.entries())
-            .map(([sub_skill, e]) => ({
-                sub_skill,
+        const subSkillCounts = Array.from(subSkillMap.values())
+            .map(e => ({
+                skill:        e.skill,
+                sub_skill:    e.sub_skill,
                 count:        e.count,
                 avg_accuracy: e.total > 0 ? Math.round((e.correct / e.total) * 100) : 0,
             }))
