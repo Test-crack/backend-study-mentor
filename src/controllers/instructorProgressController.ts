@@ -520,6 +520,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
             allDrillsLifetime,
             drills30Days,
             lexiGridScores,
+            diagnosticHistory,
         ] = await Promise.all([
             prisma.studentCompetencyMatrix.findMany({
                 where: { student_id: instStudent.id },
@@ -560,6 +561,12 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
                     session_date: { gte: fourteenDaysAgo },
                 },
                 select: { words_solved: true, total_attempts: true, bonus_eligible: true, completed: true },
+            }),
+            // Diagnostic: all entries per skill (first = baseline, rest = progress)
+            prisma.assessmentHistory.findMany({
+                where:   { student_id: instStudent.id, mode: 'DIAGNOSTIC' as any },
+                orderBy: { created_at: 'asc' },
+                select:  { skill: true, band_score: true, sub_scores: true, feedback_json: true, created_at: true },
             }),
         ]);
 
@@ -664,6 +671,30 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
             real_band_score: s.real_band_score != null ? parseFloat(String(s.real_band_score)) : null,
         }));
 
+        // ── Diagnostic baseline + full results ────────────────────────────────
+        const skillAbbr: Record<string, string> = { LISTENING: 'L', READING: 'R', WRITING: 'W', SPEAKING: 'S' };
+        const seenBaseline = new Set<string>();
+        const diagnosticBaseline: Record<string, number | null> = { L: null, R: null, W: null, S: null };
+        const diagnosticResults: Array<{
+            skill: string; band_score: number;
+            sub_scores: any; feedback_json: any; created_at: Date;
+        }> = [];
+        for (const entry of diagnosticHistory) {
+            const skillStr = String(entry.skill);
+            const abbr     = skillAbbr[skillStr] ?? skillStr;
+            if (!seenBaseline.has(abbr)) {
+                seenBaseline.add(abbr);
+                diagnosticBaseline[abbr] = parseFloat(String(entry.band_score));
+                diagnosticResults.push({
+                    skill:         skillStr,
+                    band_score:    parseFloat(String(entry.band_score)),
+                    sub_scores:    (entry as any).sub_scores ?? null,
+                    feedback_json: (entry as any).feedback_json ?? null,
+                    created_at:    entry.created_at,
+                });
+            }
+        }
+
         // ── Serialize IA ia_date (Date → string) ─────────────────────────────
         const serializedIAs = iaSessions.map(s => ({
             ...s,
@@ -686,8 +717,13 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
                 current_band,
                 momentum_score: instStudent.momentum_score,
                 daily_streak:   instStudent.daily_streak,
-                ia_sessions:    serializedIAs,
-                mock_sessions:  serializedMocks,
+                ia_sessions:         serializedIAs,
+                mock_sessions:       serializedMocks,
+                diagnostic_baseline: diagnosticBaseline,
+                diagnostic_results:  diagnosticResults.map(r => ({
+                    ...r,
+                    created_at: r.created_at.toISOString(),
+                })),
                 drill_stats: {
                     last_14_days:        last14Days,
                     sub_skill_counts:    subSkillCounts,
@@ -871,6 +907,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             const best = row.allBands.length > 0 ? Math.round(Math.max(...row.allBands) * 10) / 10 : null;
             return {
                 student_id:   s.id,
+                user_id:      s.user_id,
                 name:         user?.name ?? 'Unknown',
                 avatar:       (user as any)?.profileImage ?? null,
                 ia_completed: row.completed,
@@ -888,6 +925,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             const row  = mockMap.get(s.id)!;
             return {
                 student_id:       s.id,
+                user_id:          s.user_id,
                 name:             user?.name ?? 'Unknown',
                 avatar:           (user as any)?.profileImage ?? null,
                 mock_count:       row.count,
@@ -902,6 +940,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             const row  = diagMap.get(s.id)!;
             return {
                 student_id:    s.id,
+                user_id:       s.user_id,
                 name:          user?.name ?? 'Unknown',
                 avatar:        (user as any)?.profileImage ?? null,
                 is_diagnosed:  row.isDiagnosed,
