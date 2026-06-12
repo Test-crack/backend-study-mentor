@@ -871,6 +871,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             const best = row.allBands.length > 0 ? Math.round(Math.max(...row.allBands) * 10) / 10 : null;
             return {
                 student_id:   s.id,
+                user_id:      s.user_id,
                 name:         user?.name ?? 'Unknown',
                 avatar:       (user as any)?.profileImage ?? null,
                 ia_completed: row.completed,
@@ -888,6 +889,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             const row  = mockMap.get(s.id)!;
             return {
                 student_id:       s.id,
+                user_id:          s.user_id,
                 name:             user?.name ?? 'Unknown',
                 avatar:           (user as any)?.profileImage ?? null,
                 mock_count:       row.count,
@@ -902,6 +904,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             const row  = diagMap.get(s.id)!;
             return {
                 student_id:    s.id,
+                user_id:       s.user_id,
                 name:          user?.name ?? 'Unknown',
                 avatar:        (user as any)?.profileImage ?? null,
                 is_diagnosed:  row.isDiagnosed,
