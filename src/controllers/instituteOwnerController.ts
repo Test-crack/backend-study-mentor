@@ -136,8 +136,6 @@ async function computeAtRiskFlags(
         if (daysInactive === -1)                         flags.push('Never drilled');
         else if (daysInactive >= 3)                      flags.push(`No activity for ${daysInactive} day${daysInactive !== 1 ? 's' : ''}`);
         if (missed >= 2)                                 flags.push(`Missed ${missed} internal assessments`);
-        if (s.daily_streak === 0 && daysInactive !== -1 && daysInactive > 1) flags.push('Streak broken');
-        if (s.momentum_score < 100)                      flags.push('Low momentum');
         const last2IAs = recentIAsByStudent.get(s.id) ?? [];
         if (computeBandTrend(last2IAs) === 'down')       flags.push('Band score declining');
 
@@ -672,7 +670,7 @@ export async function getSummary(req: AuthRequest, res: Response) {
             instStudentIds.length > 0
                 ? prisma.studentCompetencyMatrix.findMany({
                     where: { student_id: { in: instStudentIds } },
-                    select: { band_score: true },
+                    select: { student_id: true, band_score: true },
                 })
                 : Promise.resolve([]),
             instStudentIds.length > 0
@@ -688,20 +686,27 @@ export async function getSummary(req: AuthRequest, res: Response) {
             computeAtRiskFlags(instStudentIds, instStudents),
         ]);
 
-        const allBands = (competencyRows as Array<{ band_score: unknown }>)
-            .map(r => parseFloat(String(r.band_score ?? '0')))
-            .filter(v => !isNaN(v) && v > 0);
-        const avgBand = allBands.length > 0
-            ? Math.round(allBands.reduce((a, b) => a + b, 0) / allBands.length * 10) / 10
+        // Average per-student first (mean of their skill bands), then average across students.
+        // This avoids weighting students with more skills assessed more heavily.
+        const bandsByStudent = new Map<string, number[]>();
+        for (const r of competencyRows as Array<{ student_id: string; band_score: unknown }>) {
+            const v = parseFloat(String(r.band_score ?? '0'));
+            if (!isNaN(v) && v > 0) {
+                const arr = bandsByStudent.get(r.student_id) ?? [];
+                arr.push(v);
+                bandsByStudent.set(r.student_id, arr);
+            }
+        }
+        const perStudentBands = Array.from(bandsByStudent.values())
+            .map(bands => bands.reduce((a, b) => a + b, 0) / bands.length);
+        const avgBand = perStudentBands.length > 0
+            ? Math.round(perStudentBands.reduce((a, b) => a + b, 0) / perStudentBands.length * 10) / 10
             : null;
-
-        const examTypes: string[] = [];
 
         return res.json({
             success: true,
             data: {
                 institute_name:              institute?.name ?? '',
-                exam_types:                  examTypes,
                 total_students:              instStudentIds.length,
                 active_today:                (activeTodayRaw as any[]).length,
                 platform_unlocked_today:     (unlockedTodayRaw as any[]).length,
@@ -729,8 +734,6 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const examTypeFilter = req.query.exam_type as string | undefined;
-
         const batches: any[] = await (prisma as any).ielts_batches.findMany({
             where: {
                 institute_id: instituteId,
@@ -744,7 +747,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
             orderBy: { created_at: 'desc' },
         });
 
-        // Collect all user_ids from all batches
+        // Collect all user_ids across all batches
         const allUserIds = [...new Set(batches.flatMap((b: any) => b.ielts_batch_students.map((s: any) => s.user_id)))];
 
         const [instStudentsAll, todayDrillsAll, competencyAll, iaLast7All, atRiskFlagsAll] = await Promise.all([
@@ -836,9 +839,15 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
             const activeToday   = batchInstIds.filter(id => activeTodayByInstId.has(id)).length;
             const atRiskCount   = batchInstIds.filter(id => atRiskSet.has(id)).length;
 
-            const bandValues = batchInstIds.flatMap(id => competencyByInstId.get(id) ?? []);
-            const avgBand = bandValues.length > 0
-                ? Math.round(bandValues.reduce((a, c) => a + c, 0) / bandValues.length * 10) / 10
+            // Average per-student bands first, then average across students
+            const perStudentBands = batchInstIds
+                .map(id => {
+                    const vals = competencyByInstId.get(id) ?? [];
+                    return vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
+                })
+                .filter((v): v is number => v !== null);
+            const avgBand = perStudentBands.length > 0
+                ? Math.round(perStudentBands.reduce((a, c) => a + c, 0) / perStudentBands.length * 10) / 10
                 : null;
 
             const iaCompleted = batchInstIds.reduce((sum, id) => sum + (iaCompletedByInstId.get(id) ?? 0), 0);
@@ -847,21 +856,22 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
                 : 0;
 
             const instructors = b.ielts_batch_instructors.map((bi: any) => ({
-                id:     bi.User.id,
+                userId: bi.User.id,
                 name:   bi.User.name,
-                avatar: bi.User.profileImage,
+                profileImage: bi.User.profileImage,
             }));
 
             return {
-                batch_id:           b.id,
-                batch_name:         b.name,
-                exam_type:          null,
+                id:                 b.id,
+                name:               b.name,
                 status:             b.status,
+                max_students:       b.max_students ?? null,
                 student_count:      studentCount,
+                capacity_pct:       b.max_students ? Math.round(studentCount / b.max_students * 100) : null,
                 active_today:       activeToday,
                 at_risk_count:      atRiskCount,
                 avg_band:           avgBand,
-                ia_completion_rate_last_7_days: iaCompletionRate,
+                ia_completion_rate: iaCompletionRate,
                 instructors,
             };
         });
@@ -940,7 +950,6 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         }
 
         const batchIdFilter  = req.query.batch_id as string | undefined;
-        const examTypeFilter = req.query.exam_type as string | undefined;
         const atRiskFilter   = req.query.at_risk === 'true';
 
         // Determine which batches to scope to
@@ -1031,11 +1040,11 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         const lastDrillByInstId = new Map(lastDrills.map(r => [r.student_id, (r._max as any).created_at as Date | null]));
 
         // Map userId → batch info (use first batch if student in multiple)
-        const batchByUserId = new Map<string, { batch_name: string; exam_type: string | null }>();
+        const batchByUserId = new Map<string, { batch_name: string }>();
         for (const link of batchStudentLinks) {
             if (!batchByUserId.has(link.user_id)) {
                 const b = batchById.get(link.batch_id) as any;
-                batchByUserId.set(link.user_id, { batch_name: b?.name ?? '', exam_type: null });
+                batchByUserId.set(link.user_id, { batch_name: b?.name ?? '' });
             }
         }
 
@@ -1063,7 +1072,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 ? Math.floor((nowMs - lastDrill.getTime()) / (24 * 60 * 60 * 1000))
                 : -1;
             const riskEntry    = atRiskByInstId.get(inst.id) ?? null;
-            const batchInfo    = batchByUserId.get(uid) ?? { batch_name: '', exam_type: null };
+            const batchInfo    = batchByUserId.get(uid) ?? { batch_name: '' };
 
             return {
                 student_id:     inst.id,
@@ -1072,7 +1081,6 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 avatar:         (user as any)?.profileImage ?? null,
                 email:          user?.email ?? '',
                 batch_name:     batchInfo.batch_name,
-                exam_type:      batchInfo.exam_type,
                 current_band,
                 target_band,
                 gap,
@@ -1159,22 +1167,44 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
             return res.json({ success: true, data: [] });
         }
 
-        const instStudents = await prisma.institute_students.findMany({
-            where: { user_id: { in: userIds } },
-            select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true },
-        });
-
-        const users = await prisma.user.findMany({
-            where: { id: { in: userIds } },
-            select: { id: true, name: true, profileImage: true },
-        });
+        const [instStudents, users] = await Promise.all([
+            prisma.institute_students.findMany({
+                where: { user_id: { in: userIds } },
+                select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
+            }),
+            prisma.user.findMany({
+                where: { id: { in: userIds } },
+                select: { id: true, name: true, profileImage: true },
+            }),
+        ]);
         const userByUserId = new Map(users.map(u => [u.id, u]));
 
         const instIds = instStudents.map(s => s.id);
-        const atRiskFlags = await computeAtRiskFlags(instIds, instStudents);
+        const [atRiskFlags, missedIACounts, lastDrillByStudent] = await Promise.all([
+            computeAtRiskFlags(instIds, instStudents),
+            prisma.iASession.groupBy({
+                by: ['student_id'],
+                where: { student_id: { in: instIds }, status: 'MISSED' as any },
+                _count: { id: true },
+            }),
+            prisma.drillSession.groupBy({
+                by: ['student_id'],
+                where: { student_id: { in: instIds } },
+                _max: { created_at: true },
+            }),
+        ]);
+
         if (atRiskFlags.length === 0) {
             return res.json({ success: true, data: [] });
         }
+
+        const missedCountByInstId = new Map(
+            missedIACounts.map(r => [r.student_id, (r._count as any).id as number])
+        );
+        const lastDrillByInstId = new Map(
+            lastDrillByStudent.map(r => [r.student_id, (r._max as any).created_at as Date | null])
+        );
+        const nowMs = Date.now();
 
         const atRiskInstIds = new Set(atRiskFlags.map(r => r.student_id));
 
@@ -1190,33 +1220,39 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
             competencyByInstId.set(row.student_id, arr);
         }
 
-        // Build batch lookup: instStudentId → { batch_name, exam_type }
+        // Build batch lookup: instStudentId → { batch_id, batch_name }
         const instByUserId = new Map(instStudents.map(s => [s.user_id, s]));
         const batchById = new Map(batches.map((b: any) => [b.id, b]));
-        const batchByInstId = new Map<string, { batch_name: string; exam_type: string | null }>();
+        const batchByInstId = new Map<string, { batch_id: string; batch_name: string }>();
         for (const link of batchStudentLinks) {
             const inst = instByUserId.get(link.user_id);
             if (inst && !batchByInstId.has(inst.id)) {
                 const b = batchById.get(link.batch_id) as any;
-                batchByInstId.set(inst.id, { batch_name: b?.name ?? '', exam_type: null });
+                batchByInstId.set(inst.id, { batch_id: link.batch_id, batch_name: b?.name ?? '' });
             }
         }
 
         const result = atRiskFlags.map(r => {
-            const inst = instStudents.find(s => s.id === r.student_id);
-            const user = inst ? userByUserId.get(inst.user_id) : undefined;
-            const competency = competencyByInstId.get(r.student_id) ?? [];
-            const batchInfo  = batchByInstId.get(r.student_id) ?? { batch_name: '', exam_type: null };
+            const inst        = instStudents.find(s => s.id === r.student_id);
+            const user        = inst ? userByUserId.get(inst.user_id) : undefined;
+            const competency  = competencyByInstId.get(r.student_id) ?? [];
+            const batchInfo   = batchByInstId.get(r.student_id) ?? { batch_id: '', batch_name: '' };
+            const ld          = lastDrillByInstId.get(r.student_id) ?? null;
+            const daysInactive = ld ? Math.floor((nowMs - ld.getTime()) / 86_400_000) : -1;
+            const missedIA     = missedCountByInstId.get(r.student_id) ?? 0;
             return {
-                student_id:   r.student_id,
-                user_id:      inst?.user_id ?? '',
-                name:         user?.name ?? 'Unknown',
-                avatar:       (user as any)?.profileImage ?? null,
-                flags:        r.flags,
-                primary_flag: r.primary_flag,
-                current_band: computeCurrentBand(competency),
-                batch_name:   batchInfo.batch_name,
-                exam_type:    batchInfo.exam_type,
+                student_id:      r.student_id,
+                user_id:         inst?.user_id ?? '',
+                name:            user?.name ?? 'Unknown',
+                avatar:          (user as any)?.profileImage ?? null,
+                batch_id:        batchInfo.batch_id,
+                batch_name:      batchInfo.batch_name,
+                flags:           r.flags,
+                primary_flag:    r.primary_flag,
+                days_inactive:   daysInactive,
+                missed_ia_count: missedIA,
+                current_band:    computeCurrentBand(competency),
+                target_band:     inst?.target_band ? parseFloat(String(inst.target_band)) : null,
             };
         });
 
@@ -1260,8 +1296,7 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
             name: string | null;
             avatar: string | null;
             email: string;
-            batches: Array<{ batch_id: string; batch_name: string; exam_type: string | null; student_count: number }>;
-            examTypes: Set<string>;
+            batches: Array<{ batch_id: string; batch_name: string; student_count: number }>;
             totalStudents: number;
         }>();
 
@@ -1275,16 +1310,14 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
                         avatar:  bi.User.profileImage,
                         email:   bi.User.email,
                         batches: [],
-                        examTypes: new Set(),
                         totalStudents: 0,
                     });
                 }
                 const entry = instructorMap.get(uid)!;
                 const studentCount = b.ielts_batch_students.length;
                 entry.batches.push({
-                    batch_id:     b.id,
-                    batch_name:   b.name,
-                    exam_type:    null,
+                    batch_id:      b.id,
+                    batch_name:    b.name,
                     student_count: studentCount,
                 });
                 entry.totalStudents += studentCount;
@@ -1292,12 +1325,11 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
         }
 
         const result = Array.from(instructorMap.values()).map(e => ({
-            user_id:       e.user_id,
-            name:          e.name,
-            avatar:        e.avatar,
-            email:         e.email,
-            batches:       e.batches,
-            exam_types:    [...e.examTypes],
+            user_id:        e.user_id,
+            name:           e.name,
+            avatar:         e.avatar,
+            email:          e.email,
+            batches:        e.batches,
             total_students: e.totalStudents,
         }));
 
@@ -1319,7 +1351,6 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
         }
 
         const batchIdFilter  = req.query.batch_id as string | undefined;
-        const examTypeFilter = req.query.exam_type as string | undefined;
 
         const batches: any[] = await (prisma as any).ielts_batches.findMany({
             where: {
@@ -1370,13 +1401,13 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             instStudents.map(s => [s.id, userByUserId.get(s.user_id)])
         );
 
-        // Build batch lookup: instStudentId → { batch_name, exam_type }
-        const batchByInstId = new Map<string, { batch_name: string; exam_type: string | null }>();
+        // Build batch lookup: instStudentId → batch_name
+        const batchByInstId = new Map<string, { batch_name: string }>();
         for (const link of batchStudentLinks) {
             const inst = instByUserId.get(link.user_id);
             if (inst && !batchByInstId.has(inst.id)) {
                 const b = batchById.get(link.batch_id) as any;
-                batchByInstId.set(inst.id, { batch_name: b?.name ?? '', exam_type: null });
+                batchByInstId.set(inst.id, { batch_name: b?.name ?? '' });
             }
         }
 
@@ -1498,7 +1529,6 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 last_ia_date: row.lastDate,
                 ia_eligible:  drillEligibleById.get(s.id) ?? false,
                 batch_name:   batchInfo?.batch_name ?? '',
-                exam_type:    null,
             };
         });
 
@@ -1515,7 +1545,6 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 best_real_band:   row.bestBand,
                 target_band:      s.target_band ? parseFloat(String(s.target_band)) : null,
                 batch_name:       batchInfo?.batch_name ?? '',
-                exam_type:        null,
             };
         });
 
@@ -1531,7 +1560,6 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 baseline_bands: row.bands,
                 diagnosed_at:  row.diagnosedAt,
                 batch_name:    batchInfo?.batch_name ?? '',
-                exam_type:     null,
             };
         });
         diagnosticOverview.sort((a, b) => Number(a.is_diagnosed) - Number(b.is_diagnosed));
@@ -1584,7 +1612,7 @@ export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response
 
         const { instStudentIds } = await resolveInstituteStudents(instituteId);
         if (instStudentIds.length === 0) {
-            return res.json({ success: true, data: { monthly_points: [], exam_type_breakdown: [] } });
+            return res.json({ success: true, data: { monthly_points: [] } });
         }
 
         const sixMonthsAgo = daysBeforeIST(180);
@@ -1649,7 +1677,7 @@ export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response
             });
         }
 
-        return res.json({ success: true, data: { monthly_points: monthlyPoints, exam_type_breakdown: [] } });
+        return res.json({ success: true, data: { monthly_points: monthlyPoints } });
     } catch (err) {
         console.error('[InstituteOwner] getAnalyticsCohortProgress error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
@@ -1761,7 +1789,6 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
             return {
                 batch_id:          b.id,
                 batch_name:        b.name,
-                exam_type:         null,
                 student_count:     studentCount,
                 avg_band:          avgBand,
                 diagnostic_baseline: diagBaseline,
@@ -2053,7 +2080,6 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
             return {
                 batch_id:   b.id,
                 batch_name: b.name,
-                exam_type:  null,
                 below:      bBelow,
                 near:       bNear,
                 at_or_above: bAtOrAbove,
