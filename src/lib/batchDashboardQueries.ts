@@ -230,11 +230,14 @@ export async function computeBatchDashboard(
             },
         }),
         // LexiGrid completions today (for activity grid)
+        // Use exact DATE string match — comparing a TIMESTAMPTZ (todayStart) against
+        // a DATE column causes Postgres to cast DATE to TIMESTAMPTZ at midnight UTC,
+        // which is 5.5h earlier than IST midnight and pulls in the previous IST day's records.
         (prisma as any).studentGameScore.findMany({
             where: {
                 student_id:   { in: instStudentIds },
                 game_type:    'LEXIGRID',
-                session_date: { gte: todayStart },
+                session_date: todayISTString(),
             },
             select: { student_id: true, completed: true, words_solved: true },
         }),
