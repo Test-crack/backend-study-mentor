@@ -180,14 +180,14 @@ export async function computeBatchDashboard(
         mockThisMonth,
         lexigridToday,
     ] = await Promise.all([
-        // today's drills (for active/DCS/unlocked counts)
+        // today's completed drills (for active/DCS/unlocked counts — STARTED excluded)
         prisma.drillSession.findMany({
-            where: { student_id: { in: instStudentIds }, created_at: { gte: todayStart } },
+            where: { student_id: { in: instStudentIds }, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any[] }, created_at: { gte: todayStart } },
             select: { student_id: true, correct_answers: true, total_questions: true },
         }),
-        // yesterday's drills (for trend arrows)
+        // yesterday's completed drills (for trend arrows — STARTED excluded)
         prisma.drillSession.findMany({
-            where: { student_id: { in: instStudentIds }, created_at: { gte: yesterdayStart, lt: todayStart } },
+            where: { student_id: { in: instStudentIds }, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any[] }, created_at: { gte: yesterdayStart, lt: todayStart } },
             select: { student_id: true, correct_answers: true, total_questions: true },
         }),
         // missed IA count per student
