@@ -64,7 +64,14 @@ export function startWSServer(server?: HttpServer) {
          * is already running and doesn't need to re-initialize.
          */
         function spawnSTTStream(sendReady: boolean) {
+            // One-shot guard: Google's gRPC stream can emit both 'error' and 'end'
+            // for the same closure event (e.g. hard-limit), which would call onStreamEnd
+            // twice and spawn two concurrent streams. The flag collapses both into one.
+            let streamEndFired = false;
+
             sttStream = createSTTStream(ws, () => {
+                if (streamEndFired) return;
+                streamEndFired = true;
                 // onStreamEnd — fired when Google closes the stream (5-min limit or error)
                 sttStream = null;
                 if (isSTTActive) {
@@ -78,7 +85,11 @@ export function startWSServer(server?: HttpServer) {
             // Skip on the very first start (no header captured yet) and on fresh sessions
             // where sendReady=true (the next real chunk will be the header).
             if (!sendReady && webmHeader) {
-                try { sttStream.write(webmHeader); } catch {}
+                try {
+                    sttStream.write(webmHeader);
+                } catch (err) {
+                    console.warn('[STT] Failed to write WebM header to restarted stream:', err);
+                }
             }
 
             if (sendReady) {

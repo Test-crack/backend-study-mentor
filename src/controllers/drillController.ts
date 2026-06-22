@@ -1,7 +1,12 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { DrillSessionStatus } from '@prisma/client';
+import { DrillSessionStatus, IeltsSkillType, IeltsSubSkillType, RecommendationLevel } from '@prisma/client';
+
+// Derived from Prisma enums — stays in sync automatically when schema changes
+const VALID_SKILLS     = Object.values(IeltsSkillType) as string[];
+const VALID_SUB_SKILLS = Object.values(IeltsSubSkillType) as string[];
+const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 
 interface DrillItem {
@@ -189,6 +194,7 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
               AND sub_skill = ${subskill}::"IeltsSubSkillType"
               AND level = ${level}::"RecommendationLevel"
               AND is_active = true
+              AND drill_type = 'MCQ'
             ORDER BY RANDOM()
             LIMIT ${QUESTIONS_PER_SESSION}
         `;
@@ -488,10 +494,6 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'skill, sub_skill, and level are required.' });
         }
 
-        const VALID_SKILLS    = ['WRITING', 'SPEAKING', 'READING', 'LISTENING'];
-        const VALID_SUB_SKILLS = ['LISTENING', 'READING', 'GRAMMAR', 'VOCABULARY', 'COHERENCE', 'TASK_RESPONSE', 'FLUENCY', 'PRONUNCIATION'];
-        const VALID_LEVELS    = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED'];
-
         const skillUp    = String(skill).toUpperCase();
         const subSkillUp = String(sub_skill).toUpperCase().replace(/\s+/g, '_');
         const levelUp    = String(level).toUpperCase();
@@ -546,6 +548,7 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
               AND sub_skill = ${subSkillUp}::"IeltsSubSkillType"
               AND level     = ${levelUp}::"RecommendationLevel"
               AND is_active = true
+              AND drill_type = 'MCQ'
             ORDER BY RANDOM()
             LIMIT ${QUESTIONS_PER_SESSION}
         `;
