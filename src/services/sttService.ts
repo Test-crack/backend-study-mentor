@@ -12,25 +12,53 @@ const client = new speech.SpeechClient();
  * @param ws The WebSocket client to send transcripts back to.
  * @returns A writable stream that accepts audio chunks.
  */
-export function createSTTStream(ws: WebSocket) {
+/**
+ * @param ws         WebSocket client to receive transcripts.
+ * @param onStreamEnd Called when the stream ends for any reason (5-min limit,
+ *                   network error, or normal close). The caller decides whether
+ *                   to restart. Never fires on a clean STOP_STT-triggered end.
+ */
+export function createSTTStream(ws: WebSocket, onStreamEnd?: () => void) {
     const request = {
         config: {
             encoding: "WEBM_OPUS" as const,
             sampleRateHertz: 48000,
             languageCode: "en-US",
-            enableInterimResults: true,
+            // latest_long: designed for audio > 1 min, much better phoneme discrimination
+            // than the default short-utterance model — critical for minimal-pair words
+            // like ship/sheep, bit/beat where vowel length is the only differentiator.
+            model: "latest_long",
+            useEnhanced: true,
+            enableAutomaticPunctuation: true,
             // ── Word-level data (used by Speech Anatomy feature) ──
-            enableWordTimeOffsets: true,   // arrival timing per word
-            enableWordConfidence: true,    // per-word STT confidence score (0–1)
+            enableWordTimeOffsets: true,
+            enableWordConfidence: true,
         },
         interimResults: true,
+        // Explicitly keep the stream open after Google detects end of speech
+        singleUtterance: false,
     };
 
     const recognizeStream = client
         .streamingRecognize(request)
         .on("error", (err) => {
-            console.error("Google STT Stream Error:", err);
-            ws.send(JSON.stringify({ error: "STT Stream Error", details: err.message }));
+            // Google closes the stream after 305 s — transparent restart, don't alarm the student
+            const isHardLimit =
+                err.message?.includes('305') ||
+                err.message?.toLowerCase().includes('duration') ||
+                err.message?.toLowerCase().includes('exceeded');
+
+            if (!isHardLimit) {
+                console.error("[STT] Stream error:", err.message);
+                try { ws.send(JSON.stringify({ error: "STT Stream Error", details: err.message })); } catch {}
+            } else {
+                console.log("[STT] 5-minute hard limit reached — handing off for restart.");
+            }
+            onStreamEnd?.();
+        })
+        .on("end", () => {
+            // Stream closed by Google (end of limit window) — let caller restart
+            onStreamEnd?.();
         })
         .on("data", (data) => {
             if (data.results[0] && data.results[0].alternatives[0]) {

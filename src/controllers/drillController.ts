@@ -1,7 +1,12 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { DrillSessionStatus } from '@prisma/client';
+import { DrillSessionStatus, IeltsSkillType, IeltsSubSkillType, RecommendationLevel } from '@prisma/client';
+
+// Derived from Prisma enums — stays in sync automatically when schema changes
+const VALID_SKILLS     = Object.values(IeltsSkillType) as string[];
+const VALID_SUB_SKILLS = Object.values(IeltsSubSkillType) as string[];
+const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 
 interface DrillItem {
@@ -143,16 +148,20 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             recommended_drills.push(interleaved[(startIndex + i) % N]);
         }
 
+        const message = recommended_drills.length > 0
+            ? "Here are your prioritised drills."
+            : todayCompleted >= MAX_DRILLS_PER_DAY
+                ? "Daily limit reached. Come back tomorrow for your next drills!"
+                : N === 0
+                    ? "Complete your Initial Assessment (Diagnostics) to unlock personalised drills."
+                    : "You have completed all available sub-skills for today!";
+
         return res.json({
             success: true,
             recommended_drills,
             daily_sessions_completed: todayCompleted,
             total_completed: totalCompleted,
-            message: recommended_drills.length > 0
-                ? "Here are your prioritised drills."
-                : todayCompleted >= MAX_DRILLS_PER_DAY
-                    ? "Daily limit reached. Come back tomorrow for your next drills!"
-                    : "You have completed all available sub-skills for today!"
+            message,
         });
 
     } catch (error) {
@@ -167,20 +176,17 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
  */
 export async function getDrillQuestions(req: AuthRequest, res: Response) {
     try {
-        const { skill, subskill, level, count } = req.query;
+        const { skill, subskill, level } = req.query;
 
         if (!skill || !subskill || !level) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Missing required query parameters: skill, subskill, and level are required.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required query parameters: skill, subskill, and level are required.'
             });
         }
 
         const QUESTIONS_PER_SESSION = 5;
-        const countNum = QUESTIONS_PER_SESSION;
 
-        // Use Prisma's native $queryRaw for true randomness (ORDER BY RANDOM())
-        // Postgres will automatically cast the template parameters to the appropriate Enum types
         const questions = await prisma.$queryRaw`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
@@ -188,9 +194,17 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
               AND sub_skill = ${subskill}::"IeltsSubSkillType"
               AND level = ${level}::"RecommendationLevel"
               AND is_active = true
+              AND drill_type = 'MCQ'
             ORDER BY RANDOM()
-            LIMIT ${countNum}
+            LIMIT ${QUESTIONS_PER_SESSION}
         `;
+
+        if ((questions as any[]).length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'No drill questions found for the given skill, sub-skill, and level. Please check the seed data.'
+            });
+        }
 
         return res.json({
             success: true,
@@ -228,14 +242,35 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'Missing required fields: skill, subskill, prompts_completed, correct_answers.' });
         }
 
-        const DRILL_BASE_PTS      = 15;
-        const DRILL_PER_CORRECT   = 10;
-        const correctCount        = Math.max(0, parseInt(correct_answers));
-        const momentum_earned     = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
-        const extraSession        = is_extra_session === true || is_extra_session === 'true';
+        const DRILL_BASE_PTS    = 15;
+        const DRILL_PER_CORRECT = 10;
+        const correctCount      = Math.max(0, parseInt(correct_answers));
+        const momentum_earned   = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
+        const extraSession      = is_extra_session === true || is_extra_session === 'true';
+
+        // Idempotency guard: if a DRILL_DONE/APPLY_DONE session already exists today
+        // for the same skill+sub_skill, skip momentum and return the existing record.
+        const existingToday = await prisma.drillSession.findFirst({
+            where: {
+                student_id: student.id,
+                skill,
+                sub_skill:  subskill,
+                status:     { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] },
+                created_at: { gte: todayStartIST() },
+            }
+        });
+        if (existingToday) {
+            return res.json({
+                success:         true,
+                already_submitted: true,
+                data:            existingToday,
+                momentum_earned: 0,
+                momentum_score:  student.momentum_score,
+                daily_streak:    student.daily_streak,
+            });
+        }
 
         // Consume one pre-authorized extra credit when the session is an extra drill.
-        // This is idempotent: if credits = 0 (e.g., re-submit), no change.
         const consumeCredit = extraSession && student.extra_drill_credits > 0;
 
         const [session, updatedStudent] = await prisma.$transaction([
@@ -260,10 +295,14 @@ export async function saveDrillSession(req: AuthRequest, res: Response) {
             })
         ]);
 
-        // Streak: fires only when today's count crosses exactly 2 (the threshold).
+        // Streak: fires only when today's completed count crosses exactly 2.
         const drillCutoff = todayStartIST();
         const drillsToday = await prisma.drillSession.count({
-            where: { student_id: student.id, created_at: { gte: drillCutoff } }
+            where: {
+                student_id: student.id,
+                status:     { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] },
+                created_at: { gte: drillCutoff },
+            }
         });
 
         let newDailyStreak = updatedStudent.daily_streak;
@@ -458,6 +497,16 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
         const skillUp    = String(skill).toUpperCase();
         const subSkillUp = String(sub_skill).toUpperCase().replace(/\s+/g, '_');
         const levelUp    = String(level).toUpperCase();
+
+        if (!VALID_SKILLS.includes(skillUp)) {
+            return res.status(400).json({ success: false, error: `Invalid skill. Expected one of: ${VALID_SKILLS.join(', ')}.` });
+        }
+        if (!VALID_SUB_SKILLS.includes(subSkillUp)) {
+            return res.status(400).json({ success: false, error: `Invalid sub_skill. Expected one of: ${VALID_SUB_SKILLS.join(', ')}.` });
+        }
+        if (!VALID_LEVELS.includes(levelUp)) {
+            return res.status(400).json({ success: false, error: `Invalid level. Expected one of: ${VALID_LEVELS.join(', ')}.` });
+        }
         const QUESTIONS_PER_SESSION = 5;
 
         // Resume today's STARTED session (same skill/sub_skill)
@@ -499,6 +548,7 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
               AND sub_skill = ${subSkillUp}::"IeltsSubSkillType"
               AND level     = ${levelUp}::"RecommendationLevel"
               AND is_active = true
+              AND drill_type = 'MCQ'
             ORDER BY RANDOM()
             LIMIT ${QUESTIONS_PER_SESSION}
         `;
@@ -509,12 +559,15 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
 
         const questionIds  = questions.map((q: any) => q.id);
         const extraSession = is_extra_session === true || is_extra_session === 'true';
+        const drillType    = questions[0]?.drill_type ?? 'MCQ';
 
         const session = await prisma.drillSession.create({
             data: {
                 student_id:        student.id,
                 skill:             skillUp as any,
                 sub_skill:         subSkillUp as any,
+                level:             levelUp as any,
+                drill_type:        drillType,
                 status:            DrillSessionStatus.STARTED,
                 question_ids:      questionIds,
                 answers:           {},
@@ -524,7 +577,7 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
                 momentum_earned:   0,
                 is_extra_session:  extraSession,
             }
-        });
+        } as any);
 
         return res.json({
             success:      true,

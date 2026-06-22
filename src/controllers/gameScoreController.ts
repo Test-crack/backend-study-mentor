@@ -75,7 +75,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         // ── next_action decision tree ──────────────────────────────────────────
         // DRILL_1 → LEXIGRID gate → DRILL_2 → DRILL_3 (all free)
         // → EXTRA_DRILL_READY   (credit already purchased, not yet consumed)
-        // → EXTRA_DRILL_AVAILABLE (eligible to purchase: DCS≥40% + 75 momentum pts)
+        // → EXTRA_DRILL_AVAILABLE (eligible to purchase: DCS≥40% + 300 momentum pts)
         // → DRILL_LOCKED_LOW_DCS / DRILL_LOCKED_INSUFFICIENT_PTS
         const pendingCredit = student.extra_drill_credits > 0;
 
