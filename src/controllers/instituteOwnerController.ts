@@ -1093,7 +1093,14 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 last_active:    lastDrill ? toISTDateString(lastDrill) : null,
                 is_diagnosed:   inst.isDiagnosed,
             };
-        }).filter(Boolean) as NonNullable<ReturnType<typeof userIds.map>[0]>[];
+        }).filter(Boolean) as Array<{
+            student_id: string; user_id: string; name: string; avatar: string | null;
+            email: string; batch_name: string; current_band: number | null;
+            target_band: number | null; gap: number | null; band_trend: 'up' | 'flat' | 'down' | null;
+            daily_streak: number; drilled_today: boolean; momentum_score: number;
+            is_at_risk: boolean; primary_flag: string | null; last_active: string | null;
+            is_diagnosed: boolean;
+        }>;
 
         if (atRiskFilter) {
             rows = rows.filter(r => r.is_at_risk);
