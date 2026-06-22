@@ -719,19 +719,22 @@ model StudentGameScore {
   id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   student_id      String             @db.Uuid
   game_type       String             @db.VarChar(30)
-  session_date    DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  session_date    DateTime           @default(dbgenerated("((now() AT TIME ZONE 'Asia/Kolkata'::text))::date")) @db.Date
   words_solved    Int                @default(0)
-  total_attempts  Int                @default(0)
+  total_words     Int                @default(0)
   bonus_eligible  Boolean            @default(false)
   momentum_earned Int                @default(0)
   completed       Boolean            @default(false)
-  score_data      Json?
+  played_word_ids Json?
   created_at      DateTime           @default(now()) @db.Timestamptz(6)
+  total_attempts  Int                @default(0)
   Student         institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "student_game_scores_student_fk")
 
   @@unique([student_id, game_type, session_date], map: "student_game_scores_student_game_date_uniq")
   @@index([student_id])
   @@index([session_date])
+  @@index([game_type, session_date], map: "idx_sgs_game_date")
+  @@index([student_id, game_type, session_date, completed, words_solved, momentum_earned], map: "idx_sgs_student_game_date_cover")
   @@map("student_game_scores")
 }
 
@@ -740,7 +743,7 @@ model LexiGridWord {
   base_word    String   @db.VarChar(100)
   target_word  String   @db.VarChar(100)
   hint         String
-  category     String?  @db.VarChar(50)
+  /// CHECK (difficulty IN ('BEGINNER','INTERMEDIATE','ADVANCED')) enforced at DB level
   difficulty   String   @default("INTERMEDIATE") @db.VarChar(20)
   target_band  Decimal? @default(7.0) @db.Decimal(2, 1)
   is_active    Boolean  @default(true)
@@ -748,7 +751,7 @@ model LexiGridWord {
   created_at   DateTime @default(now()) @db.Timestamptz(6)
   updated_at   DateTime @default(now()) @db.Timestamptz(6)
 
-  @@index([is_active], map: "idx_lexigrid_words_active")
+  @@unique([base_word, target_word], map: "uniq_lexigrid_base_target")
   @@map("lexigrid_words")
 }
 

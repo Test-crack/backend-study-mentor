@@ -5,12 +5,13 @@ import { DrillSessionStatus } from '@prisma/client';
 import { todayStartIST, currentISTDate } from '../lib/timezone';
 import { computeDailyDCS } from '../lib/dcs';
 import { getValidatedStreak } from '../lib/streak';
+import { verifyLexiGridSession } from '../lib/lexiGridSession';
 
+const WORDS_PER_SESSION     = 5;    // LexiGrid words per session
 const FREE_SESSIONS_PER_DAY = 3;    // 3 drills free daily
 const MAX_SESSIONS_PER_DAY  = 4;    // 3 free + 1 purchasable extra = 4 max per day
 const EXTRA_SESSION_COST    = 300;  // 300 momentum pts to unlock the 4th drill
 const DCS_EXTRA_THRESHOLD   = 40;   // DCS% required to unlock extra drill
-const LEXIGRID_BASE_PTS     = 10;
 const LEXIGRID_BONUS_PTS    = 5;
 
 async function resolveStudent(appUserId: string) {
@@ -144,13 +145,34 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         const student = await resolveStudent(appUserId);
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { game_type, words_solved, total_attempts, bonus_eligible } = req.body;
+        const { game_type, words_solved, total_attempts, bonus_eligible, session_token } = req.body;
 
         if (!game_type || words_solved === undefined) {
             return res.status(400).json({ success: false, error: 'game_type and words_solved are required.' });
         }
 
         const wordsSolvedNum = Math.max(0, parseInt(words_solved));
+
+        // Verify the session token for LexiGrid to prevent client-side score inflation.
+        // 'missing' = offline/fallback session → allow but award zero momentum.
+        // 'invalid' = tampered token → reject outright.
+        if (game_type === 'LEXIGRID') {
+            const tokenStatus = verifyLexiGridSession(session_token, student.id, wordsSolvedNum);
+            if (tokenStatus === 'invalid') {
+                console.warn(`[GameScore] Invalid LexiGrid session token for student ${student.id}`);
+                return res.status(400).json({ success: false, error: 'Invalid session token.' });
+            }
+            if (tokenStatus === 'missing') {
+                // Offline/fallback play — record the session but award no momentum
+                const sessionToday = currentISTDate();
+                await (prisma as any).studentGameScore.upsert({
+                    where: { student_id_game_type_session_date: { student_id: student.id, game_type, session_date: sessionToday } },
+                    create: { student_id: student.id, game_type, session_date: sessionToday, words_solved: wordsSolvedNum, total_words: WORDS_PER_SESSION, total_attempts: total_attempts ?? 0, bonus_eligible: false, momentum_earned: 0, completed: true },
+                    update: { words_solved: wordsSolvedNum, total_words: WORDS_PER_SESSION, total_attempts: total_attempts ?? 0 },
+                });
+                return res.json({ success: true, momentum_earned: 0, momentum_score: student.momentum_score });
+            }
+        }
 
         // submitLexiGridSession is only ever called at end of a full 5-word session,
         // so any API call here means the session is complete regardless of score.
@@ -182,24 +204,26 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                 }
             },
             create: {
-                student_id:     student.id,
+                student_id:      student.id,
                 game_type,
-                session_date:   sessionToday,
-                words_solved:   wordsSolvedNum,
-                total_attempts: total_attempts ?? 0,
-                bonus_eligible: bonus_eligible ?? false,
+                session_date:    sessionToday,
+                words_solved:    wordsSolvedNum,
+                total_words:     WORDS_PER_SESSION,
+                total_attempts:  total_attempts ?? 0,
+                bonus_eligible:  bonus_eligible ?? false,
                 momentum_earned,
                 completed,
-                score_data:     req.body.score_data ?? null
+                played_word_ids: req.body.played_word_ids ?? null,
             },
             update: {
-                words_solved:   wordsSolvedNum,
-                total_attempts: total_attempts ?? 0,
-                bonus_eligible: bonus_eligible ?? false,
+                words_solved:    wordsSolvedNum,
+                total_words:     WORDS_PER_SESSION,
+                total_attempts:  total_attempts ?? 0,
+                bonus_eligible:  bonus_eligible ?? false,
                 momentum_earned,
-                completed
+                completed,
             }
-        });
+        } as any);
 
         // Award momentum only on first submission — idempotent
         let updated_momentum = student.momentum_score;
@@ -216,7 +240,6 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             data: record,
             momentum_earned,
             momentum_score: updated_momentum,
-            next_action: 'DRILL_2'
         });
     } catch (err) {
         console.error('[GameScore] saveGameScore error:', err);
