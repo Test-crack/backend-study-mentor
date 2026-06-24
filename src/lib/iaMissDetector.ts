@@ -115,30 +115,38 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                         continue; // concurrent call already graded it — session is COMPLETED, move on
                     }
                     console.error(`[iaMissDetector] auto-grade failed for session ${stale.id}:`, err);
-                    // Fall through: mark MISSED so it doesn't stay stuck IN_PROGRESS
-                    await prisma.iASession.update({
-                        where: { id: stale.id },
+                    // Fall through: mark MISSED so it doesn't stay stuck IN_PROGRESS.
+                    // Use updateMany with status guard to avoid a TOCTOU race where a concurrent
+                    // submitIA already marked this COMPLETED between our findMany and here.
+                    const r1 = await prisma.iASession.updateMany({
+                        where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
                         data:  { status: 'MISSED' as any, carry_forward_subskills: stale.selected_subskills as any, momentum_awarded: -MISS_PENALTY },
                     });
-                    penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
-                    totalDeduction += MISS_PENALTY;
+                    if (r1.count > 0) {
+                        penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+                        totalDeduction += MISS_PENALTY;
+                    }
                 }
                 continue;
             }
             // Case C: IN_PROGRESS but no answers → falls through to MISSED below
         }
 
-        // Case A (PENDING) or Case C (IN_PROGRESS with no answers) → MISSED
-        await prisma.iASession.update({
-            where: { id: stale.id },
+        // Case A (PENDING) or Case C (IN_PROGRESS with no answers) → MISSED.
+        // updateMany with status guard prevents overwriting a concurrent submitIA that
+        // marked this COMPLETED between the findMany above and this write.
+        const r2 = await prisma.iASession.updateMany({
+            where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
             data: {
                 status:                  'MISSED' as any,
                 carry_forward_subskills: stale.selected_subskills as any,
                 momentum_awarded:        -MISS_PENALTY,
             },
         });
-        penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
-        totalDeduction += MISS_PENALTY;
+        if (r2.count > 0) {
+            penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+            totalDeduction += MISS_PENALTY;
+        }
     }
 
     // ── Case D: scheduled dates with NO session row at all ───────────────────

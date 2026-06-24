@@ -104,7 +104,7 @@ Band 1 — Unintelligible. Cannot be understood.`,
 // ── Shared Gemini call ────────────────────────────────────────────────────────
 
 async function callGemini(prompt: string): Promise<IAGradeResult> {
-    const model  = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model  = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     let raw = result.response.text().trim();
 
@@ -150,7 +150,7 @@ function buildPrompt(
 
     return `You are an expert IELTS Internal Assessment grader with years of experience evaluating student responses.
 
-YOUR TASK: Grade the "${criterion}" criterion of this student's ${mode} on a scale of 1-10.
+YOUR TASK: Grade the "${criterion}" criterion of this student's ${mode} on a scale of 1-10 (Band 10 = IELTS 9.0, Band 1 = IELTS 0; every +1 on this scale = +1 IELTS band point).
 
 ═══════════════════════════════════════════════════════════════════════════════
 QUESTION PROMPT:

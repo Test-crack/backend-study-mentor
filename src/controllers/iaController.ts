@@ -5,14 +5,14 @@ import { computeAverageDCS } from '../lib/dcs';
 import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
-import { processIASession, AlreadyCompletedError, type SectionScore } from '../lib/iaProcessor';
+import { processIASession, AlreadyCompletedError, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
 const IA_MIN_DAYS = 2;   // calendar days since first drill required
 const IA_DCS_THRESHOLD = 40;  // avg DCS % required to start the test
 const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 …
-const IA_MIN_WINDOW_MS = 20 * 60 * 1000;  // block new session if <20 min remain in today's window
+const IA_MIN_WINDOW_MS = 40 * 60 * 1000;  // block new session if <40 min remain in today's window (2 sections × 20 min)
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // ─── IST date helpers ─────────────────────────────────────────────────────────
@@ -244,14 +244,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 const SECTION_IA_MS = 20 * 60 * 1000;  // 20 min per section; 2 sections = 40 min total
-const SUB_SCORE_KEY_MAP: Record<string, string> = {
-    GRAMMAR: 'grammarScore',
-    VOCABULARY: 'vocabularyScore',
-    COHERENCE: 'coherenceScore',
-    TASK_RESPONSE: 'taskResponseScore',
-    FLUENCY: 'fluencyScore',
-    PRONUNCIATION: 'pronunciationScore',
-};
+// SUB_SCORE_KEY_MAP imported from iaProcessor — single source of truth
 
 /** UTC instant at IST midnight of today. */
 function todayStartISTLocal(): Date {
@@ -560,8 +553,8 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
 
         // ── 4. New session: carry-forward + 2-week uniqueness + select ──────────
 
-        // 4a. Sub-skills from COMPLETED sessions in the last 14 days — don't repeat
-        const cutoff14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+        // 4a. Sub-skills from COMPLETED sessions in the last 14 IST calendar days — don't repeat
+        const cutoff14 = new Date(addCalendarDays(toISTDateString(new Date()), -14));
         const recentCompleted = await prisma.iASession.findMany({
             where: { student_id: student.id, status: 'COMPLETED' as any, ia_date: { gte: cutoff14 } },
             select: { selected_subskills: true },

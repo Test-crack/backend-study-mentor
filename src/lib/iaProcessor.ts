@@ -19,18 +19,19 @@ export class AlreadyCompletedError extends Error {
 // ── Shared types (also imported by iaController for the HTTP response) ─────────
 
 export type SectionScore = {
-    skill:       string;
-    sub_skill:   string;
-    band:        number;
-    correct:     number;
-    total:       number;
-    ai_graded:   boolean;
-    ai_feedback?: { rationale: string; key_observations: string[] };
+    skill:             string;
+    sub_skill:         string;
+    band:              number;
+    correct:           number;
+    total:             number;
+    ai_question_count: number;
+    ai_graded:         boolean;
+    ai_feedback?:      { rationale: string; key_observations: string[] };
 };
 
 // ── Internal constants ────────────────────────────────────────────────────────
 
-const SUB_SCORE_KEY_MAP: Record<string, string> = {
+export const SUB_SCORE_KEY_MAP: Record<string, string> = {
     GRAMMAR:       'grammarScore',
     VOCABULARY:    'vocabularyScore',
     COHERENCE:     'coherenceScore',
@@ -168,7 +169,7 @@ export async function processIASession(
             key_observations: aiFeedbacks.flatMap(f => f.key_observations),
         } : undefined;
 
-        sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total: mcqQs.length, ai_graded: aiQs.length > 0, ai_feedback: aiFeedback });
+        sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total: mcqQs.length, ai_question_count: aiQs.length, ai_graded: aiQs.length > 0, ai_feedback: aiFeedback });
     }
 
     // ── 4. Pre-fetch competency matrix (for delta display in HTTP response) ────
