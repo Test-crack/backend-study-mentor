@@ -22,7 +22,11 @@ function scoreFromSessions(sessions: { correct_answers: number; total_questions:
 
 export async function computeDailyDCS(studentId: string): Promise<number> {
     const sessions = await prisma.drillSession.findMany({
-        where: { student_id: studentId, created_at: { gte: todayStartIST() } },
+        where: {
+            student_id: studentId,
+            created_at: { gte: todayStartIST() },
+            status:     { in: ['DRILL_DONE', 'APPLY_DONE'] },
+        },
         select: { correct_answers: true, total_questions: true }
     });
     return scoreFromSessions(sessions);
@@ -42,7 +46,7 @@ export async function computeDailyDCS(studentId: string): Promise<number> {
  */
 export async function computeAverageDCS(studentId: string): Promise<number> {
     const sessions = await prisma.drillSession.findMany({
-        where:  { student_id: studentId },
+        where:  { student_id: studentId, status: { in: ['DRILL_DONE', 'APPLY_DONE'] } },
         select: { sub_skill: true, correct_answers: true, total_questions: true }
     });
 

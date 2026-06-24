@@ -10,6 +10,12 @@
 import prisma from './prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from './iaGrading';
 
+// Thrown when processIASession is called on an already-COMPLETED session.
+// Callers must catch this and return the stored result instead of erroring.
+export class AlreadyCompletedError extends Error {
+    constructor() { super('Session already graded'); this.name = 'AlreadyCompletedError'; }
+}
+
 // ── Shared types (also imported by iaController for the HTTP response) ─────────
 
 export type SectionScore = {
@@ -62,6 +68,8 @@ export async function processIASession(
     studentId: string,
 ): Promise<IAProcessResult> {
     const session = await prisma.iASession.findUniqueOrThrow({ where: { id: sessionId } });
+    // Fast-path: if already COMPLETED, don't re-run AI grading or momentum writes.
+    if (session.status === 'COMPLETED') throw new AlreadyCompletedError();
 
     // ── 1. Load questions + strip __meta from saved answers ───────────────────
     const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
@@ -136,7 +144,7 @@ export async function processIASession(
             }
             if (sa && ca && sa === ca) correct++;
         }
-        const mcqScore = mcqQs.length > 0 ? Math.max(1, Math.min(10, (correct / mcqQs.length) * 10)) : null;
+        const mcqScore = mcqQs.length > 0 ? Math.min(10, (correct / mcqQs.length) * 10) : null;
 
         const aiBands     = aiBandsBySectionIdx.get(i) ?? [];
         const aiFeedbacks = aiFeedbackBySectionIdx.get(i) ?? [];
@@ -226,10 +234,14 @@ export async function processIASession(
 
     // ── 6. DB transaction ─────────────────────────────────────────────────────
     const updatedMomentum = await prisma.$transaction(async (tx) => {
-        await tx.iASession.update({
-            where: { id: sessionId },
+        // Atomic idempotency guard — if a concurrent call already marked this session
+        // COMPLETED, updateMany returns count=0 and we throw to roll back every side effect
+        // (assessment history rows, matrix updates, momentum increment) completely.
+        const markResult = await tx.iASession.updateMany({
+            where: { id: sessionId, status: { notIn: ['COMPLETED', 'MISSED'] as any } },
             data:  { status: 'COMPLETED' as any, scores: sectionScores as any, momentum_awarded: momentumAwarded, time_submitted_at: new Date() },
         });
+        if (markResult.count === 0) throw new AlreadyCompletedError();
 
         for (const s of sectionScores) {
             const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill] ?? null;
@@ -266,7 +278,18 @@ export async function processIASession(
 
             let newSkillBand: number;
             if (s.skill === 'READING' || s.skill === 'LISTENING') {
-                newSkillBand = s.band;
+                // Apply the same weighted smoothing used for WRITING/SPEAKING so a single
+                // bad test can't crash the band by more than 2 points in one session.
+                const existingSkillBand = existing?.band_score ? parseFloat(String(existing.band_score)) : null;
+                if (existingSkillBand !== null && !isNaN(existingSkillBand)) {
+                    let w = 0.4 * existingSkillBand + 0.6 * s.band;
+                    const dev = w - existingSkillBand;
+                    if (dev >  2) w = existingSkillBand + 2;
+                    if (dev < -2) w = existingSkillBand - 2;
+                    newSkillBand = Math.min(9, Math.max(0, Math.round(w * 2) / 2));
+                } else {
+                    newSkillBand = Math.min(9, Math.max(0, s.band));
+                }
             } else {
                 const keys = s.skill === 'WRITING'
                     ? ['grammarScore', 'vocabularyScore', 'coherenceScore', 'taskResponseScore']

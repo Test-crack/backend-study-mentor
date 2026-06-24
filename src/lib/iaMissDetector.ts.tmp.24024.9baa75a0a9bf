@@ -162,8 +162,8 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
     if (firstDrill) {
         const firstDrillStr = toISTDateString(firstDrill.created_at);
 
-        // Only retroactively mark dates from the student's actual eligibility date onward.
-        // That is the IST calendar date of their 6th completed drill — the real gate.
+        // Only retroactively mark dates from the student's first-ever IA session onward.
+        // Dates before that are pre-eligibility — the gate wouldn't have opened anyway.
         const eligibilityFloor = sixthDrill
             ? toISTDateString(sixthDrill.created_at)
             : todayStr;  // fewer than 6 drills → student was never eligible → nothing to mark
@@ -186,9 +186,11 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                         ia_date:    { in: scheduledPast.map(s => new Date(s.dateStr)) },
                     },
                     select: { ia_date: true },
-                })).map(s => toISTDateString(
-                    s.ia_date instanceof Date ? s.ia_date : new Date(s.ia_date as any)
-                ))
+                })).map(s =>
+                    s.ia_date instanceof Date
+                        ? s.ia_date.toISOString().split('T')[0]
+                        : String(s.ia_date)
+                )
             );
 
             // Create MISSED rows for every past scheduled date that has no session

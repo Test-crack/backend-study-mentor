@@ -5,7 +5,7 @@ import { computeAverageDCS } from '../lib/dcs';
 import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
-import { processIASession, type SectionScore } from '../lib/iaProcessor';
+import { processIASession, AlreadyCompletedError, type SectionScore } from '../lib/iaProcessor';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
@@ -532,6 +532,32 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             });
         }
 
+        // ── 3b. Prerequisites + DCS gate (new sessions only — resume always allowed) ──────
+        const [completedDrillCount, avgDcsForGate] = await Promise.all([
+            prisma.drillSession.count({
+                where: { student_id: student.id, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any } }
+            }),
+            computeAverageDCS(student.id),
+        ]);
+        if (completedDrillCount < IA_DRILL_THRESHOLD) {
+            return res.status(403).json({
+                success: false, error: 'prerequisites_not_met',
+                message: `Complete at least ${IA_DRILL_THRESHOLD} drill sessions before starting an IA. You have ${completedDrillCount}.`
+            });
+        }
+        if (daysSinceFirst < IA_MIN_DAYS) {
+            return res.status(403).json({
+                success: false, error: 'prerequisites_not_met',
+                message: `At least ${IA_MIN_DAYS} days must pass after your first drill before starting an IA. Currently: ${daysSinceFirst} day(s).`
+            });
+        }
+        if (avgDcsForGate < IA_DCS_THRESHOLD) {
+            return res.status(403).json({
+                success: false, error: 'dcs_not_met',
+                message: `Your average drill accuracy must be at least ${IA_DCS_THRESHOLD}% to start an IA. Currently: ${avgDcsForGate}%.`
+            });
+        }
+
         // ── 4. New session: carry-forward + 2-week uniqueness + select ──────────
 
         // 4a. Sub-skills from COMPLETED sessions in the last 14 days — don't repeat
@@ -721,6 +747,21 @@ export async function submitIA(req: AuthRequest, res: Response) {
         });
 
     } catch (err) {
+        if (err instanceof AlreadyCompletedError) {
+            // Race condition: a concurrent submit (or miss-detector sweep) graded this
+            // session just ahead of this call.  Return the stored result so the client
+            // can display scores normally rather than hitting a 500.
+            const stored = await prisma.iASession.findUnique({
+                where:  { id: req.body.session_id },
+                select: { scores: true, momentum_awarded: true },
+            });
+            return res.json({
+                success:          true,
+                already_done:     true,
+                section_scores:   stored?.scores           ?? [],
+                momentum_awarded: stored?.momentum_awarded ?? 0,
+            });
+        }
         console.error('[IASubmit] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
