@@ -542,6 +542,8 @@ type MockSkillScoreResponse = MockSkillScore & {
     prev_matrix_band: number | null;
 };
 
+class MockAlreadyCompletedError extends Error {}
+
 export async function submitMock(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
@@ -794,9 +796,9 @@ export async function submitMock(req: AuthRequest, res: Response) {
 
         // ── 9. DB transaction ─────────────────────────────────────────────────
         const updatedMomentum = await prisma.$transaction(async (tx) => {
-            // a) Session complete
-            await tx.mocksessions.update({
-                where: { id: session_id },
+            // a) Session complete — status guard prevents concurrent double-award
+            const marked = await tx.mocksessions.updateMany({
+                where: { id: session_id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
                 data:  {
                     status:            'COMPLETED' as any,
                     scores:            skillScores as any,
@@ -805,6 +807,8 @@ export async function submitMock(req: AuthRequest, res: Response) {
                     time_submitted_at: new Date()
                 }
             });
+            // If count === 0 the session was completed by a concurrent request — abort cleanly
+            if (marked.count === 0) throw new MockAlreadyCompletedError();
 
             // b) AssessmentHistory + CompetencyMatrix per skill
             for (const s of skillScoresResponse) {
@@ -851,6 +855,15 @@ export async function submitMock(req: AuthRequest, res: Response) {
             skill_scores:        skillScoresResponse,
         });
     } catch (err) {
+        if (err instanceof MockAlreadyCompletedError) {
+            const s = await prisma.mocksessions.findUnique({ where: { id: req.body?.session_id } });
+            return res.json({
+                success: true, already_done: true,
+                real_band_score:  s?.real_band_score ?? null,
+                scores:           s?.scores ?? null,
+                momentum_awarded: s?.momentum_awarded ?? 0,
+            });
+        }
         console.error('[MockSubmit] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
