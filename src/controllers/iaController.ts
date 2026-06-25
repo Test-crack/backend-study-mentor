@@ -5,14 +5,14 @@ import { computeAverageDCS } from '../lib/dcs';
 import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
-import { processIASession, type SectionScore } from '../lib/iaProcessor';
+import { processIASession, AlreadyCompletedError, applySmoothing, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
 const IA_MIN_DAYS = 2;   // calendar days since first drill required
 const IA_DCS_THRESHOLD = 40;  // avg DCS % required to start the test
 const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 …
-const IA_MIN_WINDOW_MS = 20 * 60 * 1000;  // block new session if <20 min remain in today's window
+const IA_MIN_WINDOW_MS = 40 * 60 * 1000;  // block new session if <40 min remain in today's window (2 sections × 20 min)
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // ─── IST date helpers ─────────────────────────────────────────────────────────
@@ -244,14 +244,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 const SECTION_IA_MS = 20 * 60 * 1000;  // 20 min per section; 2 sections = 40 min total
-const SUB_SCORE_KEY_MAP: Record<string, string> = {
-    GRAMMAR: 'grammarScore',
-    VOCABULARY: 'vocabularyScore',
-    COHERENCE: 'coherenceScore',
-    TASK_RESPONSE: 'taskResponseScore',
-    FLUENCY: 'fluencyScore',
-    PRONUNCIATION: 'pronunciationScore',
-};
+// SUB_SCORE_KEY_MAP imported from iaProcessor — single source of truth
 
 /** UTC instant at IST midnight of today. */
 function todayStartISTLocal(): Date {
@@ -532,10 +525,36 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             });
         }
 
+        // ── 3b. Prerequisites + DCS gate (new sessions only — resume always allowed) ──────
+        const [completedDrillCount, avgDcsForGate] = await Promise.all([
+            prisma.drillSession.count({
+                where: { student_id: student.id, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any } }
+            }),
+            computeAverageDCS(student.id),
+        ]);
+        if (completedDrillCount < IA_DRILL_THRESHOLD) {
+            return res.status(403).json({
+                success: false, error: 'prerequisites_not_met',
+                message: `Complete at least ${IA_DRILL_THRESHOLD} drill sessions before starting an IA. You have ${completedDrillCount}.`
+            });
+        }
+        if (daysSinceFirst < IA_MIN_DAYS) {
+            return res.status(403).json({
+                success: false, error: 'prerequisites_not_met',
+                message: `At least ${IA_MIN_DAYS} days must pass after your first drill before starting an IA. Currently: ${daysSinceFirst} day(s).`
+            });
+        }
+        if (avgDcsForGate < IA_DCS_THRESHOLD) {
+            return res.status(403).json({
+                success: false, error: 'dcs_not_met',
+                message: `Your average drill accuracy must be at least ${IA_DCS_THRESHOLD}% to start an IA. Currently: ${avgDcsForGate}%.`
+            });
+        }
+
         // ── 4. New session: carry-forward + 2-week uniqueness + select ──────────
 
-        // 4a. Sub-skills from COMPLETED sessions in the last 14 days — don't repeat
-        const cutoff14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+        // 4a. Sub-skills from COMPLETED sessions in the last 14 IST calendar days — don't repeat
+        const cutoff14 = new Date(addCalendarDays(toISTDateString(new Date()), -14));
         const recentCompleted = await prisma.iASession.findMany({
             where: { student_id: student.id, status: 'COMPLETED' as any, ia_date: { gte: cutoff14 } },
             select: { selected_subskills: true },
@@ -651,15 +670,6 @@ type SectionScoreResponse = SectionScore & {
     new_matrix_band: number;
 };
 
-/** Mirrors the weighted update in the transaction so the API response can show the smoothed value. */
-function computeNewMatrixBand(iaBand: number, prevBand: number | null): number {
-    if (prevBand === null) return Math.min(9, Math.max(0, iaBand));
-    let weighted = 0.4 * prevBand + 0.6 * iaBand;
-    const deviation = weighted - prevBand;
-    if (deviation >  2) weighted = prevBand + 2;
-    if (deviation < -2) weighted = prevBand - 2;
-    return Math.min(9, Math.max(0, Math.round(weighted * 2) / 2));
-}
 
 const SUB_SKILL_LABEL: Record<string, string> = {
     GRAMMAR: 'Grammar', VOCABULARY: 'Vocabulary', COHERENCE: 'Coherence',
@@ -707,7 +717,7 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const sectionScoresResponse = sectionScores.map(s => {
             const prevBand      = previousBands.get(s.sub_skill) ?? null;
             const delta         = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
-            const newMatrixBand = computeNewMatrixBand(s.band, prevBand);
+            const newMatrixBand = applySmoothing(prevBand, s.band);
             return { ...s, previous_band: prevBand, delta, new_matrix_band: newMatrixBand };
         });
 
@@ -721,6 +731,21 @@ export async function submitIA(req: AuthRequest, res: Response) {
         });
 
     } catch (err) {
+        if (err instanceof AlreadyCompletedError) {
+            // Race condition: a concurrent submit (or miss-detector sweep) graded this
+            // session just ahead of this call.  Return the stored result so the client
+            // can display scores normally rather than hitting a 500.
+            const stored = await prisma.iASession.findUnique({
+                where:  { id: req.body.session_id },
+                select: { scores: true, momentum_awarded: true },
+            });
+            return res.json({
+                success:          true,
+                already_done:     true,
+                section_scores:   stored?.scores           ?? [],
+                momentum_awarded: stored?.momentum_awarded ?? 0,
+            });
+        }
         console.error('[IASubmit] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }

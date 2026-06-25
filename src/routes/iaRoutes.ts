@@ -1,7 +1,10 @@
 import { Router } from 'express';
+import { requireAuth } from '../middleware/auth';
 import { getIAEligibility, getIAStatus, getIAQuestions, saveIAAnswer, submitIA } from '../controllers/iaController';
 
 const router = Router();
+
+router.use(requireAuth);
 
 router.get('/eligibility', getIAEligibility); // backward compat — delegates to /status
 router.get('/status',      getIAStatus);

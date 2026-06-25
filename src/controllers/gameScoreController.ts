@@ -283,7 +283,7 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             });
         }
 
-        // DCS gate — student must score ≥ 75% today to unlock extra drill
+        // DCS gate — student must score ≥ 40% today to unlock extra drill
         const daily_dcs = await computeDailyDCS(student.id);
         if (daily_dcs < DCS_EXTRA_THRESHOLD) {
             return res.status(400).json({
@@ -301,22 +301,40 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             });
         }
 
-        // Deduct pts and grant one pre-authorized credit atomically.
-        // The credit survives logout/disconnect — consumed only when the extra
-        // drill session is actually saved via POST /api/drills/session.
-        const updated = await prisma.institute_students.update({
-            where: { id: student.id },
+        // Atomic purchase: guards live in the WHERE clause so two concurrent requests
+        // that both pass the soft checks above cannot both decrement.
+        // If count === 0 the DB rejected the write — stale read (race) or state changed.
+        const result = await prisma.institute_students.updateMany({
+            where: {
+                id:                  student.id,
+                momentum_score:      { gte: EXTRA_SESSION_COST },
+                extra_drill_credits: 0,
+            },
             data: {
-                momentum_score:     { decrement: EXTRA_SESSION_COST },
-                extra_drill_credits: { increment: 1 }
-            }
+                momentum_score:      { decrement: EXTRA_SESSION_COST },
+                extra_drill_credits: { increment: 1 },
+            },
+        });
+
+        if (result.count === 0) {
+            return res.status(409).json({
+                success: false,
+                error:   'purchase_failed',
+                message: 'Purchase failed — your balance or credit status changed. Please refresh and try again.',
+            });
+        }
+
+        // updateMany does not return the updated row — fetch fresh values for the response.
+        const fresh = await prisma.institute_students.findUnique({
+            where:  { id: student.id },
+            select: { momentum_score: true, extra_drill_credits: true },
         });
 
         return res.json({
-            success: true,
-            momentum_score:    updated.momentum_score,
-            extra_drill_credits: updated.extra_drill_credits,
-            message: `${EXTRA_SESSION_COST} pts spent. Extra drill session unlocked.`
+            success:             true,
+            momentum_score:      fresh!.momentum_score,
+            extra_drill_credits: fresh!.extra_drill_credits,
+            message:             `${EXTRA_SESSION_COST} pts spent. Extra drill session unlocked.`,
         });
     } catch (err) {
         console.error('[AuthorizeExtra] error:', err);

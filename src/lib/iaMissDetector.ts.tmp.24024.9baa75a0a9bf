@@ -115,38 +115,30 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                         continue; // concurrent call already graded it — session is COMPLETED, move on
                     }
                     console.error(`[iaMissDetector] auto-grade failed for session ${stale.id}:`, err);
-                    // Fall through: mark MISSED so it doesn't stay stuck IN_PROGRESS.
-                    // Use updateMany with status guard to avoid a TOCTOU race where a concurrent
-                    // submitIA already marked this COMPLETED between our findMany and here.
-                    const r1 = await prisma.iASession.updateMany({
-                        where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+                    // Fall through: mark MISSED so it doesn't stay stuck IN_PROGRESS
+                    await prisma.iASession.update({
+                        where: { id: stale.id },
                         data:  { status: 'MISSED' as any, carry_forward_subskills: stale.selected_subskills as any, momentum_awarded: -MISS_PENALTY },
                     });
-                    if (r1.count > 0) {
-                        penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
-                        totalDeduction += MISS_PENALTY;
-                    }
+                    penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+                    totalDeduction += MISS_PENALTY;
                 }
                 continue;
             }
             // Case C: IN_PROGRESS but no answers → falls through to MISSED below
         }
 
-        // Case A (PENDING) or Case C (IN_PROGRESS with no answers) → MISSED.
-        // updateMany with status guard prevents overwriting a concurrent submitIA that
-        // marked this COMPLETED between the findMany above and this write.
-        const r2 = await prisma.iASession.updateMany({
-            where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+        // Case A (PENDING) or Case C (IN_PROGRESS with no answers) → MISSED
+        await prisma.iASession.update({
+            where: { id: stale.id },
             data: {
                 status:                  'MISSED' as any,
                 carry_forward_subskills: stale.selected_subskills as any,
                 momentum_awarded:        -MISS_PENALTY,
             },
         });
-        if (r2.count > 0) {
-            penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
-            totalDeduction += MISS_PENALTY;
-        }
+        penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+        totalDeduction += MISS_PENALTY;
     }
 
     // ── Case D: scheduled dates with NO session row at all ───────────────────
@@ -170,8 +162,8 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
     if (firstDrill) {
         const firstDrillStr = toISTDateString(firstDrill.created_at);
 
-        // Only retroactively mark dates from the student's actual eligibility date onward.
-        // That is the IST calendar date of their 6th completed drill — the real gate.
+        // Only retroactively mark dates from the student's first-ever IA session onward.
+        // Dates before that are pre-eligibility — the gate wouldn't have opened anyway.
         const eligibilityFloor = sixthDrill
             ? toISTDateString(sixthDrill.created_at)
             : todayStr;  // fewer than 6 drills → student was never eligible → nothing to mark
@@ -194,9 +186,11 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                         ia_date:    { in: scheduledPast.map(s => new Date(s.dateStr)) },
                     },
                     select: { ia_date: true },
-                })).map(s => toISTDateString(
-                    s.ia_date instanceof Date ? s.ia_date : new Date(s.ia_date as any)
-                ))
+                })).map(s =>
+                    s.ia_date instanceof Date
+                        ? s.ia_date.toISOString().split('T')[0]
+                        : String(s.ia_date)
+                )
             );
 
             // Create MISSED rows for every past scheduled date that has no session

@@ -10,21 +10,46 @@
 import prisma from './prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from './iaGrading';
 
+// Thrown when processIASession is called on an already-COMPLETED session.
+// Callers must catch this and return the stored result instead of erroring.
+export class AlreadyCompletedError extends Error {
+    constructor() { super('Session already graded'); this.name = 'AlreadyCompletedError'; }
+}
+
+/**
+ * Single implementation of the competency-matrix smoothing rule:
+ *   smoothed = 0.4 × oldBand + 0.6 × newBand, deviation capped at ±2, rounded to 0.5.
+ *
+ * Used for W/S sub-skill scores, R/L skill bands, and the response preview in iaController.
+ * Having one copy means the ±2 cap and weights are always in sync.
+ */
+export function applySmoothing(oldBand: number | null, newBand: number): number {
+    if (oldBand === null || isNaN(oldBand)) {
+        return Math.min(9, Math.max(0, Math.round(newBand * 2) / 2));
+    }
+    let w = 0.4 * oldBand + 0.6 * newBand;
+    const dev = w - oldBand;
+    if (dev >  2) w = oldBand + 2;
+    if (dev < -2) w = oldBand - 2;
+    return Math.min(9, Math.max(0, Math.round(w * 2) / 2));
+}
+
 // ── Shared types (also imported by iaController for the HTTP response) ─────────
 
 export type SectionScore = {
-    skill:       string;
-    sub_skill:   string;
-    band:        number;
-    correct:     number;
-    total:       number;
-    ai_graded:   boolean;
-    ai_feedback?: { rationale: string; key_observations: string[] };
+    skill:             string;
+    sub_skill:         string;
+    band:              number;
+    correct:           number;
+    total:             number;
+    ai_question_count: number;
+    ai_graded:         boolean;
+    ai_feedback?:      { rationale: string; key_observations: string[] };
 };
 
 // ── Internal constants ────────────────────────────────────────────────────────
 
-const SUB_SCORE_KEY_MAP: Record<string, string> = {
+export const SUB_SCORE_KEY_MAP: Record<string, string> = {
     GRAMMAR:       'grammarScore',
     VOCABULARY:    'vocabularyScore',
     COHERENCE:     'coherenceScore',
@@ -62,6 +87,8 @@ export async function processIASession(
     studentId: string,
 ): Promise<IAProcessResult> {
     const session = await prisma.iASession.findUniqueOrThrow({ where: { id: sessionId } });
+    // Fast-path: if already COMPLETED, don't re-run AI grading or momentum writes.
+    if (session.status === 'COMPLETED') throw new AlreadyCompletedError();
 
     // ── 1. Load questions + strip __meta from saved answers ───────────────────
     const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
@@ -136,7 +163,12 @@ export async function processIASession(
             }
             if (sa && ca && sa === ca) correct++;
         }
-        const mcqScore = mcqQs.length > 0 ? Math.max(1, Math.min(10, (correct / mcqQs.length) * 10)) : null;
+        // Map MCQ to the same 1–10 scale Gemini uses: 0 correct → 1 (IELTS 0), all correct → 10 (IELTS 9).
+        // Using N/T * 10 would put 0 correct at score 0, out of the 1–10 scale and mismatched against
+        // AI sub-scores when combined in a weighted average.  Math.max(1, N/T*10) fixes the floor but
+        // collapses 0% and any score below 10% to score 1 — a different form of inflation.
+        // 1 + (N/T)*9 is proportional within [1,10] with the correct anchors at both ends.
+        const mcqScore = mcqQs.length > 0 ? Math.min(10, 1 + (correct / mcqQs.length) * 9) : null;
 
         const aiBands     = aiBandsBySectionIdx.get(i) ?? [];
         const aiFeedbacks = aiFeedbackBySectionIdx.get(i) ?? [];
@@ -160,7 +192,7 @@ export async function processIASession(
             key_observations: aiFeedbacks.flatMap(f => f.key_observations),
         } : undefined;
 
-        sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total: mcqQs.length, ai_graded: aiQs.length > 0, ai_feedback: aiFeedback });
+        sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total: mcqQs.length, ai_question_count: aiQs.length, ai_graded: aiQs.length > 0, ai_feedback: aiFeedback });
     }
 
     // ── 4. Pre-fetch competency matrix (for delta display in HTTP response) ────
@@ -226,10 +258,14 @@ export async function processIASession(
 
     // ── 6. DB transaction ─────────────────────────────────────────────────────
     const updatedMomentum = await prisma.$transaction(async (tx) => {
-        await tx.iASession.update({
-            where: { id: sessionId },
+        // Atomic idempotency guard — if a concurrent call already marked this session
+        // COMPLETED, updateMany returns count=0 and we throw to roll back every side effect
+        // (assessment history rows, matrix updates, momentum increment) completely.
+        const markResult = await tx.iASession.updateMany({
+            where: { id: sessionId, status: { notIn: ['COMPLETED', 'MISSED'] as any } },
             data:  { status: 'COMPLETED' as any, scores: sectionScores as any, momentum_awarded: momentumAwarded, time_submitted_at: new Date() },
         });
+        if (markResult.count === 0) throw new AlreadyCompletedError();
 
         for (const s of sectionScores) {
             const subScoreKey = SUB_SCORE_KEY_MAP[s.sub_skill] ?? null;
@@ -253,20 +289,16 @@ export async function processIASession(
 
             if (subScoreKey) {
                 const oldScore = currentSubScores[subScoreKey];
-                if (typeof oldScore === 'number' && !isNaN(oldScore)) {
-                    let w = 0.4 * oldScore + 0.6 * s.band;
-                    const dev = w - oldScore;
-                    if (dev >  2) w = oldScore + 2;
-                    if (dev < -2) w = oldScore - 2;
-                    updatedSubScores[subScoreKey] = Math.min(9, Math.max(0, Math.round(w * 2) / 2));
-                } else {
-                    updatedSubScores[subScoreKey] = Math.min(9, Math.max(0, s.band));
-                }
+                updatedSubScores[subScoreKey] = applySmoothing(
+                    typeof oldScore === 'number' && !isNaN(oldScore) ? oldScore : null,
+                    s.band
+                );
             }
 
             let newSkillBand: number;
             if (s.skill === 'READING' || s.skill === 'LISTENING') {
-                newSkillBand = s.band;
+                const existingSkillBand = existing?.band_score ? parseFloat(String(existing.band_score)) : null;
+                newSkillBand = applySmoothing(existingSkillBand, s.band);
             } else {
                 const keys = s.skill === 'WRITING'
                     ? ['grammarScore', 'vocabularyScore', 'coherenceScore', 'taskResponseScore']
