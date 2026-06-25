@@ -16,6 +16,24 @@ export class AlreadyCompletedError extends Error {
     constructor() { super('Session already graded'); this.name = 'AlreadyCompletedError'; }
 }
 
+/**
+ * Single implementation of the competency-matrix smoothing rule:
+ *   smoothed = 0.4 × oldBand + 0.6 × newBand, deviation capped at ±2, rounded to 0.5.
+ *
+ * Used for W/S sub-skill scores, R/L skill bands, and the response preview in iaController.
+ * Having one copy means the ±2 cap and weights are always in sync.
+ */
+export function applySmoothing(oldBand: number | null, newBand: number): number {
+    if (oldBand === null || isNaN(oldBand)) {
+        return Math.min(9, Math.max(0, Math.round(newBand * 2) / 2));
+    }
+    let w = 0.4 * oldBand + 0.6 * newBand;
+    const dev = w - oldBand;
+    if (dev >  2) w = oldBand + 2;
+    if (dev < -2) w = oldBand - 2;
+    return Math.min(9, Math.max(0, Math.round(w * 2) / 2));
+}
+
 // ── Shared types (also imported by iaController for the HTTP response) ─────────
 
 export type SectionScore = {
@@ -145,7 +163,12 @@ export async function processIASession(
             }
             if (sa && ca && sa === ca) correct++;
         }
-        const mcqScore = mcqQs.length > 0 ? Math.min(10, (correct / mcqQs.length) * 10) : null;
+        // Map MCQ to the same 1–10 scale Gemini uses: 0 correct → 1 (IELTS 0), all correct → 10 (IELTS 9).
+        // Using N/T * 10 would put 0 correct at score 0, out of the 1–10 scale and mismatched against
+        // AI sub-scores when combined in a weighted average.  Math.max(1, N/T*10) fixes the floor but
+        // collapses 0% and any score below 10% to score 1 — a different form of inflation.
+        // 1 + (N/T)*9 is proportional within [1,10] with the correct anchors at both ends.
+        const mcqScore = mcqQs.length > 0 ? Math.min(10, 1 + (correct / mcqQs.length) * 9) : null;
 
         const aiBands     = aiBandsBySectionIdx.get(i) ?? [];
         const aiFeedbacks = aiFeedbackBySectionIdx.get(i) ?? [];
@@ -266,31 +289,16 @@ export async function processIASession(
 
             if (subScoreKey) {
                 const oldScore = currentSubScores[subScoreKey];
-                if (typeof oldScore === 'number' && !isNaN(oldScore)) {
-                    let w = 0.4 * oldScore + 0.6 * s.band;
-                    const dev = w - oldScore;
-                    if (dev >  2) w = oldScore + 2;
-                    if (dev < -2) w = oldScore - 2;
-                    updatedSubScores[subScoreKey] = Math.min(9, Math.max(0, Math.round(w * 2) / 2));
-                } else {
-                    updatedSubScores[subScoreKey] = Math.min(9, Math.max(0, s.band));
-                }
+                updatedSubScores[subScoreKey] = applySmoothing(
+                    typeof oldScore === 'number' && !isNaN(oldScore) ? oldScore : null,
+                    s.band
+                );
             }
 
             let newSkillBand: number;
             if (s.skill === 'READING' || s.skill === 'LISTENING') {
-                // Apply the same weighted smoothing used for WRITING/SPEAKING so a single
-                // bad test can't crash the band by more than 2 points in one session.
                 const existingSkillBand = existing?.band_score ? parseFloat(String(existing.band_score)) : null;
-                if (existingSkillBand !== null && !isNaN(existingSkillBand)) {
-                    let w = 0.4 * existingSkillBand + 0.6 * s.band;
-                    const dev = w - existingSkillBand;
-                    if (dev >  2) w = existingSkillBand + 2;
-                    if (dev < -2) w = existingSkillBand - 2;
-                    newSkillBand = Math.min(9, Math.max(0, Math.round(w * 2) / 2));
-                } else {
-                    newSkillBand = Math.min(9, Math.max(0, s.band));
-                }
+                newSkillBand = applySmoothing(existingSkillBand, s.band);
             } else {
                 const keys = s.skill === 'WRITING'
                     ? ['grammarScore', 'vocabularyScore', 'coherenceScore', 'taskResponseScore']

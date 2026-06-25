@@ -243,8 +243,10 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
         });
         const abandonedCount = expiredSessions.length;
         if (abandonedCount > 0) {
+            // Status guard in WHERE prevents a TOCTOU race where a student submits
+            // between the findMany above and this write, overwriting a COMPLETED session.
             await prisma.mocksessions.updateMany({
-                where: { id: { in: expiredSessions.map(s => s.id) } },
+                where: { id: { in: expiredSessions.map(s => s.id) }, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
                 data:  { status: 'ABANDONED' as any }
             });
         }
@@ -259,10 +261,19 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
 
         const standardSession = thisMonthSessions.find(s => s.attempt_type === 'STANDARD');
         const earnedSession   = thisMonthSessions.find(s => s.attempt_type === 'EARNED');
-        const activeSession   = thisMonthSessions.find(s => s.status === 'IN_PROGRESS' || s.status === 'PENDING');
+        // MK-B-07: query globally (no month_year filter) so a PENDING/IN_PROGRESS session
+        // from last month whose 72-hour window is still open isn't invisible to the gate.
+        // The abandoned sweep above has already expired stale sessions, so any remaining
+        // PENDING/IN_PROGRESS is genuinely still active regardless of which month it's from.
+        const activeSession   = await prisma.mocksessions.findFirst({
+            where:  { student_id: student.id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
+            select: { id: true, status: true }
+        });
 
-        const standardUsed = !!standardSession && (standardSession.status === 'COMPLETED' || standardSession.status === 'IN_PROGRESS');
-        const earnedUsed   = !!earnedSession   && (earnedSession.status   === 'COMPLETED' || earnedSession.status   === 'IN_PROGRESS');
+        // ABANDONED counts as "used" — window expired, slot is forfeited for this attempt type.
+        // Only PENDING is treated as "not yet started" (slot reserved but no test in progress).
+        const standardUsed = !!standardSession && standardSession.status !== 'PENDING';
+        const earnedUsed   = !!earnedSession   && earnedSession.status   !== 'PENDING';
 
         const daysOnPlatform = Math.floor((Date.now() - student.created_at.getTime()) / 86_400_000);
         const earnedEligible =
@@ -286,7 +297,9 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
             has_active_session:        !!activeSession,
             active_session_id:         activeSession?.id ?? null,
             standard_used_this_month:  standardUsed,
+            standard_session_status:   standardSession?.status ?? null,
             earned_used_this_month:    earnedUsed,
+            earned_session_status:     earnedSession?.status   ?? null,
             earned_mock_eligible:      earnedEligible,
             can_start_earned:          earnedEligible && !earnedUsed && !activeSession,
             earned_mock_reasons:       earnedReasons,
@@ -376,10 +389,21 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         if (!eligibility.isEligible) return res.status(403).json({ success: false, error: 'Not eligible for mock test.', reasons: eligibility.reasons });
 
         // ── 3. Check monthly slot ─────────────────────────────────────────────
+        // Must handle every terminal status here. Previously only COMPLETED was checked,
+        // so an ABANDONED slot fell through to prisma.create() → P2002 unique constraint
+        // crash, permanently locking the student out for the month (MK-B-01).
         const existingSlot = await prisma.mocksessions.findFirst({
             where: { student_id: student.id, month_year: monthYear, attempt_type: attemptType as any }
         });
-        if (existingSlot?.status === 'COMPLETED') return res.status(409).json({ success: false, error: `${attemptType} mock already used this month.` });
+        if (existingSlot) {
+            // All non-null statuses consume the monthly slot — no retries.
+            // ABANDONED = the 72-hour window expired without submission; slot is forfeited.
+            // COMPLETED = submitted normally.  IN_PROGRESS/PENDING = resume path above handles.
+            const msg = existingSlot.status === 'ABANDONED'
+                ? `Your ${attemptType.toLowerCase()} mock session expired without submission. This month's slot is consumed — a new slot opens on the 1st.`
+                : `${attemptType} mock already used this month.`;
+            return res.status(409).json({ success: false, error: msg, slot_status: existingSlot.status });
+        }
 
         // ── 4. Earned: validate + deduct momentum atomically ──────────────────
         if (attemptType === 'EARNED') {
@@ -479,6 +503,9 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
         }
 
         if (!question_id || answer === undefined) return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
+        if (typeof answer !== 'string' && typeof answer !== 'number') {
+            return res.status(400).json({ success: false, error: 'answer must be a string or number.' });
+        }
         current[question_id] = String(answer);
         await prisma.mocksessions.update({ where: { id: session_id }, data: { answers: current as any, status: 'IN_PROGRESS' as any } });
         return res.json({ success: true, saved: true });
@@ -530,8 +557,19 @@ export async function submitMock(req: AuthRequest, res: Response) {
         const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
         if (!session)                            return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.student_id !== student.id)   return res.status(403).json({ success: false, error: 'Forbidden.' });
-        if (session.status === 'COMPLETED')      return res.json({ success: true, already_done: true });
+        if (session.status === 'COMPLETED')      return res.json({
+            success: true,
+            already_done:    true,
+            real_band_score: session.real_band_score,
+            scores:          session.scores,
+            momentum_awarded: session.momentum_awarded,
+        });
         if (session.status === 'ABANDONED')      return res.status(400).json({ success: false, error: 'Session window has expired.' });
+        // MK-B-11: the 3-hour session length is enforced client-side only (frontend timer).
+        // Server-side, the only hard gate is the 72-hour window_closes_at. This is intentional:
+        // students may pause and resume within the window; the frontend prevents starting new
+        // sections once the 3-hour clock runs out, but the server accepts a late submit rather
+        // than silently discarding completed work.
         if (new Date() > session.window_closes_at) {
             await prisma.mocksessions.update({ where: { id: session_id }, data: { status: 'ABANDONED' as any } });
             return res.status(400).json({ success: false, error: 'Mock window has closed.' });
@@ -563,7 +601,9 @@ export async function submitMock(req: AuthRequest, res: Response) {
                 const rawText  = (answers[q.id] ?? '').trim();
                 const text     = rawText === '[no transcript]' ? '' : rawText;
                 const subSkill = String(q.sub_skill ?? (cfg.skill === 'WRITING' ? 'TASK_RESPONSE' : 'FLUENCY'));
-                const key      = `${i}:${subSkill}`;
+                // Key by skill name, not loop index — index-keyed lookups break if the
+                // questionIdsConfig array order ever differs between creation and submission.
+                const key      = `${cfg.skill}:${subSkill}`;
                 aiJobs.push((async (): Promise<AIJob> => {
                     const result = q.question_type === 'WRITING_PROMPT'
                         ? await gradeIAWritingPrompt(subSkill, q.prompt_text, text)
@@ -621,13 +661,14 @@ export async function submitMock(req: AuthRequest, res: Response) {
                     totalCorrect += ssCorrect;
                     totalMCQ     += ssMCQ.length;
 
-                    // MCQ → 1-10 scale
+                    // MCQ → 1-10 scale. Same proportional mapping as iaProcessor:
+                    // 0 correct → 1 (IELTS 0), all correct → 10 (IELTS 9).
                     const mcqScore1to10 = ssMCQ.length > 0
-                        ? Math.max(1, Math.min(10, (ssCorrect / ssMCQ.length) * 10))
+                        ? Math.min(10, 1 + (ssCorrect / ssMCQ.length) * 9)
                         : null;
 
                     // AI → 1-10 scale (from iaGrading)
-                    const aiScore1to10 = aiByKey.get(`${i}:${ss}`) ?? null;
+                    const aiScore1to10 = aiByKey.get(`${cfg.skill}:${ss}`) ?? null;
 
                     // Combine with w1=1, w2=2
                     let combined1to10: number;
@@ -638,7 +679,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
 
                     const ssBand      = scaleToIELTS(combined1to10);
                     const aiIELTS     = aiScore1to10 !== null ? scaleToIELTS(aiScore1to10) : null;
-                    const feedbackKey = `${i}:${ss}`;
+                    const feedbackKey = `${cfg.skill}:${ss}`;
 
                     subSkillScores.push({
                         sub_skill:   ss,
@@ -682,7 +723,35 @@ export async function submitMock(req: AuthRequest, res: Response) {
             if (!diagnosticBands.has(s)) diagnosticBands.set(s, parseFloat(String(h.band_score)) || 0);
         }
 
-        // ── 6. Apply scoring formula + build response ─────────────────────────
+        // ── 6. Pre-compute W/S sub-skill updates (single source of truth) ────────
+        // MK-B-10: the formula was duplicated — once for the response object and once in
+        // the DB transaction. A SUB_SCORE_KEY_MAP miss would silently diverge the two.
+        // Compute here once; both the response builder and the transaction consume this map.
+        type WSUpdate = { updatedSS: Record<string, number>; newMatrixBand: number };
+        const wsUpdates = new Map<string, WSUpdate>();
+        for (const s of skillScores) {
+            if (s.skill !== 'WRITING' && s.skill !== 'SPEAKING') continue;
+            const matrixRow  = competencyPre.find(c => String(c.skill) === s.skill);
+            const existingSS = (matrixRow?.sub_scores as Record<string, number>) ?? {};
+            const updatedSS  = { ...existingSS };
+            const newBands:   number[] = [];
+            for (const ss of (s.sub_skill_scores ?? [])) {
+                const key   = SUB_SCORE_KEY_MAP[ss.sub_skill];
+                if (!key) continue;
+                const curSS = existingSS[key] ?? null;
+                const newSS = curSS !== null
+                    ? Math.min(9, Math.max(0, Math.round((ss.band * 0.60 + curSS * 0.40) * 2) / 2))
+                    : Math.min(9, Math.max(0, ss.band));
+                updatedSS[key] = newSS;
+                newBands.push(newSS);
+            }
+            const newMatrixBand = newBands.length > 0
+                ? Math.round((newBands.reduce((a, b) => a + b, 0) / newBands.length) * 2) / 2
+                : s.band;
+            wsUpdates.set(s.skill, { updatedSS, newMatrixBand });
+        }
+
+        // ── 7. Apply scoring formula + build response ─────────────────────────
         // new_band = mock_band × 0.60 + current_matrix_band × 0.40
         const skillScoresResponse: MockSkillScoreResponse[] = skillScores.map(s => {
             const prevBand = prevMatrixBands.get(s.skill) ?? null;
@@ -690,22 +759,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
 
             let newMatrixBand: number;
             if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
-                // For W/S: apply formula at sub-skill level, new skill band = avg of updated sub-skills
-                const matrixRow = competencyPre.find(c => String(c.skill) === s.skill);
-                const existingSS = (matrixRow?.sub_scores as Record<string, number>) ?? {};
-                const updatedBands: number[] = [];
-                for (const ss of (s.sub_skill_scores ?? [])) {
-                    const key = SUB_SCORE_KEY_MAP[ss.sub_skill];
-                    if (!key) continue;
-                    const curSS = existingSS[key] ?? null;
-                    const newSS = curSS !== null
-                        ? Math.min(9, Math.max(0, Math.round((ss.band * 0.60 + curSS * 0.40) * 2) / 2))
-                        : Math.min(9, Math.max(0, ss.band));
-                    updatedBands.push(newSS);
-                }
-                newMatrixBand = updatedBands.length > 0
-                    ? Math.round((updatedBands.reduce((a, b) => a + b, 0) / updatedBands.length) * 2) / 2
-                    : s.band;
+                newMatrixBand = wsUpdates.get(s.skill)!.newMatrixBand;
             } else {
                 // L/R: direct skill-level formula
                 newMatrixBand = prevBand !== null
@@ -717,14 +771,18 @@ export async function submitMock(req: AuthRequest, res: Response) {
             return { ...s, new_matrix_band: newMatrixBand, prev_matrix_band: prevBand, diagnostic_band: diagBand, delta_from_diag: deltaFromDiag };
         });
 
-        // ── 7. Real Band + momentum ───────────────────────────────────────────
+        // ── 8. Real Band + momentum ───────────────────────────────────────────
         const allNewBands  = skillScoresResponse.map(s => s.new_matrix_band);
         const realBandRaw  = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
         const realBandScore = Math.min(9, Math.max(0, Math.round(realBandRaw * 2) / 2));
 
-        const prevOverall = prevMatrixBands.size > 0
-            ? Math.round(([...prevMatrixBands.values()].reduce((a, b) => a + b, 0) / prevMatrixBands.size) * 2) / 2
-            : 0;
+        // Always divide by all 4 skills so prevOverall is on the same scale as realBandScore.
+        // Using prevMatrixBands.size as the denominator gave a falsely high prevOverall for
+        // new students (e.g. size=1 → prevOverall = that one skill's band), making the delta
+        // appear negative and incorrectly triggering or suppressing the 500-pt threshold bonus.
+        const prevOverall = Math.round(
+            (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? 0), 0) / MOCK_SKILL_ORDER.length) * 2
+        ) / 2;
         const thresholdCrossed = Math.floor(realBandScore / 0.5) > Math.floor(prevOverall / 0.5);
 
         const momentumBreakdown = [{ reason: 'Participation', points: 200 }];
@@ -734,7 +792,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
             momentumBreakdown.push({ reason: `New band threshold — crossed ${realBandScore.toFixed(1)}`, points: 500 });
         }
 
-        // ── 8. DB transaction ─────────────────────────────────────────────────
+        // ── 9. DB transaction ─────────────────────────────────────────────────
         const updatedMomentum = await prisma.$transaction(async (tx) => {
             // a) Session complete
             await tx.mocksessions.update({
@@ -754,20 +812,9 @@ export async function submitMock(req: AuthRequest, res: Response) {
                     data: { student_id: student.id, skill: s.skill as any, mode: 'MOCK' as any, band_score: s.new_matrix_band }
                 });
 
-                const matrixRow = competencyPre.find(c => String(c.skill) === s.skill);
-                const existingSS = (matrixRow?.sub_scores as Record<string, number>) ?? {};
-
                 if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
-                    // Update each sub-skill score with formula, recalculate skill band
-                    const updatedSS = { ...existingSS };
-                    for (const ss of (s.sub_skill_scores ?? [])) {
-                        const key = SUB_SCORE_KEY_MAP[ss.sub_skill];
-                        if (!key) continue;
-                        const curSS = existingSS[key] ?? null;
-                        updatedSS[key] = curSS !== null
-                            ? Math.min(9, Math.max(0, Math.round((ss.band * 0.60 + curSS * 0.40) * 2) / 2))
-                            : Math.min(9, Math.max(0, ss.band));
-                    }
+                    // MK-B-10: use the pre-computed record — not recomputed here.
+                    const { updatedSS } = wsUpdates.get(s.skill)!;
                     await tx.studentCompetencyMatrix.upsert({
                         where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
                         update: { band_score: s.new_matrix_band, sub_scores: updatedSS as any, assessments_count: { increment: 1 }, last_updated: new Date() },

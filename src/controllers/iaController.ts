@@ -5,7 +5,7 @@ import { computeAverageDCS } from '../lib/dcs';
 import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
-import { processIASession, AlreadyCompletedError, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
+import { processIASession, AlreadyCompletedError, applySmoothing, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
@@ -670,15 +670,6 @@ type SectionScoreResponse = SectionScore & {
     new_matrix_band: number;
 };
 
-/** Mirrors the weighted update in the transaction so the API response can show the smoothed value. */
-function computeNewMatrixBand(iaBand: number, prevBand: number | null): number {
-    if (prevBand === null) return Math.min(9, Math.max(0, iaBand));
-    let weighted = 0.4 * prevBand + 0.6 * iaBand;
-    const deviation = weighted - prevBand;
-    if (deviation >  2) weighted = prevBand + 2;
-    if (deviation < -2) weighted = prevBand - 2;
-    return Math.min(9, Math.max(0, Math.round(weighted * 2) / 2));
-}
 
 const SUB_SKILL_LABEL: Record<string, string> = {
     GRAMMAR: 'Grammar', VOCABULARY: 'Vocabulary', COHERENCE: 'Coherence',
@@ -726,7 +717,7 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const sectionScoresResponse = sectionScores.map(s => {
             const prevBand      = previousBands.get(s.sub_skill) ?? null;
             const delta         = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
-            const newMatrixBand = computeNewMatrixBand(s.band, prevBand);
+            const newMatrixBand = applySmoothing(prevBand, s.band);
             return { ...s, previous_band: prevBand, delta, new_matrix_band: newMatrixBand };
         });
 
