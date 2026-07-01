@@ -13,6 +13,7 @@ const MAX_SESSIONS_PER_DAY  = 4;    // 3 free + 1 purchasable extra = 4 max per 
 const EXTRA_SESSION_COST    = 300;  // 300 momentum pts to unlock the 4th drill
 const DCS_EXTRA_THRESHOLD   = 40;   // DCS% required to unlock extra drill
 const LEXIGRID_BONUS_PTS    = 5;
+const SKIP_GATE_COST        = 150;  // Momentum pts to skip the LexiGrid gate (must match frontend)
 
 async function resolveStudent(appUserId: string) {
     return prisma.institute_students.findUnique({ where: { user_id: appUserId } });
@@ -145,7 +146,89 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         const student = await resolveStudent(appUserId);
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { game_type, words_solved, total_attempts, bonus_eligible, session_token } = req.body;
+        const { game_type, words_solved, total_attempts, bonus_eligible, session_token, status } = req.body;
+
+        // ─── Skip Gate branch ─────────────────────────────────────────────────────
+        // Frontend sends { game_type: 'LEXIGRID', status: 'skipped', momentum_spent: 150 }
+        // when the student spends momentum to bypass the LexiGrid gate.
+        // We ignore momentum_spent from the client and use the server constant instead.
+        if (status === 'skipped') {
+            if (game_type !== 'LEXIGRID') {
+                return res.status(400).json({ success: false, error: 'Only the LEXIGRID gate can be skipped.' });
+            }
+
+            const sessionToday = currentISTDate();
+
+            // Interactive transaction — guarantees atomicity:
+            //   • Idempotency check is read-consistent with the writes
+            //   • If the momentum deduct guard fails (count=0), an error is thrown
+            //     which auto-rolls back the game-score INSERT, preventing a free skip
+            //   • If a concurrent request races and creates the record first, the
+            //     INSERT will throw a unique-constraint violation, rolling back the
+            //     deduct — no double-spend
+            const result = await prisma.$transaction(async (tx) => {
+                // Idempotency: any existing record for today means the gate is already
+                // open (either already skipped or already played normally). In both
+                // cases just return the current balance — do NOT deduct again.
+                const existing = await tx.studentGameScore.findFirst({
+                    where: { student_id: student.id, game_type: 'LEXIGRID', session_date: sessionToday },
+                    select: { id: true, words_solved: true },
+                });
+
+                if (existing) {
+                    const fresh = await tx.institute_students.findUnique({
+                        where:  { id: student.id },
+                        select: { momentum_score: true },
+                    });
+                    return { already_done: true, momentum_score: fresh!.momentum_score };
+                }
+
+                // Atomic deduct — WHERE guard prevents double-spend under any race.
+                // count=0 means the student does not have enough momentum right now.
+                const deducted = await tx.institute_students.updateMany({
+                    where: { id: student.id, momentum_score: { gte: SKIP_GATE_COST } },
+                    data:  { momentum_score: { decrement: SKIP_GATE_COST } },
+                });
+
+                if (deducted.count === 0) {
+                    // Throw to trigger transaction rollback — caught below as 400
+                    throw Object.assign(new Error('INSUFFICIENT_MOMENTUM'), { isAppError: true, statusCode: 400 });
+                }
+
+                // Record the skip — completed:true is what getDailyDrillState checks
+                // to determine lexigrid_completed_today and flip next_action to DRILL_2.
+                // words_solved=0 and momentum_earned=0 distinguish a skip from a play.
+                await tx.studentGameScore.create({
+                    data: {
+                        student_id:      student.id,
+                        game_type:       'LEXIGRID',
+                        session_date:    sessionToday,
+                        words_solved:    0,
+                        total_words:     WORDS_PER_SESSION,
+                        total_attempts:  0,
+                        bonus_eligible:  false,
+                        momentum_earned: 0,
+                        completed:       true,
+                        skipped:         true,
+                    },
+                } as any);
+
+                const fresh = await tx.institute_students.findUnique({
+                    where:  { id: student.id },
+                    select: { momentum_score: true },
+                });
+
+                return { already_done: false, momentum_score: fresh!.momentum_score };
+            });
+
+            return res.json({
+                success:        true,
+                skipped:        true,
+                already_done:   result.already_done,
+                momentum_score: result.momentum_score,
+            });
+        }
+        // ─── End skip branch ──────────────────────────────────────────────────────
 
         if (!game_type || words_solved === undefined) {
             return res.status(400).json({ success: false, error: 'game_type and words_solved are required.' });
@@ -222,6 +305,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                 bonus_eligible:  bonus_eligible ?? false,
                 momentum_earned,
                 completed,
+                played_word_ids: req.body.played_word_ids ?? undefined,
             }
         } as any);
 
@@ -241,7 +325,14 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             momentum_earned,
             momentum_score: updated_momentum,
         });
-    } catch (err) {
+    } catch (err: any) {
+        if (err?.message === 'INSUFFICIENT_MOMENTUM') {
+            return res.status(400).json({
+                success: false,
+                error:   `Insufficient momentum. You need ${SKIP_GATE_COST} pts to skip the LexiGrid gate.`,
+                required: SKIP_GATE_COST,
+            });
+        }
         console.error('[GameScore] saveGameScore error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
