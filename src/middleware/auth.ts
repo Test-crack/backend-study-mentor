@@ -1,6 +1,6 @@
 // src/middleware/auth.ts
 import { Request, Response, NextFunction } from 'express';
-import { supabaseAdmin } from '../lib/supabase';
+import jwt from 'jsonwebtoken';
 import { UserRoleType } from '@prisma/client';
 
 export interface AuthRequest extends Request {
@@ -10,42 +10,41 @@ export interface AuthRequest extends Request {
   userMetadata?: any;
 }
 
-export async function requireAuth(
+const JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error('[Auth] SUPABASE_JWT_SECRET is not set — all authenticated requests will fail.');
+}
+
+export function requireAuth(
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Missing or invalid token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ message: 'Missing or invalid token' });
-    }
+    const payload = jwt.verify(token, JWT_SECRET!) as any;
 
-    const token = authHeader.split(' ')[1];
+    // Supabase JWT claims: sub = user UUID, email = user email, user_metadata = profile metadata
+    req.supabaseUserId = payload.sub;
+    req.userEmail      = payload.email ?? undefined;
+    req.userMetadata   = payload.user_metadata ?? {};
 
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
-    if (error || !data.user) {
-      console.error('Supabase auth error:', error);
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-
-    req.supabaseUserId = data.user.id;
-    req.userEmail = data.user.email ?? undefined;
-    req.userMetadata = data.user.user_metadata;
-
-    next();
+    return next();
   } catch (err: any) {
-    // Handle specific Supabase auth errors as 401
-    // "Auth session missing!" is a common error when the session is invalid or expired
-    const isAuthError = err?.message?.includes('Auth session missing') ||
-      err?.name === 'AuthSessionMissingError';
-
-    if (isAuthError) {
-      console.warn('Auth session missing/invalid during check:', err.message);
-      return res.status(401).json({ message: 'Session expired or invalid. Please login again.' });
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Session expired. Please login again.' });
     }
-
-    console.error('requireAuth error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Invalid token.' });
+    }
+    console.error('[Auth] Unexpected JWT error:', err);
+    return res.status(401).json({ message: 'Authentication failed.' });
   }
 }

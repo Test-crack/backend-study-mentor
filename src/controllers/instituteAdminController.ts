@@ -129,40 +129,52 @@ export async function addStudent(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 3. Create User row if needed; update supabase ID if we now have a real one
-        if (!dbUser) {
-            dbUser = await prisma.user.create({
-                data: {
-                    email,
-                    name,
-                    role: UserRoleType.STUDENT,
-                    // pending-* self-heals on first login via ensureUser email-linking
-                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
-                },
-            });
-        } else if (supabaseUserId && dbUser.supabaseuserid.startsWith('pending-')) {
-            dbUser = await prisma.user.update({
-                where: { id: dbUser.id },
-                data:  { supabaseuserid: supabaseUserId },
-            });
-        }
+        // 3 + 4. Atomic: create/link User row AND institute_students in one transaction.
+        // If institute_students.create fails (e.g. race condition), the User write rolls back too.
+        const savedUser = await prisma.$transaction(async (tx) => {
+            let user = dbUser;
+            if (!user) {
+                user = await tx.user.create({
+                    data: {
+                        email,
+                        name,
+                        role: UserRoleType.STUDENT,
+                        // pending-* self-heals on first login via ensureUser email-linking
+                        supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+                    },
+                });
+            } else if (supabaseUserId && user.supabaseuserid.startsWith('pending-')) {
+                user = await tx.user.update({
+                    where: { id: user.id },
+                    data:  { supabaseuserid: supabaseUserId },
+                });
+            }
 
-        // 4. Create institute_students record (plain create — safe because we checked above)
-        await prisma.institute_students.create({
-            data: { user_id: dbUser.id, institute_id: instituteId, is_active: true },
+            await tx.institute_students.create({
+                data: { user_id: user.id, institute_id: instituteId, is_active: true },
+            });
+
+            return user;
         });
 
         return res.status(201).json({
             data: {
-                userId: dbUser.id,
-                name: dbUser.name,
-                email: dbUser.email,
+                userId: savedUser.id,
+                name:   savedUser.name,
+                email:  savedUser.email,
                 inviteEmailSent: !inviteError,
             },
         });
     } catch (err: any) {
+        // Race condition: two concurrent requests both passed the duplicate check —
+        // the second hits the unique constraint. Return 409 instead of a raw 500.
+        if (err.code === 'P2002') {
+            return res.status(409).json({ error: 'This student is already enrolled in your institute.' });
+        }
         console.error('[InstituteAdmin] addStudent error:', err);
-        return res.status(500).json({ error: err.message ?? 'Failed to add student' });
+        return res.status(500).json({
+            error: 'Enrollment failed. If an invite email was already sent, please retry — the student record was not saved.',
+        });
     }
 }
 
@@ -321,40 +333,49 @@ export async function addTutor(req: AuthRequest, res: Response) {
 
         const supabaseUserId = inviteData?.user?.id;
 
-        // 2. Upsert User row
-        if (!dbUser) {
-            dbUser = await prisma.user.create({
-                data: {
-                    email: tutorEmail,
-                    name: tutorName,
-                    role: UserRoleType.INSTRUCTOR,
-                    supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+        // 2 + 3. Atomic: create User row AND institute_instructors in one transaction.
+        const savedUser = await prisma.$transaction(async (tx) => {
+            let user = dbUser;
+            if (!user) {
+                user = await tx.user.create({
+                    data: {
+                        email: tutorEmail,
+                        name: tutorName,
+                        role: UserRoleType.INSTRUCTOR,
+                        supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
+                    },
+                });
+            }
+
+            await tx.institute_instructors.upsert({
+                where: { user_id: user!.id },
+                update: { institute_id: instituteId, specialization: specialization ?? null },
+                create: {
+                    user_id: user!.id,
+                    institute_id: instituteId,
+                    specialization: specialization ?? null,
                 },
             });
-        }
 
-        // 3. Upsert institute_instructors row
-        await prisma.institute_instructors.upsert({
-            where: { user_id: dbUser.id },
-            update: { institute_id: instituteId, specialization: specialization ?? null },
-            create: {
-                user_id: dbUser.id,
-                institute_id: instituteId,
-                specialization: specialization ?? null,
-            },
+            return user!;
         });
 
         return res.status(201).json({
             data: {
-                userId: dbUser.id,
-                name: dbUser.name,
-                email: dbUser.email,
+                userId: savedUser.id,
+                name:   savedUser.name,
+                email:  savedUser.email,
                 inviteEmailSent: !inviteError,
             },
         });
     } catch (err: any) {
+        if (err.code === 'P2002') {
+            return res.status(409).json({ error: 'This tutor is already onboarded in your institute.' });
+        }
         console.error('[InstituteAdmin] addTutor error:', err);
-        return res.status(500).json({ error: err.message ?? 'Failed to add tutor' });
+        return res.status(500).json({
+            error: 'Onboarding failed. If an invite email was already sent, please retry — the tutor record was not saved.',
+        });
     }
 }
 

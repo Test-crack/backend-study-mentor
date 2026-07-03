@@ -4,7 +4,15 @@ import { requireAuth } from '../middleware/auth';
 import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
-import * as C from '../controllers/instituteOwnerController';
+
+// Read-only analytics — served from the owner controller (shared views)
+import * as Owner from '../controllers/instituteOwnerController';
+
+// Write operations — student/tutor onboarding & management
+import * as Admin from '../controllers/instituteAdminController';
+
+// Batch CRUD & member assignment
+import * as Batch from '../controllers/batchController';
 
 const router = Router();
 const IO = UserRoleType.INSTITUTE_OWNER;
@@ -13,24 +21,46 @@ const IA = UserRoleType.INSTITUTE_ADMIN;
 router.use(requireAuth);
 router.use(ensureUser);
 
-// Both roles can call all admin routes (same controller, same endpoints as owner)
+// Both roles can access all admin routes
 const shared = authorize(IA, IO);
 
-router.get('/summary',                                  shared, C.getSummary);
-router.get('/batches',                                  shared, C.getInstituteBatches);
-router.get('/batches/:batchId/dashboard-summary',       shared, C.getOwnerBatchDashboardSummary);
-router.get('/students',                                 shared, C.getInstituteStudents);
-router.get('/students/:studentId/full-progress',        shared, C.getOwnerStudentFullProgress);
-router.get('/at-risk',                                  shared, C.getInstituteAtRisk);
-router.get('/instructors',                              shared, C.getInstituteInstructors);
-router.get('/assessment-overview',                      shared, C.getInstituteAssessmentOverview);
+// ─── Read-only analytics (owner controller, shared) ───────────────────────────
+router.get('/summary',                              shared, Owner.getSummary);
+router.get('/at-risk',                              shared, Owner.getInstituteAtRisk);
+router.get('/instructors',                          shared, Owner.getInstituteInstructors);
+router.get('/assessment-overview',                  shared, Owner.getInstituteAssessmentOverview);
+router.get('/students/:studentId/full-progress',    shared, Owner.getOwnerStudentFullProgress);
+router.get('/batches/:batchId/dashboard-summary',   shared, Owner.getOwnerBatchDashboardSummary);
 
-// Phase 2 analytics
-router.get('/analytics/cohort-progress',                shared, C.getAnalyticsCohortProgress);
-router.get('/analytics/batch-comparison',               shared, C.getAnalyticsBatchComparison);
-router.get('/analytics/instructor-effectiveness',       shared, C.getAnalyticsInstructorEffectiveness);
-router.get('/analytics/engagement-trends',              shared, C.getAnalyticsEngagementTrends);
-router.get('/analytics/goal-achievement',               shared, C.getAnalyticsGoalAchievement);
-router.get('/analytics/subskill-heatmap',               shared, C.getAnalyticsSubskillHeatmap);
+router.get('/analytics/cohort-progress',            shared, Owner.getAnalyticsCohortProgress);
+router.get('/analytics/batch-comparison',           shared, Owner.getAnalyticsBatchComparison);
+router.get('/analytics/instructor-effectiveness',   shared, Owner.getAnalyticsInstructorEffectiveness);
+router.get('/analytics/engagement-trends',          shared, Owner.getAnalyticsEngagementTrends);
+router.get('/analytics/goal-achievement',           shared, Owner.getAnalyticsGoalAchievement);
+router.get('/analytics/subskill-heatmap',           shared, Owner.getAnalyticsSubskillHeatmap);
+
+// ─── Students ─────────────────────────────────────────────────────────────────
+router.get('/students',                             shared, Admin.getStudents);
+router.post('/students',                            shared, Admin.addStudent);
+router.delete('/students/:userId',                  shared, Admin.removeStudent);
+router.patch('/students/:userId/status',            shared, Admin.updateStudentStatus);
+
+// ─── Tutors ───────────────────────────────────────────────────────────────────
+router.get('/tutors',                               shared, Admin.getTutors);
+router.post('/tutors',                              shared, Admin.addTutor);
+router.delete('/tutors/:userId',                    shared, Admin.removeTutor);
+
+// ─── Batches ──────────────────────────────────────────────────────────────────
+router.get('/batches',                              shared, Batch.getBatches);
+router.post('/batches',                             shared, Batch.createBatch);
+router.get('/batches/:id',                          shared, Batch.getBatchDetail);
+router.patch('/batches/:id',                        shared, Batch.updateBatch);
+router.delete('/batches/:id',                       shared, Batch.deleteBatch);
+
+// ─── Batch member assignment ───────────────────────────────────────────────────
+router.post('/batches/:id/instructors',             shared, Batch.addInstructorToBatch);
+router.delete('/batches/:id/instructors/:userId',   shared, Batch.removeInstructorFromBatch);
+router.post('/batches/:id/students',                shared, Batch.addStudentToBatch);
+router.delete('/batches/:id/students/:userId',      shared, Batch.removeStudentFromBatch);
 
 export default router;
