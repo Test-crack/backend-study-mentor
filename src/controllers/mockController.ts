@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
+import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -422,6 +422,19 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         ]);
         const rawSections = [rawL, rawR, rawW, rawS];
 
+        // Validate every section is populated BEFORE creating the session. An empty or
+        // underfilled section would grade as band 0, get blended into the student's
+        // matrix, blank-screen the client, and consume the monthly slot — for what is
+        // really a content-availability problem. Fail cleanly without consuming the slot.
+        const emptySections = MOCK_SKILL_ORDER.filter((_, i) => (rawSections[i]?.questions?.length ?? 0) === 0);
+        if (emptySections.length > 0) {
+            console.error(`[MockQuestions] Missing question pool for: ${emptySections.join(', ')}`);
+            return res.status(503).json({
+                success: false,
+                error:   'The mock test is temporarily unavailable (question set incomplete). Please try again later — no attempt has been used.',
+            });
+        }
+
         const questionIdsConfig = MOCK_SKILL_ORDER.map((skill, i) => ({
             skill,
             ids: rawSections[i].questions.map((q: any) => q.id)
@@ -493,12 +506,15 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
         if (session.status === 'COMPLETED' || session.status === 'ABANDONED') return res.status(400).json({ success: false, error: 'Session already finalised.' });
         if (new Date() > session.window_closes_at) return res.status(400).json({ success: false, error: 'Mock window expired.' });
 
-        const current = (session.answers as Record<string, any>) ?? {};
-
         if (section_advance !== undefined) {
-            // Only update navigation index — no per-section timing needed with global timer
-            current.__meta = { current_section: Number(section_advance) };
-            await prisma.mocksessions.update({ where: { id: session_id }, data: { answers: current as any } });
+            // Atomic JSONB merge of just the __meta key — read-modify-write of the whole
+            // answers object would let a concurrent answer save clobber this (and vice versa).
+            const nav = JSON.stringify({ current_section: Number(section_advance) });
+            await prisma.$executeRaw`
+                UPDATE mocksessions
+                SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object('__meta', ${nav}::jsonb)
+                WHERE id = ${session_id}::uuid
+            `;
             return res.json({ success: true, saved: true });
         }
 
@@ -506,8 +522,18 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
         if (typeof answer !== 'string' && typeof answer !== 'number') {
             return res.status(400).json({ success: false, error: 'answer must be a string or number.' });
         }
-        current[question_id] = String(answer);
-        await prisma.mocksessions.update({ where: { id: session_id }, data: { answers: current as any, status: 'IN_PROGRESS' as any } });
+        // Atomic single-key JSONB merge — two overlapping saves each preserve the other's
+        // answer instead of last-writer-wins clobbering the whole object.
+        await prisma.$executeRaw`
+            UPDATE mocksessions
+            SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object(${String(question_id)}::text, ${String(answer)}::text)
+            WHERE id = ${session_id}::uuid
+        `;
+        // Flip PENDING → IN_PROGRESS once (touches status only; never the answers blob).
+        await prisma.mocksessions.updateMany({
+            where: { id: session_id, status: 'PENDING' as any },
+            data:  { status: 'IN_PROGRESS' as any },
+        });
         return res.json({ success: true, saved: true });
     } catch (err) {
         console.error('[MockAnswer] error:', err);
@@ -862,6 +888,16 @@ export async function submitMock(req: AuthRequest, res: Response) {
                 real_band_score:  s?.real_band_score ?? null,
                 scores:           s?.scores ?? null,
                 momentum_awarded: s?.momentum_awarded ?? 0,
+            });
+        }
+        // AI grading failed (infra). The status transaction never ran, so the session
+        // stays IN_PROGRESS and remains submittable within its 72h window. Tell the
+        // client to retry rather than fabricating a band or consuming the slot.
+        if (err instanceof AIGradingError) {
+            return res.status(502).json({
+                success:   false,
+                can_retry: true,
+                error:     'AI grading is temporarily unavailable. Your answers are saved — please submit again in a moment.',
             });
         }
         console.error('[MockSubmit] error:', err);

@@ -49,6 +49,21 @@ async function saveDiagnosticAssessment(
     });
 }
 
+/**
+ * Returns true if this skill's diagnostic has already been scored, so a resubmit
+ * can be rejected. A diagnostic section is one-time and must never be rewritten.
+ */
+async function isSkillAlreadyScored(
+    studentId: string,
+    skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING'
+): Promise<boolean> {
+    const existing = await prisma.assessmentHistory.findFirst({
+        where:  { student_id: studentId, skill, mode: 'DIAGNOSTIC' },
+        select: { id: true },
+    });
+    return !!existing;
+}
+
 /** Mark diagnosed once all 4 skills are done. */
 async function checkAndMarkDiagnosed(studentId: string): Promise<boolean> {
     const statusResult: any[] = await prisma.$queryRaw`
@@ -200,16 +215,44 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
 
         const skillUpper = skill.toUpperCase() as 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
 
+        // Speaking has its own multipart route (submitDiagnosticSpeaking). This JSON
+        // endpoint must never grade speaking — a stub here previously assigned a fake
+        // band 6.0 with no audio, reachable via encoded paths (%73peaking / U+017F).
+        if (skillUpper === 'SPEAKING') {
+            return res.status(400).json({ error: 'Speaking must be submitted with audio via /api/diagnostic/submit/speaking.' });
+        }
+
+        // Diagnostic is one-time: reject resubmission or any submission after completion.
+        if (student.isDiagnosed) {
+            return res.status(409).json({ error: 'Diagnostic already completed and cannot be retaken.' });
+        }
+        if (await isSkillAlreadyScored(student.id, skillUpper)) {
+            return res.status(409).json({ error: `The ${skillUpper} section has already been submitted.` });
+        }
+
         let parsedAnswers = typeof answers === 'string' ? JSON.parse(answers) : (answers ?? {});
         let bandScore = 0;
         let subScores: any = {};
 
-        // ── LISTENING / READING — re-fetch questions by UUID and grade ─────────
+        // ── LISTENING / READING — grade against the FULL question set ──────────
         if (skillUpper === 'LISTENING' || skillUpper === 'READING') {
-            const questionIds = Object.keys(parsedAnswers).filter(k => k.length === 36); // UUID length guard
-            const questions   = await prisma.diagnostic_questions.findMany({
-                where: { id: { in: questionIds }, skill: skillUpper, is_active: true }
-            });
+            const answeredIds = Object.keys(parsedAnswers).filter(k => k.length === 36); // UUID length guard
+
+            // Resolve the fixed set the student was served from the answered question IDs,
+            // then grade against EVERY question in that set. The denominator must be the
+            // real set size (6 / 4), NOT the number of answers the client chose to send —
+            // otherwise submitting a single correct answer yields band 9.0.
+            const answeredRows = answeredIds.length > 0
+                ? await prisma.diagnostic_questions.findMany({
+                    where:  { id: { in: answeredIds }, skill: skillUpper, is_active: true },
+                    select: { set_id: true },
+                })
+                : [];
+            const setId = (req.body.set_id as string | undefined) ?? answeredRows[0]?.set_id ?? null;
+
+            const questions = setId
+                ? await prisma.diagnostic_questions.findMany({ where: { set_id: setId, skill: skillUpper, is_active: true } })
+                : [];
 
             let correct = 0;
             const total = questions.length;
@@ -229,11 +272,15 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 }
             });
 
-            bandScore = total > 0 ? (correct / total) * 9 : 0;
+            if (total === 0) {
+                return res.status(400).json({ error: 'Could not resolve the question set for grading.' });
+            }
+
+            bandScore = (correct / total) * 9;
             subScores = {
                 total_questions:     total,
                 correct_answers:     correct,
-                accuracy_percentage: total > 0 ? Math.round((correct / total) * 100) : 0,
+                accuracy_percentage: Math.round((correct / total) * 100),
                 by_question_type:    byType
             };
 
@@ -253,10 +300,43 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     const row = await prisma.diagnostic_questions.findUnique({ where: { id: questionId } });
                     if (row) topic = row.prompt_text;
                 }
-                const analysis = await analyzeWriting(topic, parsedAnswers.text, taskType ?? 'Task 1');
+                // Resolve the served prompt to get its min_words + task type so caps
+                // are enforced against the real requirement, not a hard-coded Task 1.
+                let minWords = 150;
+                let resolvedTaskType = taskType ?? 'Task 1';
+                if (questionId) {
+                    const promptRow = await prisma.diagnostic_questions.findUnique({ where: { id: questionId } });
+                    if (promptRow) {
+                        topic    = promptRow.prompt_text;
+                        minWords = (promptRow as any).min_words ?? 150;
+                        // Heuristic: Task 2 prompts require 250 words; use that to pick the task type
+                        resolvedTaskType = minWords >= 250 ? 'Task 2' : 'Task 1';
+                    }
+                }
+
+                let analysis;
+                try {
+                    analysis = await analyzeWriting(topic, parsedAnswers.text, resolvedTaskType);
+                } catch (aiErr) {
+                    // Infra failure — do not save a fabricated band; let the student retry.
+                    console.error('[analyzeWriting] Failure:', aiErr);
+                    return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
+                }
+
                 bandScore = Number(analysis.bandScore) || 0;
+
+                // Enforce anti-gaming caps server-side (the AI prompt asks for these, but
+                // relying on the model alone is unreliable — same reason speaking has hard caps).
+                if (wordCount < minWords) {
+                    // Under the required length → Task Achievement capped at 5.0, so the
+                    // averaged band cannot exceed 5.0 on length grounds.
+                    bandScore = Math.min(bandScore, 5.0);
+                }
+
                 subScores = {
                     word_count:        wordCount,
+                    min_words:         minWords,
+                    task_type:         resolvedTaskType,
                     grammarScore:      analysis.grammarScore,
                     vocabularyScore:   analysis.vocabularyScore,
                     coherenceScore:    analysis.coherenceScore,
@@ -264,11 +344,6 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     feedback:          analysis.feedback
                 };
             }
-
-        // ── SPEAKING stub (real path = submitDiagnosticSpeaking below) ─────────
-        } else if (skillUpper === 'SPEAKING') {
-            bandScore = 6.0;
-            subScores = { fluency: 6.0 };
         }
 
         bandScore = Math.min(Math.round(bandScore * 2) / 2, 9.0);
@@ -293,6 +368,16 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         const student = await prisma.institute_students.findUnique({ where: { user_id: userId } });
         if (!student) { if (req.file) fs.unlink(req.file.path, () => {}); return res.status(404).json({ error: 'Student not found.' }); }
         if (!req.file) return res.status(400).json({ error: 'Audio file required.' });
+
+        // Diagnostic is one-time: reject resubmission or submission after completion.
+        if (student.isDiagnosed) {
+            fs.unlink(req.file.path, () => {});
+            return res.status(409).json({ error: 'Diagnostic already completed and cannot be retaken.' });
+        }
+        if (await isSkillAlreadyScored(student.id, 'SPEAKING')) {
+            fs.unlink(req.file.path, () => {});
+            return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' });
+        }
 
         // Fetch the prompt the student received (frontend sends question_id in FormData)
         const questionId = req.body.question_id;

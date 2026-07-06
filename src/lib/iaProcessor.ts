@@ -179,10 +179,11 @@ export async function processIASession(
         else if (mcqScore === null)        combinedScore = aiAvgScore!;
         else if (aiAvgScore === null)      combinedScore = mcqScore;
         else {
-            const mcqWeight   = mcqQs.length * 1;
-            const aiWeight    = aiQs.length  * 2;
-            const totalWeight = mcqWeight + aiWeight;
-            combinedScore = (mcqScore * mcqWeight + aiAvgScore * aiWeight) / totalWeight;
+            // Spec: AI grade weighted 2×, MCQ grade weighted 1× — weight the two
+            // aggregate grades, NOT the question counts. (Previously used
+            // mcqQs.length vs aiQs.length*2, which with 8 MCQ + 2 prompts made
+            // MCQ ~67% — the exact inverse of the intended blend.)
+            combinedScore = (mcqScore * 1 + aiAvgScore * 2) / 3;
         }
 
         const band = Math.min(9.0, Math.max(0.0, Math.round((combinedScore - 1) * 2) / 2));
@@ -216,25 +217,22 @@ export async function processIASession(
     }
 
     // ── 5. Momentum calculation ────────────────────────────────────────────────
-    const [lastSession, allPastSessions] = await Promise.all([
-        prisma.iASession.findFirst({
-            where:   { student_id: studentId, status: 'COMPLETED' as any },
-            orderBy: { created_at: 'desc' },
-            select:  { scores: true },
-        }),
-        prisma.iASession.findMany({
-            where:  { student_id: studentId, status: 'COMPLETED' as any },
-            select: { scores: true },
-        }),
-    ]);
+    // Ordered newest→oldest so we can take the most recent band PER SUB-SKILL.
+    // (A single "last session" is not enough: the 14-day exclusion guarantees
+    // today's sub-skills were not in the immediately preceding IA, so an
+    // improvement bonus keyed on that one session would never fire.)
+    const allPastSessions = await prisma.iASession.findMany({
+        where:   { student_id: studentId, status: 'COMPLETED' as any },
+        orderBy: { created_at: 'desc' },
+        select:  { scores: true },
+    });
 
-    const lastBands = new Map<string, number>();
-    if (lastSession?.scores) {
-        for (const s of lastSession.scores as SectionScore[]) lastBands.set(s.sub_skill, s.band);
-    }
-    const allTimeBests = new Map<string, number>();
+    const lastBands = new Map<string, number>();   // most recent band per sub-skill
+    const allTimeBests = new Map<string, number>(); // best band ever per sub-skill
     for (const ps of allPastSessions) {
         for (const s of (ps.scores ?? []) as SectionScore[]) {
+            // sessions are newest-first, so the first band seen for a sub-skill is the latest
+            if (!lastBands.has(s.sub_skill)) lastBands.set(s.sub_skill, s.band);
             const prev = allTimeBests.get(s.sub_skill) ?? 0;
             if (s.band > prev) allTimeBests.set(s.sub_skill, s.band);
         }

@@ -3,7 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { computeAverageDCS } from '../lib/dcs';
 import { selectPrioritySubSkills } from '../lib/subskillSelector';
-import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from '../lib/iaGrading';
+import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
 import { processIASession, AlreadyCompletedError, applySmoothing, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
 
@@ -13,6 +13,7 @@ const IA_MIN_DAYS = 2;   // calendar days since first drill required
 const IA_DCS_THRESHOLD = 40;  // avg DCS % required to start the test
 const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 …
 const IA_MIN_WINDOW_MS = 40 * 60 * 1000;  // block new session if <40 min remain in today's window (2 sections × 20 min)
+const MISS_PENALTY = 20;  // momentum deducted for a missed IA (must match iaMissDetector)
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // ─── IST date helpers ─────────────────────────────────────────────────────────
@@ -136,31 +137,28 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         const avg_dcs = await computeAverageDCS(student.id);
         const cond_dcs = avg_dcs >= IA_DCS_THRESHOLD;
 
-        // ── Build IA schedule: first_drill + 3, +6, +9 … up to 30 slots ──────
-        // We generate enough to always find the next 2 future dates.
-        const LOOKAHEAD = 30;
-        const schedule = Array.from({ length: LOOKAHEAD }, (_, i) => {
-            const n = i + 1;
-            const date = addCalendarDays(firstDrillDateStr, n * IA_INTERVAL_DAYS);
-            return { number: n, date };
-        });
-
-        // ── Classify today ────────────────────────────────────────────────────
-        const todaySlot = schedule.find(s => s.date === todayStr) ?? null;
-        const is_ia_day = todaySlot !== null;
-        const current_ia_number = todaySlot?.number ?? null;
+        // ── IA schedule: first_drill + 3, +6, +9 … computed DYNAMICALLY ───────
+        // Any day that is a positive multiple of the interval since the first drill is
+        // an IA day. Computing this (rather than a fixed N-slot array) means IAs remain
+        // available indefinitely — a previous 30-slot / 90-day ceiling made is_ia_day
+        // false past day 90 while the miss detector kept penalizing, so long-term
+        // students bled −20 every 3 days with no way to comply.
+        const daysSinceForSchedule = daysBetween(firstDrillDateStr, todayStr);
+        const is_ia_day = daysSinceForSchedule > 0 && daysSinceForSchedule % IA_INTERVAL_DAYS === 0;
+        const current_ia_number = is_ia_day ? daysSinceForSchedule / IA_INTERVAL_DAYS : null;
         const can_start_test = is_ia_day && prerequisites_met && cond_dcs;
 
-        // ── Upcoming slots (strictly future) ─────────────────────────────────
-        const futureSlots = schedule
-            .filter(s => s.date > todayStr)
-            .slice(0, 2)
-            .map(s => ({
-                number: s.number,
-                date: s.date,
-                date_formatted: formatIADate(s.date),
-                days_away: daysBetween(todayStr, s.date)
-            }));
+        // ── Upcoming slots (next two strictly-future IA dates) ────────────────
+        const nextN = Math.floor(daysSinceForSchedule / IA_INTERVAL_DAYS) + 1;
+        const futureSlots = [nextN, nextN + 1].map(n => {
+            const date = addCalendarDays(firstDrillDateStr, n * IA_INTERVAL_DAYS);
+            return {
+                number: n,
+                date,
+                date_formatted: formatIADate(date),
+                days_away: daysBetween(todayStr, date)
+            };
+        });
 
         const next_ia = futureSlots[0] ?? null;
 
@@ -695,12 +693,34 @@ export async function submitIA(req: AuthRequest, res: Response) {
         if (session.status === 'COMPLETED') return res.json({ success: true, already_done: true });
         if (session.status === 'MISSED')    return res.status(400).json({ success: false, error: 'IA window has expired.' });
         if (new Date() > session.window_closes_at) {
-            // Mark MISSED now — window lapsed between answer-save and submit
-            await prisma.iASession.update({
-                where: { id: session_id },
-                data:  { status: 'MISSED' as any, carry_forward_subskills: session.selected_subskills as any }
+            // Window lapsed between answer-save and submit. Spec 4.6: if the student
+            // produced real answers, auto-grade them (COMPLETED, no penalty); only a
+            // genuinely empty attempt is MISSED. Previously this ALWAYS marked MISSED,
+            // silently discarding a student's work if they clicked Submit a moment late.
+            const ans = (session.answers ?? {}) as Record<string, unknown>;
+            const hasRealAnswers = Object.entries(ans).some(([k, v]) => {
+                if (k === '__meta') return false;
+                const t = String(v ?? '').trim();
+                return t !== '' && t !== '[no transcript]';
             });
-            return res.status(400).json({ success: false, error: 'IA window has closed. Session marked as missed.' });
+            if (!hasRealAnswers) {
+                // Empty attempt → MISSED with the standard penalty (clamped at 0), matching the miss detector.
+                await prisma.$transaction(async (tx) => {
+                    const marked = await tx.iASession.updateMany({
+                        where: { id: session_id, status: { notIn: ['COMPLETED', 'MISSED'] as any } },
+                        data:  { status: 'MISSED' as any, momentum_awarded: -MISS_PENALTY, carry_forward_subskills: session.selected_subskills as any },
+                    });
+                    if (marked.count === 0) return;
+                    const s = await tx.institute_students.findUnique({ where: { id: student.id }, select: { momentum_score: true } });
+                    const deduction = Math.min(MISS_PENALTY, s?.momentum_score ?? 0);
+                    if (deduction > 0) {
+                        await tx.institute_students.update({ where: { id: student.id }, data: { momentum_score: { decrement: deduction } } });
+                    }
+                });
+                return res.status(400).json({ success: false, error: 'IA window has closed. Session marked as missed.' });
+            }
+            // else: real answers exist → fall through to processIASession, which grades
+            // and marks COMPLETED with no penalty even though the window is technically closed.
         }
 
         // ── 2–7. Grade, save, update competency matrix & momentum ─────────────
@@ -746,6 +766,16 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 momentum_awarded: stored?.momentum_awarded ?? 0,
             });
         }
+        if (err instanceof AIGradingError) {
+            // Infra failure during grading. processIASession throws before its COMPLETED
+            // transaction, so the session is still IN_PROGRESS and remains submittable
+            // within today's window. Tell the client to retry — never penalize or fabricate.
+            return res.status(502).json({
+                success:   false,
+                can_retry: true,
+                error:     'AI grading is temporarily unavailable. Your answers are saved — please submit again in a moment.',
+            });
+        }
         console.error('[IASubmit] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
@@ -775,16 +805,23 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         }
 
         const current = (session.answers as Record<string, any>) ?? {};
+        const meta    = (current.__meta as { current_section?: number; section_started_at?: number }) ?? {};
+        const sectionConfig = (session.question_ids as any[]) ?? [];
+        const SECTION_GRACE_MS = 5 * 1000; // small clock-skew allowance
 
-        // Section-advance: student moved to the next section — stamp new section start time
+        // Section-advance: student moved to the next section — stamp new section start time.
+        // Must be strictly forward: re-stamping the same or an earlier section would reset
+        // the 20-minute timer and grant unlimited time. Reject non-monotonic / NaN values.
         if (section_advance !== undefined) {
-            current.__meta = {
-                current_section: Number(section_advance),
-                section_started_at: Date.now()
-            };
+            const prevSection = Number(meta.current_section ?? -1);
+            const nextSection = Number(section_advance);
+            if (!Number.isInteger(nextSection) || nextSection < 0 || nextSection >= Math.max(sectionConfig.length, 1) || nextSection <= prevSection) {
+                return res.status(400).json({ success: false, error: 'Invalid section advance.' });
+            }
+            current.__meta = { current_section: nextSection, section_started_at: Date.now() };
             await prisma.iASession.update({
                 where: { id: session_id },
-                data: { answers: current as any }
+                data:  { answers: current as any }
             });
             return res.json({ success: true, saved: true });
         }
@@ -793,6 +830,18 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         if (!question_id || answer === undefined) {
             return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
         }
+
+        // Enforce the 20-minute per-section timer server-side. If the question belongs
+        // to the currently-active section and that section's 20 min have elapsed, reject —
+        // the client timer alone can be paused/bypassed.
+        const sectionIdx = sectionConfig.findIndex((c: any) => Array.isArray(c?.ids) && c.ids.includes(question_id));
+        if (sectionIdx >= 0 && sectionIdx === Number(meta.current_section) && meta.section_started_at) {
+            const elapsed = Date.now() - Number(meta.section_started_at);
+            if (elapsed > SECTION_IA_MS + SECTION_GRACE_MS) {
+                return res.status(400).json({ success: false, error: 'Section time has expired.' });
+            }
+        }
+
         current[question_id] = String(answer);
 
         await prisma.iASession.update({

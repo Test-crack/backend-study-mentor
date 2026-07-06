@@ -29,6 +29,7 @@ import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
+import { requireDiagnosed } from './middleware/requireDiagnosed';
 import { initializeStorage } from './services/youtubeNotes/fileStorageService';
 
 const app = express();
@@ -114,8 +115,8 @@ app.use('/api/reading-practice', readingPracticeRoutes);
 app.use('/api/ielts-writing', ieltsWritingRoutes);
 app.use('/api/drills', drillRoutes);
 app.use('/api/diagnostic', requireAuth, ensureUser, diagnosticRoutes);
-app.use('/api/ia',         requireAuth, ensureUser, iaRoutes);
-app.use('/api/mock',       requireAuth, ensureUser, mockRoutes);
+app.use('/api/ia',         requireAuth, ensureUser, requireDiagnosed, iaRoutes);
+app.use('/api/mock',       requireAuth, ensureUser, requireDiagnosed, mockRoutes);
 
 // Initialize storage directories and start server
 async function startServer() {

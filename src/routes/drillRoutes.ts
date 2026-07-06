@@ -2,11 +2,10 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
+import { requireDiagnosed } from '../middleware/requireDiagnosed';
 import { UserRoleType } from '@prisma/client';
 import {
     getDrillQuestions,
-    saveDrillSession,
-    completeApplyDrill,
     saveReflection,
     startDrillSession,
     getActiveDrillSession,
@@ -21,16 +20,15 @@ const router = Router();
 router.use(requireAuth);
 router.use(ensureUser);
 router.use(authorize(UserRoleType.STUDENT));
+router.use(requireDiagnosed); // no drills until the one-time diagnostic is done
 
-// ── Legacy endpoints (kept for backward compatibility) ────────────────────────
-// GET /api/drills/questions - Fetch N random questions (used by legacy path)
+// GET /api/drills/questions - Fetch N random questions (read-only, no momentum)
 router.get('/questions', getDrillQuestions);
 
-// POST /api/drills/session - Save completed session (legacy)
-router.post('/session', saveDrillSession);
-
-// POST /api/drills/apply-complete - Award +30 pts (legacy)
-router.post('/apply-complete', completeApplyDrill);
+// NOTE: the legacy POST /api/drills/session (saveDrillSession) and
+// POST /api/drills/apply-complete (completeApplyDrill) routes were removed —
+// both awarded momentum with no idempotency/gating and were unlimited faucets.
+// All drill completion now goes through the stateful session endpoints below.
 
 // ── Stateful session endpoints (Task 3) ───────────────────────────────────────
 // POST /api/drills/start - Create STARTED session + return questions (supports resume)

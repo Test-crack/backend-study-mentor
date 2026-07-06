@@ -16,6 +16,7 @@
 
 import prisma from './prisma';
 import { processIASession, AlreadyCompletedError } from './iaProcessor';
+import { AIGradingError } from './iaGrading';
 
 // ── Constants (kept in sync with iaController.ts) ─────────────────────────────
 const IST_OFFSET_MS    = 5.5 * 60 * 60 * 1000;
@@ -101,9 +102,16 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
         );
 
         if (stale.status === 'IN_PROGRESS') {
-            // Count real answers — exclude __meta which is just session timing metadata
+            // Count REAL answers — exclude __meta (timing metadata) and treat empty
+            // strings / the '[no transcript]' sentinel as no answer, matching how
+            // submitIA and processIASession judge emptiness. Prevents a genuinely
+            // empty attempt from being auto-graded COMPLETED (+100) instead of MISSED.
             const savedAnswers = (stale.answers as Record<string, unknown>) ?? {};
-            const realAnswerCount = Object.keys(savedAnswers).filter(k => k !== '__meta').length;
+            const realAnswerCount = Object.entries(savedAnswers).filter(([k, v]) => {
+                if (k === '__meta') return false;
+                const t = String(v ?? '').trim();
+                return t !== '' && t !== '[no transcript]';
+            }).length;
 
             if (realAnswerCount > 0) {
                 // Case B: student answered questions but didn't hit submit → auto-grade
@@ -113,6 +121,13 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                 } catch (err) {
                     if (err instanceof AlreadyCompletedError) {
                         continue; // concurrent call already graded it — session is COMPLETED, move on
+                    }
+                    if (err instanceof AIGradingError) {
+                        // Infra failure (AI outage/quota) — NOT the student's fault. Leave the
+                        // session IN_PROGRESS and untouched so a later sweep can grade it once
+                        // the grader recovers. Never convert answered work into a MISSED penalty.
+                        console.warn(`[iaMissDetector] AI grading unavailable for session ${stale.id}; will retry next sweep.`);
+                        continue;
                     }
                     console.error(`[iaMissDetector] auto-grade failed for session ${stale.id}:`, err);
                     // Fall through: mark MISSED so it doesn't stay stuck IN_PROGRESS.

@@ -60,6 +60,7 @@ export async function computeStudentFullProgress(
         allDrillsLifetime,
         drills30Days,
         lexiGridScores,
+        diagnosticHistory,
     ] = await Promise.all([
         prisma.studentCompetencyMatrix.findMany({
             where: { student_id: instStudent.id },
@@ -100,6 +101,12 @@ export async function computeStudentFullProgress(
                 session_date: { gte: fourteenDaysAgo },
             },
             select: { words_solved: true, total_attempts: true, bonus_eligible: true, completed: true },
+        }),
+        // Diagnostic: all entries per skill (first = baseline)
+        prisma.assessmentHistory.findMany({
+            where:   { student_id: instStudent.id, mode: 'DIAGNOSTIC' as any },
+            orderBy: { created_at: 'asc' },
+            select:  { skill: true, band_score: true, sub_scores: true, feedback_json: true, created_at: true },
         }),
     ]);
 
@@ -208,6 +215,30 @@ export async function computeStudentFullProgress(
 
     const current_band = computeCurrentBand(competencyRows);
 
+    // ── Diagnostic baseline + results (first entry per skill) ─────────────
+    const skillAbbr: Record<string, string> = { LISTENING: 'L', READING: 'R', WRITING: 'W', SPEAKING: 'S' };
+    const seenBaseline = new Set<string>();
+    const diagnosticBaseline: Record<string, number | null> = { L: null, R: null, W: null, S: null };
+    const diagnosticResults: Array<{
+        skill: string; band_score: number;
+        sub_scores: any; feedback_json: any; created_at: string;
+    }> = [];
+    for (const entry of diagnosticHistory as any[]) {
+        const skillStr = String(entry.skill);
+        const abbr     = skillAbbr[skillStr] ?? skillStr;
+        if (!seenBaseline.has(abbr)) {
+            seenBaseline.add(abbr);
+            diagnosticBaseline[abbr] = parseFloat(String(entry.band_score));
+            diagnosticResults.push({
+                skill:         skillStr,
+                band_score:    parseFloat(String(entry.band_score)),
+                sub_scores:    entry.sub_scores ?? null,
+                feedback_json: entry.feedback_json ?? null,
+                created_at:    entry.created_at.toISOString(),
+            });
+        }
+    }
+
     return {
         student: {
             id:     studentUser?.id,
@@ -222,6 +253,8 @@ export async function computeStudentFullProgress(
         daily_streak:   instStudent.daily_streak,
         ia_sessions:    serializedIAs,
         mock_sessions:  serializedMocks,
+        diagnostic_baseline: diagnosticBaseline,
+        diagnostic_results:  diagnosticResults,
         drill_stats: {
             last_14_days:          last14Days,
             sub_skill_counts:      subSkillCounts,

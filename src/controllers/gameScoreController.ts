@@ -265,59 +265,71 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         // syncMomentum(res.momentum_score) is consistent with the local addPoints calls.
         // Bonus (+5 pts) only applies if all 5 words were solved on first/second try.
         const POINTS_PER_WORD = 15;
+        // Bonus requires all 5 words solved within 2 attempts each. Enforce a server-side
+        // plausibility bound on total_attempts so the client can't just assert the bonus:
+        // "≤2 tries for each of 5 words" ⇒ at most 10 attempts total.
+        const attemptsUsed  = Math.max(0, parseInt(total_attempts ?? '0'));
+        const bonusEarned   = (bonus_eligible === true || bonus_eligible === 'true')
+            && wordsSolvedNum >= WORDS_PER_SESSION
+            && attemptsUsed <= WORDS_PER_SESSION * 2;
         const momentum_earned = game_type === 'LEXIGRID'
-            ? wordsSolvedNum * POINTS_PER_WORD + (bonus_eligible && wordsSolvedNum >= 5 ? LEXIGRID_BONUS_PTS : 0)
+            ? wordsSolvedNum * POINTS_PER_WORD + (bonusEarned ? LEXIGRID_BONUS_PTS : 0)
             : 0;
 
         // One record per student per game per IST calendar day
         const sessionToday = currentISTDate();
+        const dailyKey = { student_id_game_type_session_date: { student_id: student.id, game_type, session_date: sessionToday } };
 
-        // Check BEFORE upsert to guard against double-awarding momentum
-        const existingRecord = await prisma.studentGameScore.findFirst({
-            where: { student_id: student.id, game_type, session_date: sessionToday }
-        });
-        const wasAlreadyComplete = existingRecord?.completed ?? false;
-
-        const record = await prisma.studentGameScore.upsert({
-            where: {
-                student_id_game_type_session_date: {
-                    student_id:   student.id,
+        // Race-safe first-completion claim: the request that WINS the INSERT is the
+        // day's first completion and is the only one allowed to award momentum. A
+        // concurrent duplicate (e.g. the localStorage pending-submit retry firing while
+        // the original request is still in flight) hits the unique constraint, falls to
+        // the update branch, and awards nothing — no double-award. (Previously a
+        // check-then-upsert-then-increment could double-award under that race.)
+        let isFirstCompletion = false;
+        try {
+            await prisma.studentGameScore.create({
+                data: {
+                    student_id:      student.id,
                     game_type,
-                    session_date: sessionToday
-                }
-            },
-            create: {
-                student_id:      student.id,
-                game_type,
-                session_date:    sessionToday,
-                words_solved:    wordsSolvedNum,
-                total_words:     WORDS_PER_SESSION,
-                total_attempts:  total_attempts ?? 0,
-                bonus_eligible:  bonus_eligible ?? false,
-                momentum_earned,
-                completed,
-                played_word_ids: req.body.played_word_ids ?? null,
-            },
-            update: {
-                words_solved:    wordsSolvedNum,
-                total_words:     WORDS_PER_SESSION,
-                total_attempts:  total_attempts ?? 0,
-                bonus_eligible:  bonus_eligible ?? false,
-                momentum_earned,
-                completed,
-                played_word_ids: req.body.played_word_ids ?? undefined,
-            }
-        } as any);
+                    session_date:    sessionToday,
+                    words_solved:    wordsSolvedNum,
+                    total_words:     WORDS_PER_SESSION,
+                    total_attempts:  total_attempts ?? 0,
+                    bonus_eligible:  bonusEarned,
+                    momentum_earned,
+                    completed,
+                    played_word_ids: req.body.played_word_ids ?? null,
+                } as any,
+            });
+            isFirstCompletion = true;
+        } catch (e: any) {
+            if (e?.code !== 'P2002') throw e;
+            // A record for today already exists (offline play, replay, or concurrent
+            // submit) — refresh stats only, award no momentum.
+            await prisma.studentGameScore.update({
+                where: dailyKey,
+                data: {
+                    words_solved:    wordsSolvedNum,
+                    total_words:     WORDS_PER_SESSION,
+                    total_attempts:  total_attempts ?? 0,
+                    bonus_eligible:  bonusEarned,
+                    played_word_ids: req.body.played_word_ids ?? undefined,
+                } as any,
+            });
+        }
 
-        // Award momentum only on first submission — idempotent
+        // Award momentum only to the request that won the insert — idempotent under retries.
         let updated_momentum = student.momentum_score;
-        if (!wasAlreadyComplete && momentum_earned > 0) {
+        if (isFirstCompletion && momentum_earned > 0) {
             const updatedStudent = await prisma.institute_students.update({
                 where: { id: student.id },
-                data: { momentum_score: { increment: momentum_earned } }
+                data:  { momentum_score: { increment: momentum_earned } },
             });
             updated_momentum = updatedStudent.momentum_score;
         }
+
+        const record = await prisma.studentGameScore.findUnique({ where: dailyKey });
 
         return res.json({
             success: true,

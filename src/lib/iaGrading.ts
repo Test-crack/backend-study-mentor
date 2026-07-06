@@ -9,6 +9,19 @@ export type IAGradeResult = {
     key_observations: string[];
 };
 
+/**
+ * Thrown when the AI grader fails for an INFRASTRUCTURE reason (model outage,
+ * quota, network, unparseable response) — as opposed to legitimately scoring a
+ * poor/empty answer. Callers MUST treat this as "grading did not happen": leave
+ * the session recoverable for retry and never write a fallback band or penalty.
+ */
+export class AIGradingError extends Error {
+    constructor(message: string, public readonly cause?: unknown) {
+        super(message);
+        this.name = 'AIGradingError';
+    }
+}
+
 // ── Per-criterion display names ───────────────────────────────────────────────
 
 const WRITING_CRITERION: Record<string, string> = {
@@ -247,12 +260,10 @@ export async function gradeIAWritingPrompt(
     try {
         return await callGemini(buildPrompt('writing', subSkill, questionPrompt, response, wc));
     } catch (e) {
+        // Infra failure — do NOT fabricate a band. Propagate so the caller keeps
+        // the session recoverable for retry instead of corrupting the band score.
         console.error('[IAGrading] writing grading failed:', e);
-        return { 
-            band: 1, 
-            rationale: 'AI grading system encountered an error. Minimum score assigned for safety.', 
-            key_observations: ['Technical error during grading', 'Response could not be evaluated', 'Please contact support if this persists'] 
-        };
+        throw new AIGradingError('Writing grading failed', e);
     }
 }
 
@@ -273,11 +284,9 @@ export async function gradeIASpeakingPrompt(
     try {
         return await callGemini(buildPrompt('speaking', subSkill, questionPrompt, transcript, wc));
     } catch (e) {
+        // Infra failure — do NOT fabricate a band. Propagate so the caller keeps
+        // the session recoverable for retry instead of corrupting the band score.
         console.error('[IAGrading] speaking grading failed:', e);
-        return { 
-            band: 1, 
-            rationale: 'AI grading system encountered an error. Minimum score assigned for safety.', 
-            key_observations: ['Technical error during grading', 'Transcript could not be evaluated', 'Please contact support if this persists'] 
-        };
+        throw new AIGradingError('Speaking grading failed', e);
     }
 }

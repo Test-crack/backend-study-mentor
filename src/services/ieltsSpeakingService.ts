@@ -215,17 +215,13 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
 }
 `;
 
-  const originalTlsState = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   try {
     const audioData = fs.readFileSync(audioFilePath);
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
     const result = await model.generateContent([
       { inlineData: { mimeType, data: audioData.toString('base64') } },
       { text: prompt }
     ]);
-
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsState;
 
     let rawText = result.response.text().trim();
 
@@ -250,7 +246,6 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
     return enforceScores(evaluation);
 
   } catch (error: any) {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsState;
     console.error('[analyzeSpeaking] Error:', error);
     throw new Error('Failed to analyze speaking with AI.');
   }
