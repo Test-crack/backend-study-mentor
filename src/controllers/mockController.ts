@@ -482,7 +482,13 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
             total_time_ms:       MOCK_TOTAL_MS,
         });
 
-    } catch (err) {
+    } catch (err: any) {
+        // Concurrent start of the same slot: the unique (student, month, attempt_type)
+        // constraint makes exactly one create win. Return a clean 409 (slot already
+        // taken) instead of a raw 500. Any EARNED momentum deduct rolled back with the tx.
+        if (err?.code === 'P2002') {
+            return res.status(409).json({ success: false, error: 'A mock for this slot already exists this month.' });
+        }
         console.error('[MockQuestions] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }

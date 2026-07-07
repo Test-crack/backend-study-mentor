@@ -14,6 +14,7 @@ interface DrillItem {
     sub_skill: string;
     skill_band_score: number;
     sub_skill_score: number;
+    weakness: number; // 0.6*(1-accuracy) + 0.4*(1-band/9); higher = needs more work
 }
 
 export async function getNextActionDrill(req: AuthRequest, res: Response) {
@@ -39,15 +40,34 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
 
         // Cursor = total all-time completed drills. Persists across days without a DB column.
         // Each completion advances the cursor by 1; the next fetch starts one step ahead.
-        const [totalCompleted, todayCompleted] = await Promise.all([
+        const [totalCompleted, todayCompleted, drillAgg] = await Promise.all([
             prisma.drillSession.count({
                 where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] } }
             }),
             prisma.drillSession.count({
                 where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: todayStartIST() } }
-            })
+            }),
+            // Per-sub-skill drill accuracy — feeds the weakness score below.
+            prisma.drillSession.groupBy({
+                by:   ['skill', 'sub_skill'],
+                where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] } },
+                _sum: { correct_answers: true, total_questions: true },
+            }),
         ]);
 
+        // accuracy per skill::sub_skill (0..1). Undrilled pairs have no entry → treated as
+        // accuracy 0 (max practice-gap weight) so they surface as high-priority.
+        const accuracyByKey = new Map<string, number>();
+        for (const g of drillAgg as any[]) {
+            const total = g._sum.total_questions ?? 0;
+            const acc   = total > 0 ? (g._sum.correct_answers ?? 0) / total : 0;
+            accuracyByKey.set(`${g.skill}::${g.sub_skill}`, acc);
+        }
+        // Weakness per spec: 60% recent drill accuracy gap + 40% band gap. Higher = weaker.
+        const weaknessOf = (skill: string, sub: string, band: number) => {
+            const acc = accuracyByKey.get(`${skill}::${sub}`) ?? 0;
+            return 0.6 * (1 - acc) + 0.4 * (1 - Math.min(9, Math.max(0, band)) / 9);
+        };
 
         const items: DrillItem[] = [];
 
@@ -64,12 +84,10 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
                     { sub: 'VOCABULARY',    scoreKey: 'vocabularyScore' },
                     { sub: 'TASK_RESPONSE', scoreKey: 'taskResponseScore' },
                 ];
-                subs.forEach(({ sub, scoreKey }) => items.push({
-                    skill: 'WRITING',
-                    sub_skill: sub,
-                    skill_band_score: skillBandScore,
-                    sub_skill_score: Number(subScores[scoreKey] ?? skillBandScore)
-                }));
+                subs.forEach(({ sub, scoreKey }) => {
+                    const subScore = Number(subScores[scoreKey] ?? skillBandScore);
+                    items.push({ skill: 'WRITING', sub_skill: sub, skill_band_score: skillBandScore, sub_skill_score: subScore, weakness: weaknessOf('WRITING', sub, subScore) });
+                });
             } else if (matrix.skill === 'SPEAKING') {
                 const subs: { sub: string; scoreKey: string }[] = [
                     { sub: 'FLUENCY',       scoreKey: 'fluencyScore' },
@@ -77,26 +95,14 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
                     { sub: 'VOCABULARY',    scoreKey: 'vocabularyScore' },
                     { sub: 'PRONUNCIATION', scoreKey: 'pronunciationScore' },
                 ];
-                subs.forEach(({ sub, scoreKey }) => items.push({
-                    skill: 'SPEAKING',
-                    sub_skill: sub,
-                    skill_band_score: skillBandScore,
-                    sub_skill_score: Number(subScores[scoreKey] ?? skillBandScore)
-                }));
+                subs.forEach(({ sub, scoreKey }) => {
+                    const subScore = Number(subScores[scoreKey] ?? skillBandScore);
+                    items.push({ skill: 'SPEAKING', sub_skill: sub, skill_band_score: skillBandScore, sub_skill_score: subScore, weakness: weaknessOf('SPEAKING', sub, subScore) });
+                });
             } else if (matrix.skill === 'READING') {
-                items.push({
-                    skill: 'READING',
-                    sub_skill: 'READING',
-                    skill_band_score: skillBandScore,
-                    sub_skill_score: skillBandScore
-                });
+                items.push({ skill: 'READING', sub_skill: 'READING', skill_band_score: skillBandScore, sub_skill_score: skillBandScore, weakness: weaknessOf('READING', 'READING', skillBandScore) });
             } else if (matrix.skill === 'LISTENING') {
-                items.push({
-                    skill: 'LISTENING',
-                    sub_skill: 'LISTENING',
-                    skill_band_score: skillBandScore,
-                    sub_skill_score: skillBandScore
-                });
+                items.push({ skill: 'LISTENING', sub_skill: 'LISTENING', skill_band_score: skillBandScore, sub_skill_score: skillBandScore, weakness: weaknessOf('LISTENING', 'LISTENING', skillBandScore) });
             }
         }
 
@@ -107,18 +113,18 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             bySkill[item.skill].push(item);
         }
 
-        // 2. Sort items inside each skill perfectly by score
+        // 2. Sort items inside each skill by weakness (weakest first)
         for (const skill in bySkill) {
             bySkill[skill].sort((a, b) => {
-                if (a.sub_skill_score !== b.sub_skill_score) return a.sub_skill_score - b.sub_skill_score;
-                return a.skill_band_score - b.skill_band_score;
+                if (b.weakness !== a.weakness) return b.weakness - a.weakness;
+                return a.sub_skill_score - b.sub_skill_score; // deterministic tiebreak
             });
         }
 
-        // 3. Prioritize skills: rank the skill queues by the severity of their lowest score
+        // 3. Prioritize skills: rank the skill queues by the weakness of their weakest sub-skill
         const skillQueues = Object.values(bySkill).sort((a, b) => {
+            if (b[0].weakness !== a[0].weakness) return b[0].weakness - a[0].weakness;
             if (a[0].sub_skill_score !== b[0].sub_skill_score) return a[0].sub_skill_score - b[0].sub_skill_score;
-            if (a[0].skill_band_score !== b[0].skill_band_score) return a[0].skill_band_score - b[0].skill_band_score;
             return a[0].skill.localeCompare(b[0].skill); // deterministic fallback
         });
 
@@ -789,36 +795,46 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
         const updatedSession = await prisma.drillSession.findUnique({ where: { id } });
         const updatedMomentumScore = tx.momentumScore;
 
-        // Streak: fires when today's DRILL_DONE count crosses exactly 2
-        const drillCutoff = todayStartIST();
+        // Streak: fires once when today's completed-drill count reaches 2 (>=2, not ==2,
+        // so a concurrent 1->3 jump can't skip it).
         const drillsToday = await prisma.drillSession.count({
-            where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: drillCutoff } }
+            where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: todayStartIST() } }
         });
 
         let newDailyStreak = student.daily_streak;
 
-        if (drillsToday === 2) {
+        if (drillsToday >= 2) {
             const todayIST     = currentISTDate();
             const yesterdayIST = yesterdayISTDate();
 
-            const { daily_streak: prevStreak, last_streak_date: lastDate } =
-                await prisma.institute_students.findUnique({
-                    where:  { id: student.id },
-                    select: { daily_streak: true, last_streak_date: true }
-                }) ?? { daily_streak: 0, last_streak_date: null };
-
-            if (lastDate
-                && lastDate.getTime() >= yesterdayIST.getTime()
-                && lastDate.getTime() <  todayIST.getTime()) {
-                newDailyStreak = prevStreak + 1;
-            } else {
-                newDailyStreak = 1;
-            }
-
-            await prisma.institute_students.update({
-                where: { id: student.id },
-                data:  { daily_streak: newDailyStreak, last_streak_date: todayIST }
+            const fresh = await prisma.institute_students.findUnique({
+                where:  { id: student.id },
+                select: { daily_streak: true, last_streak_date: true }
             });
+            const lastDate   = fresh?.last_streak_date ?? null;
+            const prevStreak = fresh?.daily_streak ?? 0;
+
+            if (!lastDate || lastDate.getTime() < todayIST.getTime()) {
+                // Not yet counted today. Continue the run if the last credited day was
+                // yesterday-or-later (spec: "≥ yesterday"); otherwise restart at 1.
+                const computed = (lastDate && lastDate.getTime() >= yesterdayIST.getTime()) ? prevStreak + 1 : 1;
+                // Once-per-day guard: only the first request to cross 2 today flips the
+                // streak. A concurrent completion finds last_streak_date already == today
+                // (count 0) and reads the value instead of clobbering it back to 1.
+                const guard = await prisma.institute_students.updateMany({
+                    where: { id: student.id, OR: [{ last_streak_date: null }, { last_streak_date: { lt: todayIST } }] },
+                    data:  { daily_streak: computed, last_streak_date: todayIST },
+                });
+                if (guard.count > 0) {
+                    newDailyStreak = computed;
+                } else {
+                    const after = await prisma.institute_students.findUnique({ where: { id: student.id }, select: { daily_streak: true } });
+                    newDailyStreak = after?.daily_streak ?? prevStreak;
+                }
+            } else {
+                // Already credited today.
+                newDailyStreak = prevStreak;
+            }
         }
 
         return res.json({

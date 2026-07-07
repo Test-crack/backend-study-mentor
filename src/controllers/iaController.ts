@@ -87,13 +87,17 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
         const allSessions = await prisma.drillSession.findMany({
             where: { student_id: student.id },
             orderBy: { created_at: 'asc' },
-            select: { id: true, created_at: true }
+            select: { id: true, created_at: true, status: true }
         });
 
-        const drills_completed = allSessions.length;
+        // Prerequisite gate counts COMPLETED drills only — a STARTED-but-abandoned
+        // session must not make the IA look startable (getIAQuestions would then 403).
+        const drills_completed = allSessions.filter(
+            s => s.status === 'DRILL_DONE' || s.status === 'APPLY_DONE'
+        ).length;
 
-        // ── No drills at all → nothing to schedule ────────────────────────────
-        if (drills_completed === 0) {
+        // ── No drill sessions at all → nothing to schedule (need an anchor date) ─
+        if (allSessions.length === 0) {
             return res.json({
                 success: true,
                 missed_count: 0,
@@ -818,11 +822,14 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             if (!Number.isInteger(nextSection) || nextSection < 0 || nextSection >= Math.max(sectionConfig.length, 1) || nextSection <= prevSection) {
                 return res.status(400).json({ success: false, error: 'Invalid section advance.' });
             }
-            current.__meta = { current_section: nextSection, section_started_at: Date.now() };
-            await prisma.iASession.update({
-                where: { id: session_id },
-                data:  { answers: current as any }
-            });
+            // Atomic JSONB merge of just the __meta key — a full read-modify-write of the
+            // answers object would let a concurrent answer save clobber the timer stamp.
+            const metaObj = JSON.stringify({ current_section: nextSection, section_started_at: Date.now() });
+            await prisma.$executeRaw`
+                UPDATE "IASession"
+                SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object('__meta', ${metaObj}::jsonb)
+                WHERE id = ${session_id}::uuid
+            `;
             return res.json({ success: true, saved: true });
         }
 
@@ -842,11 +849,17 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             }
         }
 
-        current[question_id] = String(answer);
-
-        await prisma.iASession.update({
-            where: { id: session_id },
-            data: { answers: current as any, status: 'IN_PROGRESS' }
+        // Atomic single-key JSONB merge — two overlapping saves each preserve the
+        // other's answer instead of last-writer-wins clobbering the whole object.
+        await prisma.$executeRaw`
+            UPDATE "IASession"
+            SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object(${String(question_id)}::text, ${String(answer)}::text)
+            WHERE id = ${session_id}::uuid
+        `;
+        // Flip PENDING → IN_PROGRESS once (touches status only; never the answers blob).
+        await prisma.iASession.updateMany({
+            where: { id: session_id, status: 'PENDING' as any },
+            data:  { status: 'IN_PROGRESS' as any },
         });
 
         return res.json({ success: true, saved: true });
