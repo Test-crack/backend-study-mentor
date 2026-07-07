@@ -234,21 +234,51 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        // ── Abandoned sweep: mark sessions whose 72-hour window has expired ──
-        // No momentum penalty (unlike IA's -20). Student simply loses their monthly slot.
+        // ── Expiry sweep: sessions whose 72-hour window has closed ──────────────
+        // M-4: if the student produced real answers, AUTO-GRADE them (capture the work)
+        // instead of discarding — mirrors the IA auto-grade-on-miss behaviour. A session
+        // with no real answers is simply marked ABANDONED (slot consumed, no penalty).
         // Runs on every status call so the dashboard always reflects current reality.
         const expiredSessions = await prisma.mocksessions.findMany({
             where: { student_id: student.id, window_closes_at: { lt: new Date() }, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
-            select: { id: true }
+            select: { id: true, answers: true }
         });
-        const abandonedCount = expiredSessions.length;
-        if (abandonedCount > 0) {
-            // Status guard in WHERE prevents a TOCTOU race where a student submits
-            // between the findMany above and this write, overwriting a COMPLETED session.
-            await prisma.mocksessions.updateMany({
-                where: { id: { in: expiredSessions.map(s => s.id) }, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
-                data:  { status: 'ABANDONED' as any }
+        const abandonedCount = expiredSessions.length; // sessions whose window closed this call
+        for (const exp of expiredSessions) {
+            const ans = (exp.answers ?? {}) as Record<string, unknown>;
+            const hasRealAnswers = Object.entries(ans).some(([k, v]) => {
+                if (k === '__meta') return false;
+                const t = String(v ?? '').trim();
+                return t !== '' && t !== '[no transcript]';
             });
+            if (hasRealAnswers) {
+                try {
+                    const full = await prisma.mocksessions.findUnique({ where: { id: exp.id } });
+                    if (full && (full.status === 'PENDING' || full.status === 'IN_PROGRESS')) {
+                        await processMockSession(full, student);
+                    }
+                } catch (e: any) {
+                    if (e instanceof MockAlreadyCompletedError) { /* concurrent submit graded it */ }
+                    else if (e instanceof AIGradingError) {
+                        // Grader down — leave IN_PROGRESS so a later sweep can grade it. It will
+                        // be re-attempted; the 72h window is already past but auto-grade ignores that.
+                        console.warn(`[Mock] auto-grade unavailable for ${exp.id}; will retry next sweep.`);
+                    } else {
+                        // Unexpected failure — fall back to ABANDONED so it can't loop forever.
+                        console.error(`[Mock] auto-grade failed for ${exp.id}:`, e);
+                        await prisma.mocksessions.updateMany({
+                            where: { id: exp.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+                            data:  { status: 'ABANDONED' as any }
+                        });
+                    }
+                }
+            } else {
+                // No real work → ABANDONED (status guard avoids a submit-race clobber).
+                await prisma.mocksessions.updateMany({
+                    where: { id: exp.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+                    data:  { status: 'ABANDONED' as any }
+                });
+            }
         }
 
         const eligibility = await checkEligibility(student.id);
@@ -576,6 +606,270 @@ type MockSkillScoreResponse = MockSkillScore & {
 
 class MockAlreadyCompletedError extends Error {}
 
+/**
+ * Grades a mock session's saved answers, updates the competency matrix + real band,
+ * awards momentum, and marks the session COMPLETED — all in one transaction.
+ * Shared by submitMock (student clicks submit) and the abandoned-mock auto-grade
+ * sweep (M-4: window closed with answers → capture the work instead of discarding).
+ *
+ * Throws MockAlreadyCompletedError if a concurrent submit already graded it, or
+ * AIGradingError if the grader is unavailable (caller leaves the session recoverable).
+ * Callers MUST validate session ownership/status before calling.
+ */
+async function processMockSession(session: any, student: { id: string }) {
+    // ── 2. Load questions + strip __meta ──────────────────────────────────
+    const questionIdsConfig = session.question_ids as Array<{ skill: string; ids: string[] }>;
+    const allIds = questionIdsConfig.flatMap(c => c.ids);
+    const questions = await prisma.mockquestions.findMany({
+        where:  { id: { in: allIds } },
+        select: { id: true, skill: true, sub_skill: true, question_type: true, correct_answer: true, prompt_text: true }
+    });
+    const answers = Object.fromEntries(
+        Object.entries((session.answers ?? {}) as Record<string, unknown>).filter(([k]) => k !== '__meta')
+    ) as Record<string, string>;
+
+    // ── 3. Launch AI grading for W/S prompts in parallel ─────────────────
+    type AIJob = { key: string; band: number; rationale: string; key_observations: string[] };
+    const aiJobs: Promise<AIJob>[] = [];
+
+    for (let i = 0; i < questionIdsConfig.length; i++) {
+        const cfg = questionIdsConfig[i];
+        if (cfg.skill !== 'WRITING' && cfg.skill !== 'SPEAKING') continue;
+
+        const subQs = questions.filter(q => cfg.ids.includes(q.id));
+        const aiQs  = subQs.filter(q => q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT');
+        for (const q of aiQs) {
+            const rawText  = (answers[q.id] ?? '').trim();
+            const text     = rawText === '[no transcript]' ? '' : rawText;
+            const subSkill = String(q.sub_skill ?? (cfg.skill === 'WRITING' ? 'TASK_RESPONSE' : 'FLUENCY'));
+            const key      = `${cfg.skill}:${subSkill}`;
+            aiJobs.push((async (): Promise<AIJob> => {
+                const result = q.question_type === 'WRITING_PROMPT'
+                    ? await gradeIAWritingPrompt(subSkill, q.prompt_text, text)
+                    : await gradeIASpeakingPrompt(subSkill, q.prompt_text, text);
+                return { key, band: result.band, rationale: result.rationale, key_observations: result.key_observations };
+            })());
+        }
+    }
+    const aiResults           = await Promise.all(aiJobs);
+    const aiByKey             = new Map<string, number>();
+    const aiFeedbackByKey     = new Map<string, { rationale: string; key_observations: string[] }>();
+    for (const j of aiResults) {
+        aiByKey.set(j.key, j.band);
+        if (j.rationale) aiFeedbackByKey.set(j.key, { rationale: j.rationale, key_observations: j.key_observations });
+    }
+
+    // ── 4. Score each skill ────────────────────────────────────────────────
+    const skillScores: MockSkillScore[] = [];
+
+    for (let i = 0; i < questionIdsConfig.length; i++) {
+        const cfg   = questionIdsConfig[i];
+        const subQs = questions.filter(q => cfg.ids.includes(q.id));
+
+        if (cfg.skill === 'LISTENING' || cfg.skill === 'READING') {
+            const mcqQs = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
+            let correct = 0;
+            for (const q of mcqQs) {
+                const sa = (answers[q.id] ?? '').trim().toUpperCase();
+                const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
+                if (sa && ca && sa === ca) correct++;
+            }
+            const band = mcqQs.length > 0
+                ? Math.min(9.0, Math.max(0.0, Math.round((correct / mcqQs.length) * 9 * 2) / 2))
+                : 0;
+            skillScores.push({ skill: cfg.skill, band, correct, total: mcqQs.length, ai_graded: false });
+
+        } else {
+            const subSkills = cfg.skill === 'WRITING' ? WRITING_SUB_SKILLS : SPEAKING_SUB_SKILLS;
+            const subSkillScores: MockSubSkillScore[] = [];
+            let totalCorrect = 0;
+            let totalMCQ     = 0;
+
+            for (const ss of subSkills) {
+                const ssQs  = subQs.filter(q => String(q.sub_skill) === ss);
+                const ssMCQ = ssQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
+
+                let ssCorrect = 0;
+                for (const q of ssMCQ) {
+                    const sa = (answers[q.id] ?? '').trim().toUpperCase();
+                    const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
+                    if (sa && ca && sa === ca) ssCorrect++;
+                }
+                totalCorrect += ssCorrect;
+                totalMCQ     += ssMCQ.length;
+
+                const mcqScore1to10 = ssMCQ.length > 0
+                    ? Math.min(10, 1 + (ssCorrect / ssMCQ.length) * 9)
+                    : null;
+
+                const aiScore1to10 = aiByKey.get(`${cfg.skill}:${ss}`) ?? null;
+
+                let combined1to10: number;
+                if      (mcqScore1to10 === null && aiScore1to10 === null) combined1to10 = 1;
+                else if (mcqScore1to10 === null)                           combined1to10 = aiScore1to10!;
+                else if (aiScore1to10 === null)                            combined1to10 = mcqScore1to10;
+                else    combined1to10 = (mcqScore1to10 * 1 + aiScore1to10 * 2) / 3;
+
+                const ssBand      = scaleToIELTS(combined1to10);
+                const aiIELTS     = aiScore1to10 !== null ? scaleToIELTS(aiScore1to10) : null;
+                const feedbackKey = `${cfg.skill}:${ss}`;
+
+                subSkillScores.push({
+                    sub_skill:   ss,
+                    band:        ssBand,
+                    correct:     ssCorrect,
+                    total_mcq:   ssMCQ.length,
+                    ai_band:     aiIELTS,
+                    ai_feedback: aiFeedbackByKey.get(feedbackKey),
+                });
+            }
+
+            const avgBand = subSkillScores.length > 0
+                ? Math.round((subSkillScores.reduce((s, x) => s + x.band, 0) / subSkillScores.length) * 2) / 2
+                : 0;
+
+            skillScores.push({ skill: cfg.skill, band: avgBand, correct: totalCorrect, total: totalMCQ, ai_graded: true, sub_skill_scores: subSkillScores });
+        }
+    }
+
+    // ── 5. Pre-fetch matrix + diagnostic for delta calculation ────────────
+    const [competencyPre, diagnosticHistory] = await Promise.all([
+        prisma.studentCompetencyMatrix.findMany({
+            where:  { student_id: student.id },
+            select: { skill: true, band_score: true, sub_scores: true }
+        }),
+        prisma.assessmentHistory.findMany({
+            where:   { student_id: student.id, mode: 'DIAGNOSTIC' },
+            select:  { skill: true, band_score: true, created_at: true },
+            orderBy: { created_at: 'desc' }
+        })
+    ]);
+
+    const prevMatrixBands = new Map<string, number>();
+    for (const c of competencyPre) {
+        if (c.band_score) prevMatrixBands.set(String(c.skill), parseFloat(String(c.band_score)) || 0);
+    }
+    const diagnosticBands = new Map<string, number>();
+    for (const h of diagnosticHistory) {
+        const s = String(h.skill);
+        if (!diagnosticBands.has(s)) diagnosticBands.set(s, parseFloat(String(h.band_score)) || 0);
+    }
+
+    // ── 6. Pre-compute W/S sub-skill updates (single source of truth) ────────
+    type WSUpdate = { updatedSS: Record<string, number>; newMatrixBand: number };
+    const wsUpdates = new Map<string, WSUpdate>();
+    for (const s of skillScores) {
+        if (s.skill !== 'WRITING' && s.skill !== 'SPEAKING') continue;
+        const matrixRow  = competencyPre.find(c => String(c.skill) === s.skill);
+        const existingSS = (matrixRow?.sub_scores as Record<string, number>) ?? {};
+        const updatedSS  = { ...existingSS };
+        const newBands:   number[] = [];
+        for (const ss of (s.sub_skill_scores ?? [])) {
+            const key   = SUB_SCORE_KEY_MAP[ss.sub_skill];
+            if (!key) continue;
+            const curSS = existingSS[key] ?? null;
+            const newSS = curSS !== null
+                ? Math.min(9, Math.max(0, Math.round((ss.band * 0.60 + curSS * 0.40) * 2) / 2))
+                : Math.min(9, Math.max(0, ss.band));
+            updatedSS[key] = newSS;
+            newBands.push(newSS);
+        }
+        const newMatrixBand = newBands.length > 0
+            ? Math.round((newBands.reduce((a, b) => a + b, 0) / newBands.length) * 2) / 2
+            : s.band;
+        wsUpdates.set(s.skill, { updatedSS, newMatrixBand });
+    }
+
+    // ── 7. Apply scoring formula + build response ─────────────────────────
+    const skillScoresResponse: MockSkillScoreResponse[] = skillScores.map(s => {
+        const prevBand = prevMatrixBands.get(s.skill) ?? null;
+        const diagBand = diagnosticBands.get(s.skill) ?? null;
+
+        let newMatrixBand: number;
+        if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
+            newMatrixBand = wsUpdates.get(s.skill)!.newMatrixBand;
+        } else {
+            newMatrixBand = prevBand !== null
+                ? Math.min(9, Math.max(0, Math.round((s.band * 0.60 + prevBand * 0.40) * 2) / 2))
+                : Math.min(9, Math.max(0, s.band));
+        }
+
+        const deltaFromDiag = diagBand !== null ? Math.round((newMatrixBand - diagBand) * 10) / 10 : null;
+        return { ...s, new_matrix_band: newMatrixBand, prev_matrix_band: prevBand, diagnostic_band: diagBand, delta_from_diag: deltaFromDiag };
+    });
+
+    // ── 8. Real Band + momentum ───────────────────────────────────────────
+    const allNewBands  = skillScoresResponse.map(s => s.new_matrix_band);
+    const realBandRaw  = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
+    const realBandScore = Math.min(9, Math.max(0, Math.round(realBandRaw * 2) / 2));
+
+    const prevOverall = Math.round(
+        (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? 0), 0) / MOCK_SKILL_ORDER.length) * 2
+    ) / 2;
+    const thresholdCrossed = Math.floor(realBandScore / 0.5) > Math.floor(prevOverall / 0.5);
+
+    const momentumBreakdown = [{ reason: 'Participation', points: 200 }];
+    let momentumAwarded = 200;
+    if (thresholdCrossed) {
+        momentumAwarded += 500;
+        momentumBreakdown.push({ reason: `New band threshold — crossed ${realBandScore.toFixed(1)}`, points: 500 });
+    }
+
+    // ── 9. DB transaction ─────────────────────────────────────────────────
+    const updatedMomentum = await prisma.$transaction(async (tx) => {
+        const marked = await tx.mocksessions.updateMany({
+            where: { id: session.id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
+            data:  {
+                status:            'COMPLETED' as any,
+                scores:            skillScores as any,
+                real_band_score:   realBandScore,
+                momentum_awarded:  momentumAwarded,
+                time_submitted_at: new Date()
+            }
+        });
+        if (marked.count === 0) throw new MockAlreadyCompletedError();
+
+        for (const s of skillScoresResponse) {
+            await tx.assessmentHistory.create({
+                data: { student_id: student.id, skill: s.skill as any, mode: 'MOCK' as any, band_score: s.new_matrix_band }
+            });
+
+            if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
+                const { updatedSS } = wsUpdates.get(s.skill)!;
+                await tx.studentCompetencyMatrix.upsert({
+                    where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
+                    update: { band_score: s.new_matrix_band, sub_scores: updatedSS as any, assessments_count: { increment: 1 }, last_updated: new Date() },
+                    create: { student_id: student.id, skill: s.skill as any, band_score: s.new_matrix_band, sub_scores: updatedSS as any, assessments_count: 1 }
+                });
+            } else {
+                await tx.studentCompetencyMatrix.upsert({
+                    where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
+                    update: { band_score: s.new_matrix_band, assessments_count: { increment: 1 }, last_updated: new Date() },
+                    create: { student_id: student.id, skill: s.skill as any, band_score: s.new_matrix_band, assessments_count: 1 }
+                });
+            }
+        }
+
+        const updated = await tx.institute_students.update({
+            where:  { id: student.id },
+            data:   { momentum_score: { increment: momentumAwarded } },
+            select: { momentum_score: true }
+        });
+        return updated.momentum_score;
+    });
+
+    return {
+        real_band_score:    realBandScore,
+        prev_real_band:     prevOverall,
+        real_band_delta:    Math.round((realBandScore - prevOverall) * 10) / 10,
+        threshold_crossed:  thresholdCrossed,
+        momentum_awarded:   momentumAwarded,
+        momentum_breakdown: momentumBreakdown,
+        updated_momentum:   updatedMomentum,
+        skill_scores:       skillScoresResponse,
+    };
+}
+
 export async function submitMock(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
@@ -609,283 +903,9 @@ export async function submitMock(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'Mock window has closed.' });
         }
 
-        // ── 2. Load questions + strip __meta ──────────────────────────────────
-        const questionIdsConfig = session.question_ids as Array<{ skill: string; ids: string[] }>;
-        const allIds = questionIdsConfig.flatMap(c => c.ids);
-        const questions = await prisma.mockquestions.findMany({
-            where:  { id: { in: allIds } },
-            select: { id: true, skill: true, sub_skill: true, question_type: true, correct_answer: true, prompt_text: true }
-        });
-        const answers = Object.fromEntries(
-            Object.entries((session.answers ?? {}) as Record<string, unknown>).filter(([k]) => k !== '__meta')
-        ) as Record<string, string>;
-
-        // ── 3. Launch AI grading for W/S prompts in parallel ─────────────────
-        // Track by sectionIdx:sub_skill key for per-sub-skill retrieval
-        type AIJob = { key: string; band: number; rationale: string; key_observations: string[] };
-        const aiJobs: Promise<AIJob>[] = [];
-
-        for (let i = 0; i < questionIdsConfig.length; i++) {
-            const cfg = questionIdsConfig[i];
-            if (cfg.skill !== 'WRITING' && cfg.skill !== 'SPEAKING') continue;
-
-            const subQs = questions.filter(q => cfg.ids.includes(q.id));
-            const aiQs  = subQs.filter(q => q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT');
-            for (const q of aiQs) {
-                const rawText  = (answers[q.id] ?? '').trim();
-                const text     = rawText === '[no transcript]' ? '' : rawText;
-                const subSkill = String(q.sub_skill ?? (cfg.skill === 'WRITING' ? 'TASK_RESPONSE' : 'FLUENCY'));
-                // Key by skill name, not loop index — index-keyed lookups break if the
-                // questionIdsConfig array order ever differs between creation and submission.
-                const key      = `${cfg.skill}:${subSkill}`;
-                aiJobs.push((async (): Promise<AIJob> => {
-                    const result = q.question_type === 'WRITING_PROMPT'
-                        ? await gradeIAWritingPrompt(subSkill, q.prompt_text, text)
-                        : await gradeIASpeakingPrompt(subSkill, q.prompt_text, text);
-                    return { key, band: result.band, rationale: result.rationale, key_observations: result.key_observations };
-                })());
-            }
-        }
-        const aiResults           = await Promise.all(aiJobs);
-        const aiByKey             = new Map<string, number>();
-        const aiFeedbackByKey     = new Map<string, { rationale: string; key_observations: string[] }>();
-        for (const j of aiResults) {
-            aiByKey.set(j.key, j.band);
-            if (j.rationale) aiFeedbackByKey.set(j.key, { rationale: j.rationale, key_observations: j.key_observations });
-        }
-
-        // ── 4. Score each skill ────────────────────────────────────────────────
-        const skillScores: MockSkillScore[] = [];
-
-        for (let i = 0; i < questionIdsConfig.length; i++) {
-            const cfg   = questionIdsConfig[i];
-            const subQs = questions.filter(q => cfg.ids.includes(q.id));
-
-            if (cfg.skill === 'LISTENING' || cfg.skill === 'READING') {
-                // ── L/R: pure MCQ scoring → direct IELTS band ─────────────────
-                const mcqQs = subQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
-                let correct = 0;
-                for (const q of mcqQs) {
-                    const sa = (answers[q.id] ?? '').trim().toUpperCase();
-                    const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
-                    if (sa && ca && sa === ca) correct++;
-                }
-                const band = mcqQs.length > 0
-                    ? Math.min(9.0, Math.max(0.0, Math.round((correct / mcqQs.length) * 9 * 2) / 2))
-                    : 0;
-                skillScores.push({ skill: cfg.skill, band, correct, total: mcqQs.length, ai_graded: false });
-
-            } else {
-                // ── W/S: 4 sub-skills, each MCQ + 1 AI prompt (w1=1, w2=2) ────
-                const subSkills = cfg.skill === 'WRITING' ? WRITING_SUB_SKILLS : SPEAKING_SUB_SKILLS;
-                const subSkillScores: MockSubSkillScore[] = [];
-                let totalCorrect = 0;
-                let totalMCQ     = 0;
-
-                for (const ss of subSkills) {
-                    const ssQs  = subQs.filter(q => String(q.sub_skill) === ss);
-                    const ssMCQ = ssQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
-
-                    let ssCorrect = 0;
-                    for (const q of ssMCQ) {
-                        const sa = (answers[q.id] ?? '').trim().toUpperCase();
-                        const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
-                        if (sa && ca && sa === ca) ssCorrect++;
-                    }
-                    totalCorrect += ssCorrect;
-                    totalMCQ     += ssMCQ.length;
-
-                    // MCQ → 1-10 scale. Same proportional mapping as iaProcessor:
-                    // 0 correct → 1 (IELTS 0), all correct → 10 (IELTS 9).
-                    const mcqScore1to10 = ssMCQ.length > 0
-                        ? Math.min(10, 1 + (ssCorrect / ssMCQ.length) * 9)
-                        : null;
-
-                    // AI → 1-10 scale (from iaGrading)
-                    const aiScore1to10 = aiByKey.get(`${cfg.skill}:${ss}`) ?? null;
-
-                    // Combine with w1=1, w2=2
-                    let combined1to10: number;
-                    if      (mcqScore1to10 === null && aiScore1to10 === null) combined1to10 = 1;
-                    else if (mcqScore1to10 === null)                           combined1to10 = aiScore1to10!;
-                    else if (aiScore1to10 === null)                            combined1to10 = mcqScore1to10;
-                    else    combined1to10 = (mcqScore1to10 * 1 + aiScore1to10 * 2) / 3;
-
-                    const ssBand      = scaleToIELTS(combined1to10);
-                    const aiIELTS     = aiScore1to10 !== null ? scaleToIELTS(aiScore1to10) : null;
-                    const feedbackKey = `${cfg.skill}:${ss}`;
-
-                    subSkillScores.push({
-                        sub_skill:   ss,
-                        band:        ssBand,
-                        correct:     ssCorrect,
-                        total_mcq:   ssMCQ.length,
-                        ai_band:     aiIELTS,
-                        ai_feedback: aiFeedbackByKey.get(feedbackKey),
-                    });
-                }
-
-                // Overall skill band = avg of 4 sub-skill bands, rounded to 0.5
-                const avgBand = subSkillScores.length > 0
-                    ? Math.round((subSkillScores.reduce((s, x) => s + x.band, 0) / subSkillScores.length) * 2) / 2
-                    : 0;
-
-                skillScores.push({ skill: cfg.skill, band: avgBand, correct: totalCorrect, total: totalMCQ, ai_graded: true, sub_skill_scores: subSkillScores });
-            }
-        }
-
-        // ── 5. Pre-fetch matrix + diagnostic for delta calculation ────────────
-        const [competencyPre, diagnosticHistory] = await Promise.all([
-            prisma.studentCompetencyMatrix.findMany({
-                where:  { student_id: student.id },
-                select: { skill: true, band_score: true, sub_scores: true }
-            }),
-            prisma.assessmentHistory.findMany({
-                where:   { student_id: student.id, mode: 'DIAGNOSTIC' },
-                select:  { skill: true, band_score: true, created_at: true },
-                orderBy: { created_at: 'desc' }
-            })
-        ]);
-
-        const prevMatrixBands = new Map<string, number>();
-        for (const c of competencyPre) {
-            if (c.band_score) prevMatrixBands.set(String(c.skill), parseFloat(String(c.band_score)) || 0);
-        }
-        const diagnosticBands = new Map<string, number>();
-        for (const h of diagnosticHistory) {
-            const s = String(h.skill);
-            if (!diagnosticBands.has(s)) diagnosticBands.set(s, parseFloat(String(h.band_score)) || 0);
-        }
-
-        // ── 6. Pre-compute W/S sub-skill updates (single source of truth) ────────
-        // MK-B-10: the formula was duplicated — once for the response object and once in
-        // the DB transaction. A SUB_SCORE_KEY_MAP miss would silently diverge the two.
-        // Compute here once; both the response builder and the transaction consume this map.
-        type WSUpdate = { updatedSS: Record<string, number>; newMatrixBand: number };
-        const wsUpdates = new Map<string, WSUpdate>();
-        for (const s of skillScores) {
-            if (s.skill !== 'WRITING' && s.skill !== 'SPEAKING') continue;
-            const matrixRow  = competencyPre.find(c => String(c.skill) === s.skill);
-            const existingSS = (matrixRow?.sub_scores as Record<string, number>) ?? {};
-            const updatedSS  = { ...existingSS };
-            const newBands:   number[] = [];
-            for (const ss of (s.sub_skill_scores ?? [])) {
-                const key   = SUB_SCORE_KEY_MAP[ss.sub_skill];
-                if (!key) continue;
-                const curSS = existingSS[key] ?? null;
-                const newSS = curSS !== null
-                    ? Math.min(9, Math.max(0, Math.round((ss.band * 0.60 + curSS * 0.40) * 2) / 2))
-                    : Math.min(9, Math.max(0, ss.band));
-                updatedSS[key] = newSS;
-                newBands.push(newSS);
-            }
-            const newMatrixBand = newBands.length > 0
-                ? Math.round((newBands.reduce((a, b) => a + b, 0) / newBands.length) * 2) / 2
-                : s.band;
-            wsUpdates.set(s.skill, { updatedSS, newMatrixBand });
-        }
-
-        // ── 7. Apply scoring formula + build response ─────────────────────────
-        // new_band = mock_band × 0.60 + current_matrix_band × 0.40
-        const skillScoresResponse: MockSkillScoreResponse[] = skillScores.map(s => {
-            const prevBand = prevMatrixBands.get(s.skill) ?? null;
-            const diagBand = diagnosticBands.get(s.skill) ?? null;
-
-            let newMatrixBand: number;
-            if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
-                newMatrixBand = wsUpdates.get(s.skill)!.newMatrixBand;
-            } else {
-                // L/R: direct skill-level formula
-                newMatrixBand = prevBand !== null
-                    ? Math.min(9, Math.max(0, Math.round((s.band * 0.60 + prevBand * 0.40) * 2) / 2))
-                    : Math.min(9, Math.max(0, s.band));
-            }
-
-            const deltaFromDiag = diagBand !== null ? Math.round((newMatrixBand - diagBand) * 10) / 10 : null;
-            return { ...s, new_matrix_band: newMatrixBand, prev_matrix_band: prevBand, diagnostic_band: diagBand, delta_from_diag: deltaFromDiag };
-        });
-
-        // ── 8. Real Band + momentum ───────────────────────────────────────────
-        const allNewBands  = skillScoresResponse.map(s => s.new_matrix_band);
-        const realBandRaw  = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
-        const realBandScore = Math.min(9, Math.max(0, Math.round(realBandRaw * 2) / 2));
-
-        // Always divide by all 4 skills so prevOverall is on the same scale as realBandScore.
-        // Using prevMatrixBands.size as the denominator gave a falsely high prevOverall for
-        // new students (e.g. size=1 → prevOverall = that one skill's band), making the delta
-        // appear negative and incorrectly triggering or suppressing the 500-pt threshold bonus.
-        const prevOverall = Math.round(
-            (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? 0), 0) / MOCK_SKILL_ORDER.length) * 2
-        ) / 2;
-        const thresholdCrossed = Math.floor(realBandScore / 0.5) > Math.floor(prevOverall / 0.5);
-
-        const momentumBreakdown = [{ reason: 'Participation', points: 200 }];
-        let momentumAwarded = 200;
-        if (thresholdCrossed) {
-            momentumAwarded += 500;
-            momentumBreakdown.push({ reason: `New band threshold — crossed ${realBandScore.toFixed(1)}`, points: 500 });
-        }
-
-        // ── 9. DB transaction ─────────────────────────────────────────────────
-        const updatedMomentum = await prisma.$transaction(async (tx) => {
-            // a) Session complete — status guard prevents concurrent double-award
-            const marked = await tx.mocksessions.updateMany({
-                where: { id: session_id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
-                data:  {
-                    status:            'COMPLETED' as any,
-                    scores:            skillScores as any,
-                    real_band_score:   realBandScore,
-                    momentum_awarded:  momentumAwarded,
-                    time_submitted_at: new Date()
-                }
-            });
-            // If count === 0 the session was completed by a concurrent request — abort cleanly
-            if (marked.count === 0) throw new MockAlreadyCompletedError();
-
-            // b) AssessmentHistory + CompetencyMatrix per skill
-            for (const s of skillScoresResponse) {
-                await tx.assessmentHistory.create({
-                    data: { student_id: student.id, skill: s.skill as any, mode: 'MOCK' as any, band_score: s.new_matrix_band }
-                });
-
-                if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
-                    // MK-B-10: use the pre-computed record — not recomputed here.
-                    const { updatedSS } = wsUpdates.get(s.skill)!;
-                    await tx.studentCompetencyMatrix.upsert({
-                        where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
-                        update: { band_score: s.new_matrix_band, sub_scores: updatedSS as any, assessments_count: { increment: 1 }, last_updated: new Date() },
-                        create: { student_id: student.id, skill: s.skill as any, band_score: s.new_matrix_band, sub_scores: updatedSS as any, assessments_count: 1 }
-                    });
-                } else {
-                    // L/R: update band_score only
-                    await tx.studentCompetencyMatrix.upsert({
-                        where:  { student_id_skill: { student_id: student.id, skill: s.skill as any } },
-                        update: { band_score: s.new_matrix_band, assessments_count: { increment: 1 }, last_updated: new Date() },
-                        create: { student_id: student.id, skill: s.skill as any, band_score: s.new_matrix_band, assessments_count: 1 }
-                    });
-                }
-            }
-
-            // c) Momentum
-            const updated = await tx.institute_students.update({
-                where:  { id: student.id },
-                data:   { momentum_score: { increment: momentumAwarded } },
-                select: { momentum_score: true }
-            });
-            return updated.momentum_score;
-        });
-
-        return res.json({
-            success:             true,
-            real_band_score:     realBandScore,
-            prev_real_band:      prevOverall,
-            real_band_delta:     Math.round((realBandScore - prevOverall) * 10) / 10,
-            threshold_crossed:   thresholdCrossed,
-            momentum_awarded:    momentumAwarded,
-            momentum_breakdown:  momentumBreakdown,
-            updated_momentum:    updatedMomentum,
-            skill_scores:        skillScoresResponse,
-        });
+        // ── 2..9: grade, update matrix + real band, award momentum, mark COMPLETED ──
+        const result = await processMockSession(session, student);
+        return res.json({ success: true, ...result });
     } catch (err) {
         if (err instanceof MockAlreadyCompletedError) {
             const s = await prisma.mocksessions.findUnique({ where: { id: req.body?.session_id } });

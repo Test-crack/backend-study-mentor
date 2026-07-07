@@ -17,11 +17,37 @@
 import prisma from './prisma';
 import { processIASession, AlreadyCompletedError } from './iaProcessor';
 import { AIGradingError } from './iaGrading';
+import { computeAverageDCS } from './dcs';
 
 // ── Constants (kept in sync with iaController.ts) ─────────────────────────────
 const IST_OFFSET_MS    = 5.5 * 60 * 60 * 1000;
 const IA_INTERVAL_DAYS = 3;
 const MISS_PENALTY     = 20;
+const IA_DCS_THRESHOLD = 40;  // avg DCS % required to be eligible to start an IA
+
+/**
+ * Marks one session/date MISSED and deducts the penalty in a SINGLE transaction,
+ * so a crash can never leave a session flagged MISSED (-20) without the momentum
+ * actually being deducted (the old code accumulated a total and deducted once at
+ * the very end — an orphan-prone second step). Returns true if a penalty was applied.
+ *
+ * `mark(tx)` must return the number of rows it changed (0 = nothing to penalize).
+ */
+async function applyMissPenalty(
+    studentId: string,
+    mark: (tx: any) => Promise<number>,
+): Promise<boolean> {
+    return prisma.$transaction(async (tx) => {
+        const changed = await mark(tx);
+        if (changed <= 0) return false;
+        const s   = await tx.institute_students.findUnique({ where: { id: studentId }, select: { momentum_score: true } });
+        const ded = Math.min(MISS_PENALTY, s?.momentum_score ?? 0);
+        if (ded > 0) {
+            await tx.institute_students.update({ where: { id: studentId }, data: { momentum_score: { decrement: ded } } });
+        }
+        return true;
+    });
+}
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -83,7 +109,6 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
     const todayDate = new Date(todayStr);           // UTC midnight of today's IST date
 
     const penalties: MissPenalty[] = [];
-    let totalDeduction = 0;
 
     // ── Cases A / B / C: stale sessions that exist but were never submitted ─────
     const staleSessions = await prisma.iASession.findMany({
@@ -131,16 +156,15 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                     }
                     console.error(`[iaMissDetector] auto-grade failed for session ${stale.id}:`, err);
                     // Fall through: mark MISSED so it doesn't stay stuck IN_PROGRESS.
-                    // Use updateMany with status guard to avoid a TOCTOU race where a concurrent
-                    // submitIA already marked this COMPLETED between our findMany and here.
-                    const r1 = await prisma.iASession.updateMany({
-                        where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
-                        data:  { status: 'MISSED' as any, carry_forward_subskills: stale.selected_subskills as any, momentum_awarded: -MISS_PENALTY },
-                    });
-                    if (r1.count > 0) {
-                        penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
-                        totalDeduction += MISS_PENALTY;
-                    }
+                    // Mark + deduct atomically (status guard also avoids a TOCTOU race where a
+                    // concurrent submitIA already marked this COMPLETED between findMany and here).
+                    const applied = await applyMissPenalty(studentId, (tx) =>
+                        tx.iASession.updateMany({
+                            where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+                            data:  { status: 'MISSED' as any, carry_forward_subskills: stale.selected_subskills as any, momentum_awarded: -MISS_PENALTY },
+                        }).then((r: any) => r.count)
+                    );
+                    if (applied) penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
                 }
                 continue;
             }
@@ -148,20 +172,19 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
         }
 
         // Case A (PENDING) or Case C (IN_PROGRESS with no answers) → MISSED.
-        // updateMany with status guard prevents overwriting a concurrent submitIA that
-        // marked this COMPLETED between the findMany above and this write.
-        const r2 = await prisma.iASession.updateMany({
-            where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
-            data: {
-                status:                  'MISSED' as any,
-                carry_forward_subskills: stale.selected_subskills as any,
-                momentum_awarded:        -MISS_PENALTY,
-            },
-        });
-        if (r2.count > 0) {
-            penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
-            totalDeduction += MISS_PENALTY;
-        }
+        // Mark + deduct atomically; status guard prevents overwriting a concurrent
+        // submitIA that marked this COMPLETED between the findMany above and this write.
+        const applied = await applyMissPenalty(studentId, (tx) =>
+            tx.iASession.updateMany({
+                where: { id: stale.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
+                data: {
+                    status:                  'MISSED' as any,
+                    carry_forward_subskills: stale.selected_subskills as any,
+                    momentum_awarded:        -MISS_PENALTY,
+                },
+            }).then((r: any) => r.count)
+        );
+        if (applied) penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
     }
 
     // ── Case D: scheduled dates with NO session row at all ───────────────────
@@ -182,7 +205,14 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
         }),
     ]);
 
-    if (firstDrill) {
+    // DCS gate (M-11): the Start button requires avg DCS >= 40%. A student below that
+    // threshold was never allowed to START an IA, so don't retroactively penalize them
+    // for "missing" IAs they could not have taken. (Cases A/C above are real started
+    // sessions, so they were eligible; only Case D — no session at all — needs this gate.)
+    const avgDcs = await computeAverageDCS(studentId);
+    const dcsEligible = avgDcs >= IA_DCS_THRESHOLD;
+
+    if (firstDrill && dcsEligible) {
         const firstDrillStr = toISTDateString(firstDrill.created_at);
 
         // Only retroactively mark dates from the student's actual eligibility date onward.
@@ -214,46 +244,36 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                 ))
             );
 
-            // Create MISSED rows for every past scheduled date that has no session
+            // Create MISSED rows for every past scheduled date that has no session.
+            // Each create + its penalty deduction commit atomically: if the create hits
+            // the unique constraint (row already exists / race), the whole tx rolls back
+            // and nothing is deducted (caught below). No orphaned penalties either way.
             for (const { iaNumber, dateStr } of scheduledPast) {
                 if (existingDates.has(dateStr)) continue;
 
                 try {
-                    await prisma.iASession.create({
-                        data: {
-                            student_id:              studentId,
-                            ia_number:               iaNumber,
-                            ia_date:                 new Date(dateStr),
-                            status:                  'MISSED' as any,
-                            selected_subskills:      [] as any,
-                            carry_forward_subskills: [] as any,
-                            question_ids:            [] as any,
-                            answers:                 {} as any,
-                            momentum_awarded:        -MISS_PENALTY,
-                            window_closes_at:        windowClosesAtForDate(dateStr),
-                        },
+                    await applyMissPenalty(studentId, async (tx) => {
+                        await tx.iASession.create({
+                            data: {
+                                student_id:              studentId,
+                                ia_number:               iaNumber,
+                                ia_date:                 new Date(dateStr),
+                                status:                  'MISSED' as any,
+                                selected_subskills:      [] as any,
+                                carry_forward_subskills: [] as any,
+                                question_ids:            [] as any,
+                                answers:                 {} as any,
+                                momentum_awarded:        -MISS_PENALTY,
+                                window_closes_at:        windowClosesAtForDate(dateStr),
+                            },
+                        });
+                        return 1;
                     });
                     penalties.push({ ia_number: iaNumber, penalty: MISS_PENALTY, ia_date: dateStr });
-                    totalDeduction += MISS_PENALTY;
                 } catch {
-                    // Unique constraint violation = row already exists (race condition); safe to ignore
+                    // Unique constraint violation = row already exists (race); tx rolled back, safe to ignore
                 }
             }
-        }
-    }
-
-    // ── Deduct momentum (clamped to 0) ────────────────────────────────────────
-    if (totalDeduction > 0) {
-        const current = await prisma.institute_students.findUnique({
-            where:  { id: studentId },
-            select: { momentum_score: true },
-        });
-        const safeDeduction = Math.min(totalDeduction, current?.momentum_score ?? 0);
-        if (safeDeduction > 0) {
-            await prisma.institute_students.update({
-                where: { id: studentId },
-                data:  { momentum_score: { decrement: safeDeduction } },
-            });
         }
     }
 

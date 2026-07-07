@@ -110,9 +110,25 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
         const level      = resolveLevel(student?.target_band ?? 7.0);
         const skillUpper = skill.toUpperCase();
 
+        // M-20: a mid-section refresh used to re-roll a random set, silently swapping
+        // the questions and wiping the student's saved answers. The client persists the
+        // served set_id and passes it back; if it's still valid for this level+skill we
+        // re-serve the SAME set. Invalid/absent → fresh random pick as before.
+        const requestedSetId = typeof req.query.set_id === 'string' ? req.query.set_id : null;
+        const resolveSetId = async (sk: string): Promise<string | null> => {
+            if (requestedSetId) {
+                const valid = await prisma.diagnostic_questions.findFirst({
+                    where:  { set_id: requestedSetId, level, skill: sk as any, is_active: true },
+                    select: { set_id: true },
+                });
+                if (valid) return requestedSetId;
+            }
+            return pickRandomSetId(level, sk);
+        };
+
         // ── LISTENING ──────────────────────────────────────────────────────────
         if (skillUpper === 'LISTENING') {
-            const setId = await pickRandomSetId(level, 'LISTENING');
+            const setId = await resolveSetId('LISTENING');
             if (!setId) return res.status(404).json({ error: 'No listening questions found for this level.' });
 
             const rows = await prisma.diagnostic_questions.findMany({
@@ -131,7 +147,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // ── READING ────────────────────────────────────────────────────────────
         if (skillUpper === 'READING') {
-            const setId = await pickRandomSetId(level, 'READING');
+            const setId = await resolveSetId('READING');
             if (!setId) return res.status(404).json({ error: 'No reading questions found for this level.' });
 
             const rows = await prisma.diagnostic_questions.findMany({
@@ -148,18 +164,37 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
             });
         }
 
+        // W/S single-prompt equivalent of resolveSetId: re-serve the same prompt on
+        // refresh when the client passes back the question_id it was originally given.
+        const requestedQuestionId = typeof req.query.question_id === 'string' ? req.query.question_id : null;
+
         // ── WRITING ────────────────────────────────────────────────────────────
         if (skillUpper === 'WRITING') {
-            const rows: any[] = await prisma.$queryRaw`
-                SELECT id, prompt_text, min_words
-                FROM   diagnostic_questions
-                WHERE  level         = ${level}
-                AND    skill         = 'WRITING'::"IeltsSkillType"
-                AND    question_type = 'WRITING_PROMPT'
-                AND    is_active     = TRUE
-                ORDER  BY RANDOM()
-                LIMIT  1
-            `;
+            let rows: any[] = [];
+            if (requestedQuestionId) {
+                rows = await prisma.$queryRaw`
+                    SELECT id, prompt_text, min_words
+                    FROM   diagnostic_questions
+                    WHERE  id            = ${requestedQuestionId}::uuid
+                    AND    level         = ${level}
+                    AND    skill         = 'WRITING'::"IeltsSkillType"
+                    AND    question_type = 'WRITING_PROMPT'
+                    AND    is_active     = TRUE
+                    LIMIT  1
+                `;
+            }
+            if (rows.length === 0) {
+                rows = await prisma.$queryRaw`
+                    SELECT id, prompt_text, min_words
+                    FROM   diagnostic_questions
+                    WHERE  level         = ${level}
+                    AND    skill         = 'WRITING'::"IeltsSkillType"
+                    AND    question_type = 'WRITING_PROMPT'
+                    AND    is_active     = TRUE
+                    ORDER  BY RANDOM()
+                    LIMIT  1
+                `;
+            }
             if (rows.length === 0) return res.status(404).json({ error: 'No writing prompt found for this level.' });
 
             return res.json({
@@ -173,16 +208,31 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // ── SPEAKING ───────────────────────────────────────────────────────────
         if (skillUpper === 'SPEAKING') {
-            const rows: any[] = await prisma.$queryRaw`
-                SELECT id, prompt_text
-                FROM   diagnostic_questions
-                WHERE  level         = ${level}
-                AND    skill         = 'SPEAKING'::"IeltsSkillType"
-                AND    question_type = 'SPEAKING_PROMPT'
-                AND    is_active     = TRUE
-                ORDER  BY RANDOM()
-                LIMIT  1
-            `;
+            let rows: any[] = [];
+            if (requestedQuestionId) {
+                rows = await prisma.$queryRaw`
+                    SELECT id, prompt_text
+                    FROM   diagnostic_questions
+                    WHERE  id            = ${requestedQuestionId}::uuid
+                    AND    level         = ${level}
+                    AND    skill         = 'SPEAKING'::"IeltsSkillType"
+                    AND    question_type = 'SPEAKING_PROMPT'
+                    AND    is_active     = TRUE
+                    LIMIT  1
+                `;
+            }
+            if (rows.length === 0) {
+                rows = await prisma.$queryRaw`
+                    SELECT id, prompt_text
+                    FROM   diagnostic_questions
+                    WHERE  level         = ${level}
+                    AND    skill         = 'SPEAKING'::"IeltsSkillType"
+                    AND    question_type = 'SPEAKING_PROMPT'
+                    AND    is_active     = TRUE
+                    ORDER  BY RANDOM()
+                    LIMIT  1
+                `;
+            }
             if (rows.length === 0) return res.status(404).json({ error: 'No speaking prompt found for this level.' });
 
             return res.json({
