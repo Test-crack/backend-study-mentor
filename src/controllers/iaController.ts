@@ -655,7 +655,14 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             time_remaining_ms: SECTION_IA_MS
         });
 
-    } catch (err) {
+    } catch (err: any) {
+        // Concurrent first-open of the same IA day: two requests both create and the
+        // loser hits the unique (student_id, ia_date) constraint. Return a 409 so the
+        // client refetches and picks up the winner's session via the resume path,
+        // instead of a confusing 500.
+        if (err?.code === 'P2002') {
+            return res.status(409).json({ success: false, error: 'IA session already started — please refresh.' });
+        }
         console.error('[IAQuestions] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
@@ -838,11 +845,17 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
         }
 
+        // Reject question ids that aren't part of this session — stops unbounded JSON
+        // growth and keeps realAnswerCount honest for the miss detector.
+        const sectionIdx = sectionConfig.findIndex((c: any) => Array.isArray(c?.ids) && c.ids.includes(question_id));
+        if (sectionIdx === -1) {
+            return res.status(400).json({ success: false, error: 'Unknown question for this session.' });
+        }
+
         // Enforce the 20-minute per-section timer server-side. If the question belongs
         // to the currently-active section and that section's 20 min have elapsed, reject —
         // the client timer alone can be paused/bypassed.
-        const sectionIdx = sectionConfig.findIndex((c: any) => Array.isArray(c?.ids) && c.ids.includes(question_id));
-        if (sectionIdx >= 0 && sectionIdx === Number(meta.current_section) && meta.section_started_at) {
+        if (sectionIdx === Number(meta.current_section) && meta.section_started_at) {
             const elapsed = Date.now() - Number(meta.section_started_at);
             if (elapsed > SECTION_IA_MS + SECTION_GRACE_MS) {
                 return res.status(400).json({ success: false, error: 'Section time has expired.' });

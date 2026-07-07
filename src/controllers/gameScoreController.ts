@@ -305,10 +305,11 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             isFirstCompletion = true;
         } catch (e: any) {
             if (e?.code !== 'P2002') throw e;
-            // A record for today already exists (offline play, replay, or concurrent
-            // submit) — refresh stats only, award no momentum.
-            await prisma.studentGameScore.update({
-                where: dailyKey,
+            // A record for today already exists. Only refresh stats if it is NOT yet
+            // completed — a standalone replay must not overwrite the day's real gate
+            // score with a (possibly worse, momentum-0) replay. Awards no momentum either way.
+            await prisma.studentGameScore.updateMany({
+                where: { student_id: student.id, game_type, session_date: sessionToday, completed: false },
                 data: {
                     words_solved:    wordsSolvedNum,
                     total_words:     WORDS_PER_SESSION,
@@ -345,13 +346,22 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                 required: SKIP_GATE_COST,
             });
         }
+        // Concurrent skip double-tap: the second request's INSERT hits the unique
+        // (student, game, date) constraint and rolls back its own deduct. The gate is
+        // already open — return a clean already_done with the current balance, not a 500.
+        if (err?.code === 'P2002') {
+            const fresh = await prisma.institute_students.findUnique({
+                where: { user_id: (req as any).appUserId as string }, select: { momentum_score: true },
+            });
+            return res.json({ success: true, already_done: true, momentum_score: fresh?.momentum_score ?? 0 });
+        }
         console.error('[GameScore] saveGameScore error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }
 
 // ─── POST /api/drills/authorize-extra ────────────────────────────────────────
-// Deducts 75 pts to authorise one extra drill beyond the free daily limit.
+// Deducts EXTRA_DRILL_COST (300) pts to authorise one extra drill beyond the free daily limit.
 export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;

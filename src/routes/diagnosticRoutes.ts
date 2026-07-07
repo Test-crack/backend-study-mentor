@@ -3,7 +3,9 @@ import multer from 'multer';
 import { getDiagnosticStatus, getDiagnosticQuestionsBySkill, submitDiagnosticAssessment, submitDiagnosticSpeaking } from '../controllers/diagnosticController';
 
 const router = Router();
-const upload = multer({ dest: 'uploads/' });
+// Cap speaking uploads at 15 MB — a ~90s recording is well under this; the limit
+// stops an unbounded multipart body from filling disk.
+const upload = multer({ dest: 'uploads/', limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Determine status of diagnostic
 router.get('/status', getDiagnosticStatus);

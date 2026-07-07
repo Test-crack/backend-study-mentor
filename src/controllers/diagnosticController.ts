@@ -280,7 +280,12 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             return res.status(409).json({ error: `The ${skillUpper} section has already been submitted.` });
         }
 
-        let parsedAnswers = typeof answers === 'string' ? JSON.parse(answers) : (answers ?? {});
+        let parsedAnswers: any;
+        try {
+            parsedAnswers = typeof answers === 'string' ? JSON.parse(answers) : (answers ?? {});
+        } catch {
+            return res.status(400).json({ error: 'Malformed answers payload.' });
+        }
         let bandScore = 0;
         let subScores: any = {};
 

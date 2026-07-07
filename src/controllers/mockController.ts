@@ -542,10 +542,18 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
         if (session.status === 'COMPLETED' || session.status === 'ABANDONED') return res.status(400).json({ success: false, error: 'Session already finalised.' });
         if (new Date() > session.window_closes_at) return res.status(400).json({ success: false, error: 'Mock window expired.' });
 
+        const sectionConfig = (session.question_ids as Array<{ ids: string[] }>) ?? [];
+
         if (section_advance !== undefined) {
+            // Reject NaN / out-of-range indices — an unvalidated Number(section_advance)
+            // could write current_section: NaN, which breaks resume (sections[NaN]).
+            const nextSection = Number(section_advance);
+            if (!Number.isInteger(nextSection) || nextSection < 0 || nextSection >= Math.max(sectionConfig.length, 1)) {
+                return res.status(400).json({ success: false, error: 'Invalid section index.' });
+            }
             // Atomic JSONB merge of just the __meta key — read-modify-write of the whole
             // answers object would let a concurrent answer save clobber this (and vice versa).
-            const nav = JSON.stringify({ current_section: Number(section_advance) });
+            const nav = JSON.stringify({ current_section: nextSection });
             await prisma.$executeRaw`
                 UPDATE mocksessions
                 SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object('__meta', ${nav}::jsonb)
@@ -557,6 +565,11 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
         if (!question_id || answer === undefined) return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
         if (typeof answer !== 'string' && typeof answer !== 'number') {
             return res.status(400).json({ success: false, error: 'answer must be a string or number.' });
+        }
+        // Reject question ids that aren't part of this session — stops unbounded JSON growth.
+        const validIds = new Set(sectionConfig.flatMap(c => c.ids));
+        if (!validIds.has(String(question_id))) {
+            return res.status(400).json({ success: false, error: 'Unknown question for this session.' });
         }
         // Atomic single-key JSONB merge — two overlapping saves each preserve the other's
         // answer instead of last-writer-wins clobbering the whole object.
@@ -888,7 +901,9 @@ export async function submitMock(req: AuthRequest, res: Response) {
         if (session.status === 'COMPLETED')      return res.json({
             success: true,
             already_done:    true,
-            real_band_score: session.real_band_score,
+            // Coerce the Prisma Decimal to a number — it serializes as a string otherwise,
+            // and the client calls realBand.toFixed(1) which throws on a string.
+            real_band_score: session.real_band_score != null ? Number(session.real_band_score) : null,
             scores:          session.scores,
             momentum_awarded: session.momentum_awarded,
         });
@@ -911,7 +926,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
             const s = await prisma.mocksessions.findUnique({ where: { id: req.body?.session_id } });
             return res.json({
                 success: true, already_done: true,
-                real_band_score:  s?.real_band_score ?? null,
+                real_band_score:  s?.real_band_score != null ? Number(s.real_band_score) : null,
                 scores:           s?.scores ?? null,
                 momentum_awarded: s?.momentum_awarded ?? 0,
             });
