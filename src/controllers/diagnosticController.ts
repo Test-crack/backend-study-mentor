@@ -303,7 +303,11 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     select: { set_id: true },
                 })
                 : [];
-            const setId = (req.body.set_id as string | undefined) ?? answeredRows[0]?.set_id ?? null;
+            // Derive the set STRICTLY from the questions the student actually answered —
+            // do NOT trust a client-supplied set_id here. Honouring req.body.set_id would
+            // let a crafted request point the denominator at a tiny set and answer one
+            // question for band 9.0 (a narrower re-open of the very hole this closes).
+            const setId = answeredRows[0]?.set_id ?? null;
 
             const questions = setId
                 ? await prisma.diagnostic_questions.findMany({ where: { set_id: setId, skill: skillUpper, is_active: true } })

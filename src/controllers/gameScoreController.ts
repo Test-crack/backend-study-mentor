@@ -246,13 +246,21 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                 return res.status(400).json({ success: false, error: 'Invalid session token.' });
             }
             if (tokenStatus === 'missing') {
-                // Offline/fallback play — record the session but award no momentum
+                // Offline/fallback play — record the session but award no momentum.
                 const sessionToday = currentISTDate();
-                await (prisma as any).studentGameScore.upsert({
-                    where: { student_id_game_type_session_date: { student_id: student.id, game_type, session_date: sessionToday } },
-                    create: { student_id: student.id, game_type, session_date: sessionToday, words_solved: wordsSolvedNum, total_words: WORDS_PER_SESSION, total_attempts: total_attempts ?? 0, bonus_eligible: false, momentum_earned: 0, completed: true },
-                    update: { words_solved: wordsSolvedNum, total_words: WORDS_PER_SESSION, total_attempts: total_attempts ?? 0 },
-                });
+                try {
+                    await (prisma as any).studentGameScore.create({
+                        data: { student_id: student.id, game_type, session_date: sessionToday, words_solved: wordsSolvedNum, total_words: WORDS_PER_SESSION, total_attempts: total_attempts ?? 0, bonus_eligible: false, momentum_earned: 0, completed: true },
+                    });
+                } catch (e: any) {
+                    if (e?.code !== 'P2002') throw e;
+                    // A record already exists today — refresh stats only if it is NOT yet
+                    // completed, so an offline replay can't clobber the day's real gate score.
+                    await (prisma as any).studentGameScore.updateMany({
+                        where: { student_id: student.id, game_type, session_date: sessionToday, completed: false },
+                        data:  { words_solved: wordsSolvedNum, total_words: WORDS_PER_SESSION, total_attempts: total_attempts ?? 0 },
+                    });
+                }
                 return res.json({ success: true, momentum_earned: 0, momentum_score: student.momentum_score });
             }
         }
