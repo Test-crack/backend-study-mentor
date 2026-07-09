@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
+import { applySmoothing } from '../lib/iaProcessor';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -781,9 +782,10 @@ async function processMockSession(session: any, student: { id: string }) {
             const key   = SUB_SCORE_KEY_MAP[ss.sub_skill];
             if (!key) continue;
             const curSS = existingSS[key] ?? null;
-            const newSS = curSS !== null
-                ? Math.min(9, Math.max(0, Math.round((ss.band * 0.60 + curSS * 0.40) * 2) / 2))
-                : Math.min(9, Math.max(0, ss.band));
+            // applySmoothing = 0.4*old + 0.6*new with a ±2 movement cap, rounded to 0.5,
+            // clamped 0–9 — identical formula to the mock's 0.6*new + 0.4*old but WITH the
+            // cap the mock previously lacked. Shared with IA so both stay in lockstep.
+            const newSS = applySmoothing(curSS, ss.band);
             updatedSS[key] = newSS;
             newBands.push(newSS);
         }
@@ -802,9 +804,8 @@ async function processMockSession(session: any, student: { id: string }) {
         if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
             newMatrixBand = wsUpdates.get(s.skill)!.newMatrixBand;
         } else {
-            newMatrixBand = prevBand !== null
-                ? Math.min(9, Math.max(0, Math.round((s.band * 0.60 + prevBand * 0.40) * 2) / 2))
-                : Math.min(9, Math.max(0, s.band));
+            // L/R skill-level blend with the same ±2 cap as IA.
+            newMatrixBand = applySmoothing(prevBand, s.band);
         }
 
         const deltaFromDiag = diagBand !== null ? Math.round((newMatrixBand - diagBand) * 10) / 10 : null;
