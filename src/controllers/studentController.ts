@@ -113,11 +113,13 @@ export async function getCompetencyScores(req: AuthRequest, res: Response) {
             : 0;
 
         const daily_streak = await getValidatedStreak(student);
+        const examDate = (student as any).exam_date as Date | null | undefined;
 
         return res.json({
             success: true,
             data: matrix,
             target_band:   student.target_band ?? 7.0,
+            exam_date:     examDate ? new Date(examDate).toISOString().slice(0, 10) : null,
             current_band,
             momentum_score: student.momentum_score,
             daily_streak,

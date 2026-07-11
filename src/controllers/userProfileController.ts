@@ -95,6 +95,9 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     delete (user as any).institute_admins;
     delete (user as any).institute_students;
 
+    // Note: exam_date is served by GET /api/student/competency-scores (the profile
+    // page's source). It can be added to this auth profile once the Prisma client
+    // is regenerated (blocked here by the running dev server locking the DLL).
     res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand, isEnrolled } });
   } catch (error) {
     console.error('[getUserProfile] Error:', error);
@@ -112,16 +115,16 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    const { name, countryCode, phoneNo, targetBand } = req.body;
+    // Accept camelCase (primary) and snake_case (fallback) for the student-goal fields.
+    const { name, countryCode, phoneNo } = req.body;
+    const targetBand = req.body.targetBand ?? req.body.target_band;
+    const examDate   = req.body.examDate   ?? req.body.exam_date;
 
-    // Build update data object with only provided fields
-    const updateData: any = {
-      updatedAt: new Date(),
-    };
-
-    if (name !== undefined) updateData.name = name;
+    // ── User fields ────────────────────────────────────────────────────────
+    const updateData: any = { updatedAt: new Date() };
+    if (name !== undefined)        updateData.name = name;
     if (countryCode !== undefined) updateData.countryCode = countryCode;
-    if (phoneNo !== undefined) updateData.phoneNo = phoneNo;
+    if (phoneNo !== undefined)     updateData.phoneNo = phoneNo;
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
@@ -139,11 +142,41 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
       },
     });
 
-    if (targetBand !== undefined) {
-      await prisma.institute_students.updateMany({
+    // ── Student goal fields (target_band, exam_date) — validated ─────────────
+    const studentData: any = {};
+
+    if (targetBand !== undefined && targetBand !== null) {
+      const band = Number(targetBand);
+      if (!Number.isFinite(band) || band < 4.0 || band > 9.0) {
+        return res.status(400).json({ error: 'Target band must be between 4.0 and 9.0.' });
+      }
+      // Snap to the nearest 0.5 so only valid IELTS bands are stored.
+      studentData.target_band = Math.round(band * 2) / 2;
+    }
+
+    if (examDate !== undefined && examDate !== null) {
+      const d = new Date(examDate);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'Invalid exam date.' });
+      }
+      // Must be in the future (compare on calendar day, not time-of-day).
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const cmp = new Date(d);   cmp.setHours(0, 0, 0, 0);
+      if (cmp <= today) {
+        return res.status(400).json({ error: 'Exam date must be in the future.' });
+      }
+      studentData.exam_date = d;
+    }
+
+    if (Object.keys(studentData).length > 0) {
+      const result = await prisma.institute_students.updateMany({
         where: { user_id: userId },
-        data: { target_band: targetBand }
+        data:  studentData,
       });
+      if (result.count === 0) {
+        // Only students have these fields; a non-student (or unenrolled) hitting them is a 400.
+        return res.status(400).json({ error: 'Goal fields can only be set on an enrolled student profile.' });
+      }
     }
 
     res.json({ user: updatedUser, message: 'Profile updated successfully' });

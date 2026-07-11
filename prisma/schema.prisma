@@ -603,6 +603,7 @@ model institute_students {
   isDiagnosed             Boolean                   @default(false)
   recommendationSeeded    Boolean                   @default(false)
   target_band             Float?
+  exam_date               DateTime?                 @db.Date
   momentum_score          Int                       @default(0)
   daily_streak            Int                       @default(0)
   last_streak_date        DateTime?                 @db.Date
