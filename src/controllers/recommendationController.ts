@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { getStudentRecommendations } from '../services/recommendationService';
+import { BAND_MIN, bandToDifficulty } from '../lib/bandScale';
 
 /**
  * Get personalized recommendations for the authenticated student.
@@ -73,8 +74,9 @@ export async function getDrillRecommendation(req: AuthRequest, res: Response) {
             where: { student_id_skill: { student_id: student.id, skill: skill as any } },
             select: { band_score: true }
         });
-        const band  = parseFloat(String(matrix?.band_score ?? '0')) || 0;
-        const level = band <= 4.5 ? 'BEGINNER' : band <= 6.5 ? 'INTERMEDIATE' : 'ADVANCED';
+        // Missing band → 4.0 floor; level thresholds are the shared D3 even-thirds.
+        const band  = parseFloat(String(matrix?.band_score ?? '')) || BAND_MIN;
+        const level = bandToDifficulty(band);
 
         const VIDEO = 'VIDEO' as any;
 

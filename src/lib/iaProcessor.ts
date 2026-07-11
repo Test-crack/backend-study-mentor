@@ -9,6 +9,7 @@
 
 import prisma from './prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from './iaGrading';
+import { BAND_MIN, toBand, internalToBand } from './bandScale';
 
 // Thrown when processIASession is called on an already-COMPLETED session.
 // Callers must catch this and return the stored result instead of erroring.
@@ -25,13 +26,13 @@ export class AlreadyCompletedError extends Error {
  */
 export function applySmoothing(oldBand: number | null, newBand: number): number {
     if (oldBand === null || isNaN(oldBand)) {
-        return Math.min(9, Math.max(0, Math.round(newBand * 2) / 2));
+        return toBand(newBand);
     }
     let w = 0.4 * oldBand + 0.6 * newBand;
     const dev = w - oldBand;
     if (dev >  2) w = oldBand + 2;
     if (dev < -2) w = oldBand - 2;
-    return Math.min(9, Math.max(0, Math.round(w * 2) / 2));
+    return toBand(w);
 }
 
 // ── Shared types (also imported by iaController for the HTTP response) ─────────
@@ -186,7 +187,9 @@ export async function processIASession(
             combinedScore = (mcqScore * 1 + aiAvgScore * 2) / 3;
         }
 
-        const band = Math.min(9.0, Math.max(0.0, Math.round((combinedScore - 1) * 2) / 2));
+        // Internal 1–10 → platform band [4,9]: internal 1 anchors to the 4.0 floor,
+        // internal 10 to 9.0. (Previously `combined − 1` anchored 1 → band 0.)
+        const band = internalToBand(combinedScore);
 
         const aiFeedback = aiFeedbacks.length > 0 ? {
             rationale:        aiFeedbacks.map(f => f.rationale).join(' | '),
@@ -233,7 +236,7 @@ export async function processIASession(
         for (const s of (ps.scores ?? []) as SectionScore[]) {
             // sessions are newest-first, so the first band seen for a sub-skill is the latest
             if (!lastBands.has(s.sub_skill)) lastBands.set(s.sub_skill, s.band);
-            const prev = allTimeBests.get(s.sub_skill) ?? 0;
+            const prev = allTimeBests.get(s.sub_skill) ?? BAND_MIN;
             if (s.band > prev) allTimeBests.set(s.sub_skill, s.band);
         }
     }
@@ -243,7 +246,9 @@ export async function processIASession(
     for (const s of sectionScores) {
         const label      = SUB_SKILL_LABEL[s.sub_skill] ?? s.sub_skill;
         const lastBand   = lastBands.get(s.sub_skill) ?? null;
-        const allTimeBest = allTimeBests.get(s.sub_skill) ?? 0;
+        // Baseline at the 4.0 floor — with ?? 0 a student's first-ever band (always ≥4)
+        // would trivially "beat" 0 and fire the personal-best bonus every time.
+        const allTimeBest = allTimeBests.get(s.sub_skill) ?? BAND_MIN;
         if (lastBand !== null && s.band > lastBand) {
             momentumAwarded += 25;
             momentumBreakdown.push({ reason: `Improved — ${label}`, points: 25 });
@@ -304,7 +309,7 @@ export async function processIASession(
                 const known = keys.map(k => updatedSubScores[k]).filter((v): v is number => typeof v === 'number' && !isNaN(v));
                 newSkillBand = known.length > 0 ? Math.round((known.reduce((a, b) => a + b, 0) / known.length) * 2) / 2 : s.band;
             }
-            newSkillBand = Math.min(9, Math.max(0, newSkillBand));
+            newSkillBand = toBand(newSkillBand);
 
             await tx.studentCompetencyMatrix.upsert({
                 where:  { student_id_skill: { student_id: studentId, skill: s.skill as any } },

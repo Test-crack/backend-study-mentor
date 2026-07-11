@@ -57,6 +57,9 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         const validBands = competencyMatrix
             .map(m => Number(m.band_score))
             .filter(s => s > 0);
+        // 0 here is a deliberate "no data yet" sentinel (out of the [4,9] band domain) —
+        // unreachable in practice since the diagnostic populates all 4 skills before
+        // the dashboard is accessible. Never fabricate a floor band for missing data.
         const current_band = validBands.length > 0
             ? Math.round((validBands.reduce((a, b) => a + b, 0) / validBands.length) * 2) / 2
             : 0;

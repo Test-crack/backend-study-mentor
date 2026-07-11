@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { applySmoothing } from '../lib/iaProcessor';
+import { BAND_MIN, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -65,8 +66,10 @@ function sanitize(qs: any[]): any[] {
     return qs.map(({ correct_answer: _ca, explanation: _ex, ...safe }) => safe);
 }
 
+// Internal 1–10 → platform band [4,9] (internal 1 anchors to the 4.0 floor).
+// Delegates to the canonical transform so IA and Mock can never diverge.
 function scaleToIELTS(score1to10: number): number {
-    return Math.min(9.0, Math.max(0.0, Math.round((score1to10 - 1) * 2) / 2));
+    return internalToBand(score1to10);
 }
 
 /**
@@ -595,10 +598,10 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
 
 type MockSubSkillScore = {
     sub_skill:  string;
-    band:       number;  // 0-9 IELTS, combined MCQ+AI
+    band:       number;  // 4-9 IELTS, combined MCQ+AI
     correct:    number;
     total_mcq:  number;
-    ai_band:    number | null;  // 0-9 IELTS equivalent of AI score
+    ai_band:    number | null;  // 4-9 IELTS equivalent of AI score
     ai_feedback?: { rationale: string; key_observations: string[] };
 };
 
@@ -688,9 +691,8 @@ async function processMockSession(session: any, student: { id: string }) {
                 const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
                 if (sa && ca && sa === ca) correct++;
             }
-            const band = mcqQs.length > 0
-                ? Math.min(9.0, Math.max(0.0, Math.round((correct / mcqQs.length) * 9 * 2) / 2))
-                : 0;
+            // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
+            const band = mcqQs.length > 0 ? fractionToBand(correct / mcqQs.length) : BAND_MIN;
             skillScores.push({ skill: cfg.skill, band, correct, total: mcqQs.length, ai_graded: false });
 
         } else {
@@ -739,8 +741,8 @@ async function processMockSession(session: any, student: { id: string }) {
             }
 
             const avgBand = subSkillScores.length > 0
-                ? Math.round((subSkillScores.reduce((s, x) => s + x.band, 0) / subSkillScores.length) * 2) / 2
-                : 0;
+                ? toBand(subSkillScores.reduce((s, x) => s + x.band, 0) / subSkillScores.length)
+                : BAND_MIN;
 
             skillScores.push({ skill: cfg.skill, band: avgBand, correct: totalCorrect, total: totalMCQ, ai_graded: true, sub_skill_scores: subSkillScores });
         }
@@ -815,10 +817,12 @@ async function processMockSession(session: any, student: { id: string }) {
     // ── 8. Real Band + momentum ───────────────────────────────────────────
     const allNewBands  = skillScoresResponse.map(s => s.new_matrix_band);
     const realBandRaw  = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
-    const realBandScore = Math.min(9, Math.max(0, Math.round(realBandRaw * 2) / 2));
+    const realBandScore = toBand(realBandRaw);
 
+    // Missing skills default to the 4.0 floor — with ?? 0 a skill with no data would
+    // drag prevOverall below the valid domain and skew the threshold-bonus check.
     const prevOverall = Math.round(
-        (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? 0), 0) / MOCK_SKILL_ORDER.length) * 2
+        (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? BAND_MIN), 0) / MOCK_SKILL_ORDER.length) * 2
     ) / 2;
     const thresholdCrossed = Math.floor(realBandScore / 0.5) > Math.floor(prevOverall / 0.5);
 

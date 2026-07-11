@@ -15,13 +15,14 @@
  *      → return HARDCODED_DEFAULTS
  *
  * weakness_score = (1 − drill_accuracy) × 0.60
- *               + (1 − sub_skill_band / 9.0) × 0.40
+ *               + bandGap(sub_skill_band) × 0.40      // gap on the [4,9] domain
  *
  * Higher weakness_score = higher IA priority.
  * Both slots can be from the same parent skill — no diversity constraint.
  */
 
 import prisma from './prisma';
+import { bandGap } from './bandScale';
 
 // ─── Static maps ─────────────────────────────────────────────────────────────
 
@@ -83,7 +84,8 @@ interface ScoredPair extends SubSkillPair {
 
 function weaknessScore(drillAccuracy: number, bandScore: number): number {
     const accuracyComponent = (1 - Math.min(1, Math.max(0, drillAccuracy))) * 0.6;
-    const bandComponent     = (1 - Math.min(9, Math.max(0, bandScore)) / 9.0) * 0.4;
+    // D4: gap normalized on the [4,9] domain — band 4 = fully weak, band 9 = no gap.
+    const bandComponent     = bandGap(bandScore) * 0.4;
     return accuracyComponent + bandComponent;
 }
 

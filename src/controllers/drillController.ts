@@ -8,6 +8,7 @@ const VALID_SKILLS     = Object.values(IeltsSkillType) as string[];
 const VALID_SUB_SKILLS = Object.values(IeltsSubSkillType) as string[];
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
+import { BAND_MIN, bandGap } from '../lib/bandScale';
 
 interface DrillItem {
     skill: string;
@@ -63,16 +64,19 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             const acc   = total > 0 ? (g._sum.correct_answers ?? 0) / total : 0;
             accuracyByKey.set(`${g.skill}::${g.sub_skill}`, acc);
         }
-        // Weakness per spec: 60% recent drill accuracy gap + 40% band gap. Higher = weaker.
+        // Weakness per spec: 60% recent drill accuracy gap + 40% band gap (D4: gap
+        // normalized on the [4,9] domain — band 4 = fully weak). Higher = weaker.
         const weaknessOf = (skill: string, sub: string, band: number) => {
             const acc = accuracyByKey.get(`${skill}::${sub}`) ?? 0;
-            return 0.6 * (1 - acc) + 0.4 * (1 - Math.min(9, Math.max(0, band)) / 9);
+            return 0.6 * (1 - acc) + 0.4 * bandGap(band);
         };
 
         const items: DrillItem[] = [];
 
         for (const matrix of matrices) {
-            const skillBandScore = Number(matrix.band_score || 0);
+            // Missing band defaults to the 4.0 floor (max gap) — ?? 0 would sit
+            // below the valid domain and distort the weakness ranking.
+            const skillBandScore = Number(matrix.band_score || BAND_MIN);
             const subScores = (matrix.sub_scores as Record<string, any>) || {};
 
             // Use DB enum values (uppercase) for sub_skill.

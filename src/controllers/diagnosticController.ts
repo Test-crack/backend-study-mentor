@@ -3,16 +3,16 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
+import { BAND_MIN, toBand, fractionToBand, bandToLevel } from '../lib/bandScale';
 import fs from 'fs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 type DiagnosticLevel = 'A' | 'B' | 'C';
 
+// Even thirds of the [4,9] band domain (D3): A 4.0–5.5, B 5.5–7.0, C 7.0–9.0.
 function resolveLevel(targetBand: number): DiagnosticLevel {
-    if (targetBand <= 5.5) return 'A';
-    if (targetBand >= 7.0) return 'C';
-    return 'B';
+    return bandToLevel(targetBand);
 }
 
 /** Pick one random set_id for the given level + skill. */
@@ -335,7 +335,8 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 return res.status(400).json({ error: 'Could not resolve the question set for grading.' });
             }
 
-            bandScore = (correct / total) * 9;
+            // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
+            bandScore = fractionToBand(correct / total);
             subScores = {
                 total_questions:     total,
                 correct_answers:     correct,
@@ -350,7 +351,8 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 : 0;
 
             if (wordCount < 10) {
-                bandScore = 0;
+                // D2: even an empty/trivial attempt scores the IELTS-standard 4.0 floor.
+                bandScore = BAND_MIN;
                 subScores = { word_count: wordCount, error: 'Text too short to evaluate' };
             } else {
                 const questionId = parsedAnswers.question_id ?? req.body.question_id;
@@ -382,7 +384,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
                 }
 
-                bandScore = Number(analysis.bandScore) || 0;
+                bandScore = Number(analysis.bandScore) || BAND_MIN;
 
                 // Enforce anti-gaming caps server-side (the AI prompt asks for these, but
                 // relying on the model alone is unreliable — same reason speaking has hard caps).
@@ -405,7 +407,8 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             }
         }
 
-        bandScore = Math.min(Math.round(bandScore * 2) / 2, 9.0);
+        // Universal exit gate: round to 0.5 and clamp to [4,9] (adds the previously-missing floor).
+        bandScore = toBand(bandScore);
         await saveDiagnosticAssessment(student.id, skillUpper, bandScore, parsedAnswers, subScores);
         const overallComplete = await checkAndMarkDiagnosed(student.id);
 
@@ -464,9 +467,9 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
                 });
             }
 
-            // Cap minimum at 1.0 (never let AI Fallback give 4+ for silence)
-            bandScore  = Math.min(Math.round((Number(analysis.bandScore) || 1.0) * 2) / 2, 9.0);
-            bandScore  = Math.max(bandScore, 1.0);
+            // Universal exit gate — round 0.5, clamp [4,9]. D2: even weak/invalid
+            // graded audio lands on the 4.0 IELTS-standard floor.
+            bandScore  = toBand(Number(analysis.bandScore) || BAND_MIN);
             transcript = analysis.transcript ?? '';
             subScores  = {
                 content_assessment: analysis.content_assessment,

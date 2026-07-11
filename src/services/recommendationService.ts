@@ -1,13 +1,14 @@
 import prisma from '../lib/prisma';
 import { IeltsSkillType, RecommendationLevel } from '@prisma/client';
+import { bandToDifficulty } from '../lib/bandScale';
 
 /**
- * Helper to map a numeric band score to a RecommendationLevel
+ * Helper to map a numeric band score to a RecommendationLevel.
+ * Even thirds of the [4,9] band domain (D3): <5.5 / <7.0 / ≥7.0 — the single
+ * threshold set shared with diagnostic level (A/B/C) and IA difficulty.
  */
 export const getBandLevel = (bandScore: number): RecommendationLevel => {
-  if (bandScore <= 4.5) return RecommendationLevel.BEGINNER;
-  if (bandScore <= 6.5) return RecommendationLevel.INTERMEDIATE;
-  return RecommendationLevel.ADVANCED;
+  return RecommendationLevel[bandToDifficulty(bandScore)];
 };
 
 /**

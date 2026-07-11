@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as fs from 'fs';
+import { BAND_MIN, toBand } from '../lib/bandScale';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const genAI          = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -32,17 +33,17 @@ function enforceScores(evaluation: any): any {
   const isOffTopic       = ca === 'off_topic';
   const isTooShort       = ca === 'too_short' || (meaningful >= 4 && meaningful < 15);
 
+  // D2: the platform floor is an absolute 4.0 (IELTS-standard base) — every
+  // invalid/insufficient class caps AT the floor. The content_assessment
+  // classification is kept for feedback + the re-record prompt, but no score
+  // below 4.0 exists anywhere in the domain.
   let cap: number | null = null;
 
   if (isEmptyOrNoise) {
-    cap                       = 1.0;
+    cap                       = BAND_MIN;
     evaluation.needs_retry    = true;  // tell the controller to prompt a re-record
-  } else if (isMurmurOnly) {
-    cap = 1.5;
-  } else if (isOffTopic) {
-    cap = 2.0;
-  } else if (isTooShort) {
-    cap = 3.0;
+  } else if (isMurmurOnly || isOffTopic || isTooShort) {
+    cap = BAND_MIN;
   }
 
   if (cap !== null) {
@@ -52,14 +53,20 @@ function enforceScores(evaluation: any): any {
     evaluation.pronunciationScore = Math.min(evaluation.pronunciationScore ?? cap, cap);
   }
 
-  // Always recalculate bandScore after any enforcement
+  // Always clamp every criterion into [4,9] and recalculate bandScore — the
+  // prompt instructs 4.0–9.0 but the model is not trusted to stay in range.
+  evaluation.fluencyScore       = toBand(Number(evaluation.fluencyScore));
+  evaluation.vocabularyScore    = toBand(Number(evaluation.vocabularyScore));
+  evaluation.grammarScore       = toBand(Number(evaluation.grammarScore));
+  evaluation.pronunciationScore = toBand(Number(evaluation.pronunciationScore));
+
   const criteria = [
     evaluation.fluencyScore,
     evaluation.vocabularyScore,
     evaluation.grammarScore,
     evaluation.pronunciationScore,
   ];
-  evaluation.bandScore = Math.round((criteria.reduce((a, b) => a + b, 0) / 4) * 2) / 2;
+  evaluation.bandScore = toBand(criteria.reduce((a, b) => a + b, 0) / 4);
 
   return evaluation;
 }
@@ -67,11 +74,11 @@ function enforceScores(evaluation: any): any {
 /** Standard "no speech" response — returned without calling Gemini. */
 function emptyAudioResponse(reason: string) {
   return {
-    bandScore:          1.0,
-    fluencyScore:       1.0,
-    vocabularyScore:    1.0,
-    grammarScore:       1.0,
-    pronunciationScore: 1.0,
+    bandScore:          BAND_MIN,
+    fluencyScore:       BAND_MIN,
+    vocabularyScore:    BAND_MIN,
+    grammarScore:       BAND_MIN,
+    pronunciationScore: BAND_MIN,
     transcript:         '',
     content_assessment: 'empty',
     needs_retry:        true,
@@ -126,20 +133,17 @@ Listen to the audio carefully and classify it as exactly ONE of:
 Set "content_assessment" to EXACTLY one of these values.
 
 STEP 2 — SCORING RULES:
+The platform band scale runs from 4.0 (absolute minimum) to 9.0 (maximum). No score below 4.0 exists.
 - If content_assessment is "empty", "noise_only", or "inaudible":
-  → Set ALL scores to 1.0. Transcript = "". Do not attempt to fabricate content.
-- If content_assessment is "murmur_only":
-  → Set ALL scores to 1.0 or 1.5. These are not evaluable responses.
-- If content_assessment is "off_topic":
-  → Set ALL scores to a MAXIMUM of 2.0. The student did not address the task.
-- If content_assessment is "too_short":
-  → Set ALL scores to a MAXIMUM of 3.0.
+  → Set ALL scores to the minimum 4.0. Transcript = "". Do not attempt to fabricate content.
+- If content_assessment is "murmur_only", "off_topic", or "too_short":
+  → Set ALL scores to the minimum 4.0. These do not demonstrate evaluable task performance.
 - Only if content_assessment is "adequate":
-  → Score normally on the 0.5-increment scale from 1.0 to 9.0.
+  → Score normally on the 0.5-increment scale from 4.0 to 9.0.
   → Do NOT give any criterion above 6.5 unless clearly warranted.
 
 IMPORTANT: Do NOT fabricate or imagine speech content that is not actually in the audio.
-If you cannot clearly hear speech, classify accordingly and assign 1.0–2.0.
+If you cannot clearly hear speech, classify accordingly and assign the minimum 4.0.
 
 CRITERION DESCRIPTORS (for "adequate" responses only):
 
