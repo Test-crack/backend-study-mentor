@@ -2,7 +2,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { supabaseAdmin } from '../lib/supabase';
+import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 
 // ─── Helper: resolve the institute the caller is admin/owner of ──────────────
@@ -113,21 +113,11 @@ export async function addStudent(req: AuthRequest, res: Response) {
             }
         }
 
-        // 2. Send Supabase invite email
-        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-            email,
-            {
-                data: { full_name: name, role: 'STUDENT' },
-                redirectTo: `${process.env.FRONTEND_URL ?? 'http://localhost:8080'}/login`,
-            }
-        );
-
-        const alreadyRegistered = !!inviteError?.message?.includes('already been registered');
-        if (inviteError && !alreadyRegistered) {
-            throw inviteError;
-        }
-
-        const supabaseUserId = inviteData?.user?.id;
+        // 2. Create the auth user + send a role-specific branded invite email (Resend).
+        //    Redirect targets FRONTEND_URL/auth/callback (set-password flow), not /login.
+        const { userId: supabaseUserId, emailSent } = await sendInvite({
+            email, name, role: 'STUDENT',
+        });
 
         // 3 + 4. Atomic: create/link User row AND institute_students in one transaction.
         // If institute_students.create fails (e.g. race condition), the User write rolls back too.
@@ -162,7 +152,7 @@ export async function addStudent(req: AuthRequest, res: Response) {
                 userId: savedUser.id,
                 name:   savedUser.name,
                 email:  savedUser.email,
-                inviteEmailSent: !inviteError,
+                inviteEmailSent: emailSent,
             },
         });
     } catch (err: any) {
@@ -305,33 +295,33 @@ export async function addTutor(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        let dbUser = await prisma.user.findUnique({ where: { email: tutorEmail } });
+        const email = tutorEmail.trim().toLowerCase();
+        const name  = tutorName.trim();
+
+        let dbUser = await prisma.user.findUnique({ where: { email } });
         if (dbUser) {
             if (dbUser.role !== UserRoleType.INSTRUCTOR) {
                 return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
             }
-            const alreadyEnrolled = await prisma.institute_instructors.findFirst({
-                where: { user_id: dbUser.id, institute_id: instituteId },
+            // institute_instructors.user_id is globally unique — a tutor belongs to ONE
+            // institute. Check across ALL institutes (not just this one) so we can't
+            // silently re-point another institute's tutor into ours via the upsert.
+            const existing = await prisma.institute_instructors.findUnique({
+                where: { user_id: dbUser.id },
             });
-            if (alreadyEnrolled) {
-                return res.status(409).json({ error: 'This tutor is already onboarded in your institute.' });
+            if (existing) {
+                return res.status(409).json({
+                    error: existing.institute_id === instituteId
+                        ? 'This tutor is already onboarded in your institute.'
+                        : 'This tutor is already onboarded at another institute.',
+                });
             }
         }
 
-        // 1. Send Supabase invite email
-        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-            tutorEmail,
-            {
-                data: { full_name: tutorName, role: 'INSTRUCTOR' },
-                redirectTo: `${process.env.FRONTEND_URL ?? 'http://localhost:8080'}/login`,
-            }
-        );
-
-        if (inviteError && !inviteError.message.includes('already been registered')) {
-            throw inviteError;
-        }
-
-        const supabaseUserId = inviteData?.user?.id;
+        // 1. Create the auth user + send a role-specific branded invite email (Resend).
+        const { userId: supabaseUserId, emailSent } = await sendInvite({
+            email, name, role: 'INSTRUCTOR',
+        });
 
         // 2 + 3. Atomic: create User row AND institute_instructors in one transaction.
         const savedUser = await prisma.$transaction(async (tx) => {
@@ -339,11 +329,16 @@ export async function addTutor(req: AuthRequest, res: Response) {
             if (!user) {
                 user = await tx.user.create({
                     data: {
-                        email: tutorEmail,
-                        name: tutorName,
+                        email,
+                        name,
                         role: UserRoleType.INSTRUCTOR,
                         supabaseuserid: supabaseUserId ?? `pending-${Date.now()}`,
                     },
+                });
+            } else if (supabaseUserId && user.supabaseuserid.startsWith('pending-')) {
+                user = await tx.user.update({
+                    where: { id: user.id },
+                    data:  { supabaseuserid: supabaseUserId },
                 });
             }
 
@@ -365,7 +360,7 @@ export async function addTutor(req: AuthRequest, res: Response) {
                 userId: savedUser.id,
                 name:   savedUser.name,
                 email:  savedUser.email,
-                inviteEmailSent: !inviteError,
+                inviteEmailSent: emailSent,
             },
         });
     } catch (err: any) {
@@ -393,13 +388,11 @@ export async function removeTutor(req: AuthRequest, res: Response) {
         });
         if (!row) return res.status(404).json({ error: 'Tutor not found in your institute.' });
 
+        // Remove only the institute link. Do NOT touch User.role — unconditionally
+        // downgrading to STUDENT stripped the person's platform role (and, with the
+        // former cross-institute poach, let one institute strip a rival's tutor role).
+        // Institute membership and platform role are separate concerns (mirrors removeStudent).
         await prisma.institute_instructors.delete({ where: { id: row.id } });
-
-        // Downgrade role back to STUDENT
-        await prisma.user.update({
-            where: { id: userId },
-            data: { role: UserRoleType.STUDENT },
-        });
 
         return res.json({ data: { removed: true, userId } });
     } catch (err: any) {

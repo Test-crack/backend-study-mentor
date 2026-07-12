@@ -2,7 +2,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { supabaseAdmin } from '../lib/supabase';
+import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 
 const VALID_ROLES = Object.values(UserRoleType);
@@ -229,24 +229,11 @@ export async function createInstitute(req: AuthRequest, res: Response) {
             return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
         }
 
-        // 1. Send Supabase invite email to the new owner
-        //    This creates a Supabase auth user and mails a magic link
-        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-            ownerEmail,
-            {
-                data: { full_name: ownerName, role: 'INSTITUTE_OWNER' },
-                redirectTo: `${process.env.FRONTEND_URL ?? 'http://localhost:8080'}/login`,
-            }
-        );
-
-        if (inviteError) {
-            // If user already exists in Supabase, that's fine — we'll link via email below
-            if (!inviteError.message.includes('already been registered')) {
-                throw inviteError;
-            }
-        }
-
-        const supabaseUserId = inviteData?.user?.id;
+        // 1. Create the auth user + send the owner a role-specific branded invite email
+        //    (Resend). Redirect targets FRONTEND_URL/auth/callback (set-password flow).
+        const { userId: supabaseUserId, emailSent } = await sendInvite({
+            email: ownerEmail, name: ownerName, role: 'INSTITUTE_OWNER', institute: instituteName,
+        });
 
         // 2. Upsert User row in our DB
         if (!dbUser) {
@@ -298,7 +285,7 @@ export async function createInstitute(req: AuthRequest, res: Response) {
                     email: dbUser.email,
                     name: dbUser.name,
                 },
-                inviteEmailSent: !inviteError,
+                inviteEmailSent: emailSent,
             },
         });
     } catch (err: any) {

@@ -2,7 +2,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { supabaseAdmin } from '../lib/supabase';
+import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 import { todayStartIST } from '../lib/timezone';
 import {
@@ -206,19 +206,11 @@ export async function addAdmin(req: AuthRequest, res: Response) {
             return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
         }
 
-        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-            adminEmail,
-            {
-                data: { full_name: adminName, role: 'INSTITUTE_ADMIN' },
-                redirectTo: `${process.env.FRONTEND_URL ?? 'http://localhost:8080'}/login`,
-            }
-        );
-
-        if (inviteError && !inviteError.message.includes('already been registered')) {
-            throw inviteError;
-        }
-
-        const supabaseUserId = inviteData?.user?.id;
+        // Create the auth user + send a role-specific branded invite email (Resend).
+        // Redirect targets FRONTEND_URL/auth/callback (set-password flow), not /login.
+        const { userId: supabaseUserId, emailSent } = await sendInvite({
+            email: adminEmail, name: adminName, role: 'INSTITUTE_ADMIN',
+        });
 
         if (!dbUser) {
             dbUser = await prisma.user.create({
@@ -251,7 +243,7 @@ export async function addAdmin(req: AuthRequest, res: Response) {
                 userId: dbUser.id,
                 name: dbUser.name,
                 email: dbUser.email,
-                inviteEmailSent: !inviteError,
+                inviteEmailSent: emailSent,
             },
         });
     } catch (err: any) {
