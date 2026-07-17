@@ -1,0 +1,8 @@
+-- RETIRED (2026-07-18): student_notifications was consolidated into the
+-- recipient-generic user_notifications table (keyed by User.id).
+--
+-- Fresh environment?  Run user_notifications.sql — it creates the table and
+--                     backfills both IA_MISSED (students) and
+--                     STUDENT_IA_MISSED (instructors).
+-- Already ran this file earlier?  Run consolidate_notifications.sql — it
+--                     copies your rows across and drops the old table.

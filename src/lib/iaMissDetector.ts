@@ -18,6 +18,7 @@ import prisma from './prisma';
 import { processIASession, AlreadyCompletedError } from './iaProcessor';
 import { AIGradingError } from './iaGrading';
 import { computeAverageDCS } from './dcs';
+import { notifyStudent, notifyInstructorsOfMissedIA } from './studentNotify';
 
 // ── Constants (kept in sync with iaController.ts) ─────────────────────────────
 const IST_OFFSET_MS    = 5.5 * 60 * 60 * 1000;
@@ -164,7 +165,13 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                             data:  { status: 'MISSED' as any, carry_forward_subskills: stale.selected_subskills as any, momentum_awarded: -MISS_PENALTY },
                         }).then((r: any) => r.count)
                     );
-                    if (applied) penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+                    if (applied) {
+            penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+            await notifyStudent(studentId, 'IA_MISSED',
+                { ia_number: stale.ia_number, ia_date: dateStr, momentum_deducted: MISS_PENALTY },
+                `IA_MISSED:${dateStr}`);
+            await notifyInstructorsOfMissedIA(studentId, stale.ia_number, dateStr, MISS_PENALTY);
+        }
                 }
                 continue;
             }
@@ -184,7 +191,13 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                 },
             }).then((r: any) => r.count)
         );
-        if (applied) penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+        if (applied) {
+            penalties.push({ ia_number: stale.ia_number, penalty: MISS_PENALTY, ia_date: dateStr });
+            await notifyStudent(studentId, 'IA_MISSED',
+                { ia_number: stale.ia_number, ia_date: dateStr, momentum_deducted: MISS_PENALTY },
+                `IA_MISSED:${dateStr}`);
+            await notifyInstructorsOfMissedIA(studentId, stale.ia_number, dateStr, MISS_PENALTY);
+        }
     }
 
     // ── Case D: scheduled dates with NO session row at all ───────────────────
@@ -270,6 +283,10 @@ export async function detectAndMarkMissedIAs(studentId: string): Promise<MissPen
                         return 1;
                     });
                     penalties.push({ ia_number: iaNumber, penalty: MISS_PENALTY, ia_date: dateStr });
+                    await notifyStudent(studentId, 'IA_MISSED',
+                        { ia_number: iaNumber, ia_date: dateStr, momentum_deducted: MISS_PENALTY },
+                        `IA_MISSED:${dateStr}`);
+                    await notifyInstructorsOfMissedIA(studentId, iaNumber, dateStr, MISS_PENALTY);
                 } catch {
                     // Unique constraint violation = row already exists (race); tx rolled back, safe to ignore
                 }

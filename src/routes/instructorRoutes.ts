@@ -12,6 +12,11 @@ import {
     getStudentFullProgress,
     getBatchAssessmentOverview,
 } from '../controllers/instructorProgressController';
+import {
+    getUserNotifications,
+    markUserNotificationsRead,
+    dismissUserNotification,
+} from '../controllers/userNotificationController';
 
 import multer from 'multer';
 import path from 'path';
@@ -47,6 +52,14 @@ router.use(ensureUser);
 router.use(authorize(UserRoleType.INSTRUCTOR, UserRoleType.ADMIN));
 
 router.put('/profile', instructorController.updateInstructorProfile);
+
+// ── Notifications (bell) — generic user_notifications endpoints ──────────────
+// GET  /api/instructor/notifications           — events + unread count (paginated)
+// POST /api/instructor/notifications/read      — { all: true } | { ids: [...] }
+// POST /api/instructor/notifications/:id/dismiss
+router.get('/notifications', getUserNotifications);
+router.post('/notifications/read', markUserNotificationsRead);
+router.post('/notifications/:id/dismiss', dismissUserNotification);
 
 
 router.get('/courses', instructorController.getInstructorCourses);

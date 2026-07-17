@@ -5,7 +5,8 @@ import { ensureUser } from '../middleware/ensureUser';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import { getStudentBatches } from '../controllers/batchController';
-import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport, getPendingNotifications, getIAHistory, getMockHistory } from '../controllers/studentController';
+import { getSpeakingHistory, getCompetencyScores, getAssessmentHistory, getDiagnosticReport, getPendingNotifications, getIAHistory, getMockHistory, getStudentNotifications } from '../controllers/studentController';
+import { markUserNotificationsRead, dismissUserNotification } from '../controllers/userNotificationController';
 import { getRecommendations, getDrillRecommendation } from '../controllers/recommendationController';
 import { getNextActionDrill } from '../controllers/drillController';
 import { getDailyDrillState, saveGameScore } from '../controllers/gameScoreController';
@@ -66,7 +67,16 @@ router.get('/mock-history', getMockHistory);
 // GET /api/student/diagnostic-report — Initial diagnostic baseline per skill
 router.get('/diagnostic-report', getDiagnosticReport);
 
-// GET /api/student/pending-notifications — Today's IA + this month's Mock status
+// GET /api/student/pending-notifications — LEGACY (retire after frontend migrates
+// to /notifications). Today's IA + recent misses + this month's Mock status.
 router.get('/pending-notifications', getPendingNotifications);
+
+// ── Notifications (bell + dashboard feed) ────────────────────────────────────
+// GET  /api/student/notifications           — live CTAs + persisted events + unread count
+// POST /api/student/notifications/read      — { all: true } | { ids: [...] }  (generic handler)
+// POST /api/student/notifications/:id/dismiss — hide one event from the dashboard (generic handler)
+router.get('/notifications', getStudentNotifications);
+router.post('/notifications/read', markUserNotificationsRead);
+router.post('/notifications/:id/dismiss', dismissUserNotification);
 
 export default router;

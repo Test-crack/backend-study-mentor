@@ -296,9 +296,80 @@ export async function getIAHistory(req: AuthRequest, res: Response) {
 }
 
 /**
- * GET /api/student/pending-notifications
- * Returns today's pending/in-progress IA + this month's pending/in-progress Mock.
- * Used by the DailyNotices dashboard widget.
+ * Derive the LIVE call-to-action notifications (today's IA + this month's Mock)
+ * straight from session state. These are intentionally never persisted — they
+ * appear and vanish with the underlying session, so storing them would only
+ * invite sync bugs. Shared by getPendingNotifications (legacy) and
+ * getStudentNotifications (bell + dashboard feed).
+ */
+async function deriveCtaNotifications(studentId: string): Promise<Record<string, any>[]> {
+    const todayStr  = todayISTString();            // "YYYY-MM-DD"
+    const monthYear = todayStr.slice(0, 7);        // "YYYY-MM"
+    const todayDate = currentISTDate();            // midnight-UTC Date matching ia_date storage
+
+    const cta: Record<string, any>[] = [];
+
+    // ── IA — look up today's session via the unique (student_id, ia_date) key ──
+    const iaSession = await prisma.iASession.findUnique({
+        where: { student_id_ia_date: { student_id: studentId, ia_date: todayDate } },
+        select: { id: true, ia_number: true, ia_date: true, status: true, answers: true, window_closes_at: true },
+    });
+
+    if (iaSession?.status === IASessionStatus.PENDING) {
+        cta.push({
+            type:            'IA_PENDING',
+            ia_number:       iaSession.ia_number,
+            ia_date:         todayStr,
+            window_closes_at: iaSession.window_closes_at,
+        });
+    } else if (iaSession?.status === IASessionStatus.IN_PROGRESS) {
+        const answers = (iaSession.answers as Record<string, any>) ?? {};
+        cta.push({
+            type:            'IA_IN_PROGRESS',
+            ia_number:       iaSession.ia_number,
+            session_id:      iaSession.id,
+            ia_date:         todayStr,
+            window_closes_at: iaSession.window_closes_at,
+            answers_saved:   Object.keys(answers).length,
+        });
+    }
+
+    // ── Mock — look up this month's PENDING or IN_PROGRESS session ──
+    const mockSession = await prisma.mocksessions.findFirst({
+        where: {
+            student_id: studentId,
+            month_year: monthYear,
+            status:     { in: [MockSessionStatus.PENDING, MockSessionStatus.IN_PROGRESS] },
+        },
+        select: { id: true, month_year: true, attempt_type: true, status: true, answers: true, window_closes_at: true },
+    });
+
+    if (mockSession?.status === MockSessionStatus.PENDING) {
+        cta.push({
+            type:            'MOCK_PENDING',
+            month_year:      mockSession.month_year,
+            attempt_type:    mockSession.attempt_type,
+            window_closes_at: mockSession.window_closes_at,
+        });
+    } else if (mockSession?.status === MockSessionStatus.IN_PROGRESS) {
+        const answers = (mockSession.answers as Record<string, any>) ?? {};
+        cta.push({
+            type:            'MOCK_IN_PROGRESS',
+            session_id:      mockSession.id,
+            month_year:      mockSession.month_year,
+            attempt_type:    mockSession.attempt_type,
+            window_closes_at: mockSession.window_closes_at,
+            answers_saved:   Object.keys(answers).length,
+        });
+    }
+
+    return cta;
+}
+
+/**
+ * GET /api/student/pending-notifications  (LEGACY — retire once the frontend
+ * has migrated to GET /api/student/notifications)
+ * Returns today's pending/in-progress IA + recent misses + this month's Mock.
  */
 export async function getPendingNotifications(req: AuthRequest, res: Response) {
     try {
@@ -308,40 +379,11 @@ export async function getPendingNotifications(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const todayStr  = todayISTString();            // "YYYY-MM-DD"
-        const monthYear = todayStr.slice(0, 7);        // "YYYY-MM"
-        const todayDate = currentISTDate();            // midnight-UTC Date matching ia_date storage
-
         // Always sweep for stale sessions first — this is the primary trigger
         // for miss detection when the student only visits the dashboard (never the IA page).
         await detectAndMarkMissedIAs(student.id);
 
-        const notifications: Record<string, any>[] = [];
-
-        // ── IA — look up today's session via the unique (student_id, ia_date) key ──
-        const iaSession = await prisma.iASession.findUnique({
-            where: { student_id_ia_date: { student_id: student.id, ia_date: todayDate } },
-            select: { id: true, ia_number: true, ia_date: true, status: true, answers: true, window_closes_at: true },
-        });
-
-        if (iaSession?.status === IASessionStatus.PENDING) {
-            notifications.push({
-                type:            'IA_PENDING',
-                ia_number:       iaSession.ia_number,
-                ia_date:         todayStr,
-                window_closes_at: iaSession.window_closes_at,
-            });
-        } else if (iaSession?.status === IASessionStatus.IN_PROGRESS) {
-            const answers = (iaSession.answers as Record<string, any>) ?? {};
-            notifications.push({
-                type:            'IA_IN_PROGRESS',
-                ia_number:       iaSession.ia_number,
-                session_id:      iaSession.id,
-                ia_date:         todayStr,
-                window_closes_at: iaSession.window_closes_at,
-                answers_saved:   Object.keys(answers).length,
-            });
-        }
+        const notifications = await deriveCtaNotifications(student.id);
 
         // ── Recently missed IAs (last 7 days, newest first, max 3) ─────────────
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -368,38 +410,73 @@ export async function getPendingNotifications(req: AuthRequest, res: Response) {
             });
         }
 
-        // ── Mock — look up this month's PENDING or IN_PROGRESS session ──
-        const mockSession = await prisma.mocksessions.findFirst({
-            where: {
-                student_id: student.id,
-                month_year: monthYear,
-                status:     { in: [MockSessionStatus.PENDING, MockSessionStatus.IN_PROGRESS] },
-            },
-            select: { id: true, month_year: true, attempt_type: true, status: true, answers: true, window_closes_at: true },
-        });
-
-        if (mockSession?.status === MockSessionStatus.PENDING) {
-            notifications.push({
-                type:            'MOCK_PENDING',
-                month_year:      mockSession.month_year,
-                attempt_type:    mockSession.attempt_type,
-                window_closes_at: mockSession.window_closes_at,
-            });
-        } else if (mockSession?.status === MockSessionStatus.IN_PROGRESS) {
-            const answers = (mockSession.answers as Record<string, any>) ?? {};
-            notifications.push({
-                type:            'MOCK_IN_PROGRESS',
-                session_id:      mockSession.id,
-                month_year:      mockSession.month_year,
-                attempt_type:    mockSession.attempt_type,
-                window_closes_at: mockSession.window_closes_at,
-                answers_saved:   Object.keys(answers).length,
-            });
-        }
-
         return res.json({ success: true, notifications });
     } catch (error) {
         console.error('[StudentController] getPendingNotifications error:', error);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }
+
+/**
+ * GET /api/student/notifications?limit=20&cursor=<ISO created_at>
+ * The unified feed for the notification bell + dashboard banners.
+ *
+ * Response: {
+ *   success, cta: [...derived live CTAs], events: [...persisted rows],
+ *   unread_count, next_cursor
+ * }
+ * Events keep their read_at / dismissed_at so the frontend can decide what to
+ * show where (dashboard hides dismissed; bell shows full history).
+ */
+export async function getStudentNotifications(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        // Sweep first so freshly missed IAs materialize as events before we read.
+        await detectAndMarkMissedIAs(student.id);
+
+        const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '20'), 10) || 20, 1), 50);
+        const cursorRaw = req.query.cursor ? new Date(String(req.query.cursor)) : null;
+        const cursor = cursorRaw && !isNaN(cursorRaw.getTime()) ? cursorRaw : null;
+
+        // Events live in the recipient-generic user_notifications table,
+        // keyed by User.id (= appUserId) — same store the instructor bell uses.
+        const [cta, rows, unreadCount] = await Promise.all([
+            deriveCtaNotifications(student.id),
+            prisma.userNotification.findMany({
+                where: {
+                    user_id: appUserId,
+                    ...(cursor ? { created_at: { lt: cursor } } : {}),
+                },
+                orderBy: { created_at: 'desc' },
+                take: limit + 1, // one extra to know if another page exists
+                select: { id: true, type: true, payload: true, created_at: true, read_at: true, dismissed_at: true },
+            }),
+            prisma.userNotification.count({
+                where: { user_id: appUserId, read_at: null, dismissed_at: null },
+            }),
+        ]);
+
+        const hasMore = rows.length > limit;
+        const events  = hasMore ? rows.slice(0, limit) : rows;
+
+        return res.json({
+            success:      true,
+            cta,
+            events,
+            unread_count: unreadCount,
+            next_cursor:  hasMore ? events[events.length - 1].created_at.toISOString() : null,
+        });
+    } catch (error) {
+        console.error('[StudentController] getStudentNotifications error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// Read / dismiss for student notifications are served by the recipient-generic
+// handlers in userNotificationController.ts (mounted in studentRoutes.ts) —
+// same table, same semantics, zero duplication.
