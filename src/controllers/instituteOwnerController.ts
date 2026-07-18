@@ -620,7 +620,7 @@ export async function getSummary(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const [institute, batches, allStudents, adminsCount] = await Promise.all([
+        const [institute, batches, allStudents, adminsCount, instructorRows, invitedNotStarted] = await Promise.all([
             prisma.institutes.findUnique({ where: { id: instituteId }, select: { name: true } }),
             (prisma as any).ielts_batches.findMany({
                 where: { institute_id: instituteId },
@@ -628,7 +628,22 @@ export async function getSummary(req: AuthRequest, res: Response) {
             }),
             resolveInstituteStudents(instituteId),
             prisma.institute_admins.count({ where: { institute_id: instituteId } }),
+            // Tutors of this institute + their batch assignments (for unassigned count)
+            prisma.institute_instructors.findMany({
+                where:  { institute_id: instituteId },
+                select: { user_id: true, User: { select: { ielts_batch_instructors: { select: { batch_id: true } } } } },
+            }),
+            // Students invited but who never started (no diagnostic yet) — the honest
+            // "needs attention" number that replaced the fictional approve/reject queue.
+            prisma.institute_students.count({
+                where: { institute_id: instituteId, isDiagnosed: false, is_active: true },
+            }),
         ]);
+
+        const batchIdSet = new Set((batches as any[]).map(b => b.id));
+        const unassignedTutors = instructorRows.filter(
+            r => !r.User.ielts_batch_instructors.some(a => batchIdSet.has(a.batch_id))
+        ).length;
 
         const { instStudents, instStudentIds } = allStudents;
 
@@ -708,6 +723,9 @@ export async function getSummary(req: AuthRequest, res: Response) {
                 ia_completion_last_7_days:   { completed: iaLast7, total_eligible: instStudentIds.length },
                 mock_completed_this_month:   mockThisMonth,
                 admins_count:                adminsCount,
+                instructor_count:            instructorRows.length,
+                unassigned_tutor_count:      unassignedTutors,
+                invited_not_started_count:   invitedNotStarted,
             },
         });
     } catch (err) {

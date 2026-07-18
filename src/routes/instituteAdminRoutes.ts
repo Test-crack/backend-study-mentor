@@ -14,6 +14,9 @@ import * as Admin from '../controllers/instituteAdminController';
 // Batch CRUD & member assignment
 import * as Batch from '../controllers/batchController';
 
+// Recipient-generic notifications (user_notifications table)
+import { getUserNotifications, markUserNotificationsRead, dismissUserNotification } from '../controllers/userNotificationController';
+
 const router = Router();
 const IO = UserRoleType.INSTITUTE_OWNER;
 const IA = UserRoleType.INSTITUTE_ADMIN;
@@ -41,9 +44,12 @@ router.get('/analytics/subskill-heatmap',           shared, Owner.getAnalyticsSu
 
 // ─── Students ─────────────────────────────────────────────────────────────────
 router.get('/students',                             shared, Admin.getStudents);
+// Rich table view (band / trend / streak / momentum / at-risk) — owner handler reused
+router.get('/students-overview',                    shared, Owner.getInstituteStudents);
 router.post('/students',                            shared, Admin.addStudent);
 router.delete('/students/:userId',                  shared, Admin.removeStudent);
 router.patch('/students/:userId/status',            shared, Admin.updateStudentStatus);
+router.post('/students/:userId/resend-invite',      shared, Admin.resendStudentInvite);
 
 // ─── Tutors ───────────────────────────────────────────────────────────────────
 router.get('/tutors',                               shared, Admin.getTutors);
@@ -62,5 +68,17 @@ router.post('/batches/:id/instructors',             shared, Batch.addInstructorT
 router.delete('/batches/:id/instructors/:userId',   shared, Batch.removeInstructorFromBatch);
 router.post('/batches/:id/students',                shared, Batch.addStudentToBatch);
 router.delete('/batches/:id/students/:userId',      shared, Batch.removeStudentFromBatch);
+
+// ─── Institute profile (Settings page) ────────────────────────────────────────
+router.get('/institute',                            shared, Admin.getInstituteProfile);
+router.patch('/institute',                          shared, Admin.updateInstituteProfile);
+
+// ─── Onboarding status ("needs attention" dashboard panel) ────────────────────
+router.get('/onboarding-status',                    shared, Admin.getOnboardingStatus);
+
+// ─── Notifications (recipient-generic user_notifications) ─────────────────────
+router.get('/notifications',                        shared, getUserNotifications);
+router.post('/notifications/read',                  shared, markUserNotificationsRead);
+router.post('/notifications/:id/dismiss',           shared, dismissUserNotification);
 
 export default router;

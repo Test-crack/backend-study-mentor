@@ -400,3 +400,171 @@ export async function removeTutor(req: AuthRequest, res: Response) {
         return res.status(500).json({ error: err.message ?? 'Failed to remove tutor' });
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INSTITUTE PROFILE (Settings page)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/institute-admin/institute
+export async function getInstituteProfile(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getInstituteId(appUserId);
+        if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
+
+        const institute = await prisma.institutes.findUnique({
+            where:  { id: instituteId },
+            select: { id: true, name: true, address: true, logo_url: true, is_active: true, created_at: true },
+        });
+        if (!institute) return res.status(404).json({ error: 'Institute not found.' });
+
+        return res.json({
+            data: {
+                id:        institute.id,
+                name:      institute.name,
+                address:   institute.address,
+                logoUrl:   institute.logo_url,
+                isActive:  institute.is_active,
+                createdAt: institute.created_at,
+            },
+        });
+    } catch (err: any) {
+        console.error('[InstituteAdmin] getInstituteProfile error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to fetch institute profile' });
+    }
+}
+
+// PATCH /api/institute-admin/institute — name / address / logoUrl only.
+// is_active is deliberately NOT editable here (that is a platform-level switch).
+export async function updateInstituteProfile(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getInstituteId(appUserId);
+        if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
+
+        const { name, address, logoUrl } = (req.body ?? {}) as { name?: string; address?: string; logoUrl?: string };
+
+        const trimmedName = typeof name === 'string' ? name.trim() : undefined;
+        if (trimmedName !== undefined && trimmedName.length === 0) {
+            return res.status(400).json({ error: 'Institute name cannot be empty.' });
+        }
+        if (trimmedName === undefined && address === undefined && logoUrl === undefined) {
+            return res.status(400).json({ error: 'Nothing to update.' });
+        }
+
+        const updated = await prisma.institutes.update({
+            where: { id: instituteId },
+            data: {
+                ...(trimmedName !== undefined ? { name: trimmedName } : {}),
+                ...(address     !== undefined ? { address: address || null } : {}),
+                ...(logoUrl     !== undefined ? { logo_url: logoUrl || null } : {}),
+                updated_at: new Date(),
+            },
+            select: { id: true, name: true, address: true, logo_url: true },
+        });
+
+        return res.json({
+            data: { id: updated.id, name: updated.name, address: updated.address, logoUrl: updated.logo_url },
+        });
+    } catch (err: any) {
+        console.error('[InstituteAdmin] updateInstituteProfile error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to update institute profile' });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ONBOARDING STATUS ("Needs attention" — the honest replacement for the old
+// mock approve/reject queue: invites activate immediately, so what an admin
+// actually needs to see is who was invited but never started, and which tutors
+// have no batch yet.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/institute-admin/onboarding-status
+export async function getOnboardingStatus(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getInstituteId(appUserId);
+        if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
+
+        const [pendingStudents, tutors, batches] = await Promise.all([
+            // Students who never completed the diagnostic — invited but not started.
+            prisma.institute_students.findMany({
+                where:   { institute_id: instituteId, isDiagnosed: false, is_active: true },
+                orderBy: { created_at: 'desc' },
+                take:    50,
+                include: { User: { select: { id: true, name: true, email: true, profileImage: true } } },
+            }),
+            prisma.institute_instructors.findMany({
+                where:   { institute_id: instituteId },
+                include: {
+                    User: {
+                        select: {
+                            id: true, name: true, email: true, profileImage: true,
+                            ielts_batch_instructors: { select: { batch_id: true } },
+                        },
+                    },
+                },
+            }),
+            (prisma as any).ielts_batches.findMany({
+                where:  { institute_id: instituteId },
+                select: { id: true },
+            }),
+        ]);
+
+        const batchIdSet = new Set((batches as any[]).map(b => b.id));
+        const unassignedTutors = tutors
+            .filter(t => !t.User.ielts_batch_instructors.some(a => batchIdSet.has(a.batch_id)))
+            .map(t => ({
+                userId:       t.User.id,
+                name:         t.User.name,
+                email:        t.User.email,
+                profileImage: t.User.profileImage,
+                invitedAt:    t.created_at,
+            }));
+
+        return res.json({
+            data: {
+                students_not_started: pendingStudents.map(s => ({
+                    userId:       s.User.id,
+                    name:         s.User.name,
+                    email:        s.User.email,
+                    profileImage: s.User.profileImage,
+                    invitedAt:    s.created_at,
+                })),
+                tutors_unassigned: unassignedTutors,
+            },
+        });
+    } catch (err: any) {
+        console.error('[InstituteAdmin] getOnboardingStatus error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to fetch onboarding status' });
+    }
+}
+
+// POST /api/institute-admin/students/:userId/resend-invite
+// Re-issues the invite/recovery email for a student who never got started.
+export async function resendStudentInvite(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getInstituteId(appUserId);
+        if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
+
+        const { userId } = req.params;
+        const row = await prisma.institute_students.findFirst({
+            where:   { user_id: userId, institute_id: instituteId },
+            include: { User: { select: { name: true, email: true } }, institutes: { select: { name: true } } },
+        });
+        if (!row) return res.status(404).json({ error: 'Student not found in your institute.' });
+
+        const result = await sendInvite({
+            email:     row.User.email,
+            name:      row.User.name ?? '',
+            role:      'STUDENT',
+            institute: row.institutes.name,
+        });
+
+        return res.json({ data: { emailSent: result.emailSent } });
+    } catch (err: any) {
+        console.error('[InstituteAdmin] resendStudentInvite error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to resend invite' });
+    }
+}
