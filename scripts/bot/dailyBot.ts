@@ -73,7 +73,7 @@ async function main() {
       if (isActive) {
         const state = await api('GET', '/api/student/daily-drill-state', token);
         const doneDrills = state.drills_completed_today ?? 0;
-        const lexiDone = !!state.lexigrid_completed_today;
+        let lexiDone = !!state.lexigrid_completed_today;
         const needed = Math.max(0, DAILY_DRILL_TARGET - doneDrills);
 
         if (needed === 0 && lexiDone) {
@@ -81,7 +81,13 @@ async function main() {
         } else {
           const offset = Math.floor(roll * 4);
           let last: any = null;
+          // Server requires LexiGrid between the 1st and 2nd drill of the day (checked
+          // against the ABSOLUTE count, not this loop's index — a prior partial run may
+          // have already banked drill 1). So: before the drill that would be #2 overall,
+          // do LexiGrid first if it isn't done yet.
           for (let d = 0; d < needed; d++) {
+            const overallDrillNumber = doneDrills + d + 1; // 1-based
+            if (overallDrillNumber === 2 && !lexiDone) { await doLexiGrid(persona, token); lexiDone = true; }
             const [skill, sub] = DRILLS[(offset + d) % 4];
             last = await doDrill(persona, token, skill, sub);
           }
