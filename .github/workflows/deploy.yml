@@ -5,7 +5,20 @@ on:
     branches: [main, dev]
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Determine target app
@@ -24,6 +37,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd /var/www/testcrack/${{ steps.vars.outputs.app_name }}
             git fetch origin
             git reset --hard origin/${{ github.ref_name }}
