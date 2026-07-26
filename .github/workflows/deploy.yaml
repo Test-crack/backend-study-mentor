@@ -1,4 +1,4 @@
-name: Deploy Frontend
+name: Deploy Backend
 
 on:
   push:
@@ -12,9 +12,9 @@ jobs:
         id: vars
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "app_name=frontend-main" >> "$GITHUB_OUTPUT"
+            echo "app_name=backend-main" >> "$GITHUB_OUTPUT"
           else
-            echo "app_name=frontend-dev" >> "$GITHUB_OUTPUT"
+            echo "app_name=backend-dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy to VPS
@@ -29,3 +29,4 @@ jobs:
             git reset --hard origin/${{ github.ref_name }}
             npm ci
             npm run build
+            pm2 restart ${{ steps.vars.outputs.app_name }}
