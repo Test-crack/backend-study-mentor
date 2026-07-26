@@ -1,0 +1,31 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main, dev]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine target app
+        id: vars
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "app_name=frontend-main" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_name=frontend-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/testcrack/${{ steps.vars.outputs.app_name }}
+            git fetch origin
+            git reset --hard origin/${{ github.ref_name }}
+            npm ci
+            npm run build
