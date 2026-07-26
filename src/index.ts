@@ -46,6 +46,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const allowedOrigins = [
   'http://localhost:8080',              // Dev client
   'https://testcrack.com',               // Production site
+  'https://dev.testcrack.com',           // Development site
   'https://www.testcrack.com',           // Optional: www variant
   'http://72.60.221.118:5000',   // Frontend served via VPS
 ];
