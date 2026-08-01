@@ -585,7 +585,7 @@ export async function startMockSection(req: AuthRequest, res: Response) {
 
         // Lazy expiry check for this specific section
         const sectionRow = await prisma.mockSectionAttempt.findUnique({
-            where: { session_id_section: { session_id, section: sectionUpper } } as any
+            where: { session_id_section: { session_id, section: sectionUpper } }
         });
         if (!sectionRow) return res.status(404).json({ success: false, error: 'Section row not found.' });
 
@@ -686,7 +686,7 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
 
         // Guard: reject writes to locked or expired sections
         const sectionRow = await prisma.mockSectionAttempt.findUnique({
-            where: { session_id_section: { session_id, section: sectionUpper } } as any
+            where: { session_id_section: { session_id, section: sectionUpper } }
         });
         if (!sectionRow) return res.status(404).json({ success: false, error: 'Section row not found.' });
         if (String(sectionRow.status) === 'SUBMITTED' || String(sectionRow.status) === 'EXPIRED') {
@@ -733,7 +733,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
         if (session.status === 'ABANDONED')      return res.status(400).json({ success: false, error: 'Session window has expired.' });
 
         const sectionRow = await prisma.mockSectionAttempt.findUnique({
-            where: { session_id_section: { session_id, section: sectionUpper } } as any
+            where: { session_id_section: { session_id, section: sectionUpper } }
         });
         if (!sectionRow) return res.status(404).json({ success: false, error: 'Section not found.' });
         if (String(sectionRow.status) === 'NOT_STARTED') return res.status(400).json({ success: false, error: 'Section has not been started yet.' });
