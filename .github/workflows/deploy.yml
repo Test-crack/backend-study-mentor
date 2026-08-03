@@ -33,8 +33,10 @@ jobs:
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
             echo "app_name=backend-main" >> "$GITHUB_OUTPUT"
+            echo "port=4000" >> "$GITHUB_OUTPUT"
           else
             echo "app_name=backend-dev" >> "$GITHUB_OUTPUT"
+            echo "port=4001" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy to VPS
@@ -51,6 +53,18 @@ jobs:
             npm ci
             npm run build
             pm2 restart ${{ steps.vars.outputs.app_name }}
+
+            echo "Waiting for ${{ steps.vars.outputs.app_name }} to report healthy on port ${{ steps.vars.outputs.port }}..."
+            for i in $(seq 1 10); do
+              if curl -sf "http://localhost:${{ steps.vars.outputs.port }}/health" > /dev/null; then
+                echo "Health check passed."
+                exit 0
+              fi
+              echo "Attempt $i/10 failed, retrying in 2s..."
+              sleep 2
+            done
+            echo "Health check failed after 10 attempts (20s) — deploy considered unhealthy."
+            exit 1
 
       # Only runs if "Deploy to VPS" succeeded — a failed deploy never moves this tag
       - name: Tag last-good deploy

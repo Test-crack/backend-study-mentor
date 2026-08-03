@@ -97,6 +97,11 @@ app.get('/', (_req: Request, res: Response) => {
   res.send('Study Material Generator Backend - Running');
 });
 
+// Liveness check for the deploy pipeline — deliberately shallow (no DB check).
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 
 app.use('/api/yt-study', requireAuth, ensureUser, ytStudyRoutes);
 app.use('/api/reading', requireAuth, ensureUser, readingRoutes);
