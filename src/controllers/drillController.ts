@@ -8,6 +8,7 @@ const VALID_SKILLS     = Object.values(IeltsSkillType) as string[];
 const VALID_SUB_SKILLS = Object.values(IeltsSubSkillType) as string[];
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
+import { paramStr } from '../utils/httpParams';
 import { BAND_MIN, bandGap } from '../lib/bandScale';
 
 interface DrillItem {
@@ -304,7 +305,7 @@ export async function saveDrillProgress(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
         const session = await prisma.drillSession.findUnique({ where: { id } });
         if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
@@ -520,7 +521,7 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
         const session = await prisma.drillSession.findUnique({ where: { id } });
         if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
@@ -723,7 +724,7 @@ export async function completeApplyDrillSession(req: AuthRequest, res: Response)
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
         const session = await prisma.drillSession.findUnique({ where: { id } });
         if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });

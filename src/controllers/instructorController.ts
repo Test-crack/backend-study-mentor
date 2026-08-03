@@ -6,6 +6,7 @@ import { CourseContentType } from '@prisma/client';
 import { analyzeContentToConcept, ConceptAnalysisInput } from '../services/conceptService';
 import { createModuleContent, updateModuleContent as updateModuleContentService, deleteModuleContent as deleteModuleContentService } from '../services/conceptDbService';
 import { uploadImage, deleteImage, getPublicIdFromUrl } from '../services/cloudinaryService';
+import { paramStr } from '../utils/httpParams';
 
 export async function getInstructorCourses(req: AuthRequest, res: Response) {
     try {
@@ -142,7 +143,7 @@ export async function createInstructorCourse(req: AuthRequest, res: Response) {
 export async function updateInstructorCourse(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
         const { title, description, difficulty, price, is_published, domainId } = req.body;
 
         const course = await prisma.course.findUnique({
@@ -190,7 +191,7 @@ export async function updateInstructorCourse(req: AuthRequest, res: Response) {
 export async function deleteInstructorCourse(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
 
         const course = await prisma.course.findUnique({
             where: { id },
@@ -283,7 +284,7 @@ export async function updateInstructorProfile(req: AuthRequest, res: Response) {
 export async function getCourseModules(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId } = req.params;
+        const courseId = paramStr(req.params.courseId);
 
         // Validate UUID format
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -349,7 +350,7 @@ export async function getCourseModules(req: AuthRequest, res: Response) {
 export async function addCourseModule(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId } = req.params;
+        const courseId = paramStr(req.params.courseId);
         const { title, description, domain, order_index } = req.body;
 
         // Validate UUID format
@@ -453,7 +454,8 @@ export async function addCourseModule(req: AuthRequest, res: Response) {
 export async function updateCourseModule(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId, moduleId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleId = paramStr(req.params.moduleId);
         const { title, description, domain, order_index } = req.body;
 
         // Validate UUID format
@@ -589,7 +591,8 @@ export async function updateCourseModule(req: AuthRequest, res: Response) {
 export async function deleteCourseModule(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId, moduleId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleId = paramStr(req.params.moduleId);
         const deleteModule = req.query.deleteModule === 'true';
 
         // Validate UUID format
@@ -696,7 +699,8 @@ function normalizeOptions(options: any): any[] | undefined {
 export async function addModuleContent(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId, moduleId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleId = paramStr(req.params.moduleId);
         const {
             type, title, sequence_order, is_required,
             body, question, correct_answer, explanation, difficulty
@@ -794,7 +798,9 @@ export async function addModuleContent(req: AuthRequest, res: Response) {
 export async function updateModuleContent(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId, moduleId, contentId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleId = paramStr(req.params.moduleId);
+        const contentId = paramStr(req.params.contentId);
         const updates = req.body;
 
         // Verify ownership
@@ -848,7 +854,9 @@ export async function updateModuleContent(req: AuthRequest, res: Response) {
 export async function deleteModuleContent(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId, moduleId, contentId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleId = paramStr(req.params.moduleId);
+        const contentId = paramStr(req.params.contentId);
 
         // Verify ownership
         const course = await prisma.course.findUnique({
@@ -881,7 +889,8 @@ export async function deleteModuleContent(req: AuthRequest, res: Response) {
 export async function getInstructorModuleContent(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { courseId, moduleId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleId = paramStr(req.params.moduleId);
 
         // Verify ownership
         const course = await prisma.course.findUnique({
@@ -1002,7 +1011,7 @@ export async function getInstructorModuleContent(req: AuthRequest, res: Response
 export async function uploadCourseThumbnail(req: AuthRequest & { file?: Express.Multer.File }, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
 
         if (!req.file) {
             return res.status(400).json({ message: 'No image file provided' });
@@ -1062,7 +1071,7 @@ export async function uploadCourseThumbnail(req: AuthRequest & { file?: Express.
 export async function removeCourseThumbnail(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
 
         const course = await prisma.course.findUnique({
             where: { id },
@@ -1122,7 +1131,7 @@ export async function removeCourseThumbnail(req: AuthRequest, res: Response) {
 export async function getStudentSpeakingHistory(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { studentId } = req.params;
+        const studentId = paramStr(req.params.studentId);
 
         // 1. Verify instructor belongs to an institute
         const instructor = await prisma.institute_instructors.findUnique({
@@ -1216,7 +1225,7 @@ export async function getStudentSpeakingHistory(req: AuthRequest, res: Response)
 export async function getStudentReadingHistory(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { studentId } = req.params;
+        const studentId = paramStr(req.params.studentId);
 
         // 1. Verify instructor
         const instructor = await prisma.institute_instructors.findUnique({
@@ -1276,7 +1285,7 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
 export async function getStudentWritingHistory(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { studentId } = req.params;
+        const studentId = paramStr(req.params.studentId);
 
         // 1. Verify instructor
         const instructor = await prisma.institute_instructors.findUnique({
@@ -1336,7 +1345,7 @@ export async function getStudentWritingHistory(req: AuthRequest, res: Response) 
 export async function submitManualGradeWriting(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId;
-        const { assessmentId } = req.params;
+        const assessmentId = paramStr(req.params.assessmentId);
         const { bandScore, feedback } = req.body;
 
         const assessment = await prisma.ieltsWritingAssessment.update({
@@ -1356,7 +1365,7 @@ export async function submitManualGradeWriting(req: AuthRequest, res: Response) 
 }
 
 export async function getBatchAnalytics(req: AuthRequest, res: Response) {
-    const { batchId } = req.params;
+    const batchId = paramStr(req.params.batchId);
 
     try {
         const appUserId = (req as any).appUserId as string;

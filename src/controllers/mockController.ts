@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { applySmoothing } from '../lib/iaProcessor';
 import { BAND_MIN, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
+import { paramStr } from '../utils/httpParams';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -536,7 +537,7 @@ export async function getSessionState(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { sessionId } = req.params;
+        const sessionId = paramStr(req.params.sessionId);
         const session = await prisma.mocksessions.findUnique({ where: { id: sessionId } });
         if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
 

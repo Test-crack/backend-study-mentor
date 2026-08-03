@@ -22,6 +22,7 @@ import prisma from '../lib/prisma';
 import { todayStartIST } from '../lib/timezone';
 import { computeBatchDashboard } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
+import { paramStr } from '../utils/httpParams';
 
 // ─── Shared auth helper ───────────────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ async function resolveBatchStudents(
 export async function getBatchDashboardSummary(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
-        const { batchId } = req.params;
+        const batchId = paramStr(req.params.batchId);
 
         const resolved = await resolveBatchStudents(res, appUserId, batchId);
         if (!resolved) return;
@@ -125,7 +126,8 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
 export async function getStudentFullProgress(req: AuthRequest, res: Response) {
     try {
         const appUserId  = (req as any).appUserId as string;
-        const { batchId, studentId } = req.params;  // studentId = User.id
+        const batchId = paramStr(req.params.batchId);
+        const studentId = paramStr(req.params.studentId);  // studentId = User.id
 
         // Auth step 1: instructor in batch
         const instructorMembership = await (prisma as any).ielts_batch_instructors.findFirst({
@@ -171,7 +173,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
 export async function getBatchAssessmentOverview(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
-        const { batchId } = req.params;
+        const batchId = paramStr(req.params.batchId);
 
         const resolved = await resolveBatchStudents(res, appUserId, batchId);
         if (!resolved) return;

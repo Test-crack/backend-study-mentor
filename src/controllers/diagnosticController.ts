@@ -5,6 +5,7 @@ import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
 import { BAND_MIN, toBand, fractionToBand, bandToLevel } from '../lib/bandScale';
 import fs from 'fs';
+import { paramStr } from '../utils/httpParams';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ export const getDiagnosticStatus = async (req: AuthRequest & { appUserId?: strin
 export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
     try {
         const userId = req.appUserId;
-        const { skill } = req.params;
+        const skill = paramStr(req.params.skill);
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
         const student    = await prisma.institute_students.findUnique({ where: { user_id: userId } });
@@ -256,7 +257,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
     try {
         const userId = req.appUserId;
-        const { skill } = req.params;
+        const skill = paramStr(req.params.skill);
         const { answers, taskType } = req.body;
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 

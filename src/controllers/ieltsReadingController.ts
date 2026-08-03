@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../lib/prisma'; // Use shared client
+import { paramStr } from '../utils/httpParams';
 
 /**
  * GET /api/ielts-reading/topics
@@ -67,7 +68,7 @@ export const getTopics = async (req: Request, res: Response) => {
  */
 export const getTopicById = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
 
         const topic = await prisma.ieltsSpeakingPractice.findUnique({
             where: { id }
@@ -218,7 +219,7 @@ export const getSpeedReadingReports = async (_req: Request, res: Response) => {
  */
 export const getSpeedReadingReportById = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
 
         if (!id) {
             return res.status(400).json({ success: false, error: 'Report ID is required' });

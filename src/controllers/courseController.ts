@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { DifficultyType, Prisma } from '@prisma/client';
+import { paramStr } from '../utils/httpParams';
 import {
     markContentAsCompleted,
     trackContentAccess,
@@ -203,7 +204,7 @@ export const getEnrolledCourses = async (req: Request, res: Response) => {
 
 export const getCourseById = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
         const { userId: queryUserId } = req.query;
         const appUserId = (req as any).appUserId;
 
@@ -426,7 +427,8 @@ export const enrollUserInCourse = async (req: Request, res: Response) => {
 
 export const getModuleContent = async (req: Request, res: Response) => {
     try {
-        const { courseId, orderIndex } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const orderIndex = paramStr(req.params.orderIndex);
         const userId = (req as any).appUserId;
 
         if (!userId) {
@@ -618,7 +620,9 @@ export const getModuleContent = async (req: Request, res: Response) => {
  */
 export const markContentComplete = async (req: Request, res: Response) => {
     try {
-        const { courseId, moduleIndex, contentItemId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleIndex = paramStr(req.params.moduleIndex);
+        const contentItemId = paramStr(req.params.contentItemId);
         const userId = (req as any).appUserId;
 
         // Validation
@@ -737,7 +741,9 @@ export const markContentComplete = async (req: Request, res: Response) => {
  */
 export const trackContentAccessEndpoint = async (req: Request, res: Response) => {
     try {
-        const { courseId, moduleIndex, contentItemId } = req.params;
+        const courseId = paramStr(req.params.courseId);
+        const moduleIndex = paramStr(req.params.moduleIndex);
+        const contentItemId = paramStr(req.params.contentItemId);
         const userId = (req as any).appUserId;
 
         // Validation
@@ -821,7 +827,7 @@ export const trackContentAccessEndpoint = async (req: Request, res: Response) =>
  */
 export const getCourseResumeData = async (req: Request, res: Response) => {
     try {
-        const { courseId } = req.params;
+        const courseId = paramStr(req.params.courseId);
         const userId = (req as any).appUserId;
 
         if (!userId) {
@@ -854,7 +860,7 @@ export const getCourseResumeData = async (req: Request, res: Response) => {
  */
 export const completeCourse = async (req: Request, res: Response) => {
     try {
-        const { courseId } = req.params;
+        const courseId = paramStr(req.params.courseId);
         const userId = (req as any).appUserId;
 
         if (!userId) {

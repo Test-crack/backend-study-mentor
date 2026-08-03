@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
+import { paramStr } from '../utils/httpParams';
 
 // ─── Helper: resolve the institute the caller is admin/owner of ──────────────
 
@@ -170,7 +171,7 @@ export async function addStudent(req: AuthRequest, res: Response) {
 
 // DELETE /api/institute-admin/students/:userId
 export async function removeStudent(req: AuthRequest, res: Response) {
-    const { userId } = req.params;
+    const userId = paramStr(req.params.userId);
 
     try {
         const appUserId = (req as any).appUserId as string;
@@ -194,7 +195,7 @@ export async function removeStudent(req: AuthRequest, res: Response) {
 // PATCH /api/institute-admin/students/:userId/status
 // Body: { isActive: boolean }
 export async function updateStudentStatus(req: AuthRequest, res: Response) {
-    const { userId } = req.params;
+    const userId = paramStr(req.params.userId);
     const { isActive } = req.body as { isActive: boolean };
 
     if (typeof isActive !== 'boolean') {
@@ -376,7 +377,7 @@ export async function addTutor(req: AuthRequest, res: Response) {
 
 // DELETE /api/institute-admin/tutors/:userId
 export async function removeTutor(req: AuthRequest, res: Response) {
-    const { userId } = req.params;
+    const userId = paramStr(req.params.userId);
 
     try {
         const appUserId = (req as any).appUserId as string;
@@ -548,7 +549,7 @@ export async function resendStudentInvite(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const { userId } = req.params;
+        const userId = paramStr(req.params.userId);
         const row = await prisma.institute_students.findFirst({
             where:   { user_id: userId, institute_id: instituteId },
             include: { User: { select: { name: true, email: true } }, institutes: { select: { name: true } } },

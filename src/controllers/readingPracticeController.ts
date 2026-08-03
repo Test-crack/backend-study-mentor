@@ -15,6 +15,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { paramStr } from '../utils/httpParams';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -239,7 +240,7 @@ export async function getMyReadingHistory(
  */
 export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) {
     try {
-        const { batchId } = req.params;
+        const batchId = paramStr(req.params.batchId);
 
         const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(batchId);
         let batch: any = null;
