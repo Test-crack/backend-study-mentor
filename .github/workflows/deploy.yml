@@ -4,6 +4,9 @@ on:
   push:
     branches: [main, dev]
 
+permissions:
+  contents: write   # needed to push the last-good-<branch> tag
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +24,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for tag operations
+
       - name: Determine target app
         id: vars
         run: |
@@ -44,3 +51,9 @@ jobs:
             npm ci
             npm run build
             pm2 restart ${{ steps.vars.outputs.app_name }}
+
+      # Only runs if "Deploy to VPS" succeeded — a failed deploy never moves this tag
+      - name: Tag last-good deploy
+        run: |
+          git tag -f last-good-${{ github.ref_name }}
+          git push origin -f last-good-${{ github.ref_name }}

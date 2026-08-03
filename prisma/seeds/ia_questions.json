@@ -1,0 +1,13 @@
+[
+  {
+    "source_key":    "ia_write_grammar_beg_001",
+    "skill":         "WRITING",
+    "sub_skill":     "GRAMMAR",
+    "question_type": "MCQ",
+    "prompt_text":   "Choose the correct sentence:",
+    "options":       { "A": "He go to school every day.", "B": "He goes to school every day.", "C": "He going to school every day.", "D": "He gone to school every day." },
+    "correct_answer": "\"B\"",
+    "explanation":   "Third-person singular present tense requires the -s suffix on the verb.",
+    "difficulty":    "BEGINNER"
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "source_key":    "mock_write_grammar_mcq_001",
+    "skill":         "WRITING",
+    "sub_skill":     "GRAMMAR",
+    "question_type": "MCQ",
+    "prompt_text":   "Select the grammatically correct option:",
+    "options":       { "A": "Neither of the students have finished.", "B": "Neither of the students has finished.", "C": "Neither of the students are finished.", "D": "Neither of the students is finishing." },
+    "correct_answer": "\"B\"",
+    "explanation":   "'Neither of' takes a singular verb."
+  }
+]

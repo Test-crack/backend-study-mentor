@@ -797,6 +797,7 @@ model DrillQuestion {
   is_active      Boolean             @default(true)
   created_at     DateTime            @default(now()) @db.Timestamptz(6)
   updated_at     DateTime            @default(now()) @db.Timestamptz(6)
+  source_key     String?             @unique @db.VarChar(100)
 
   @@index([skill, sub_skill, level, is_active])
   @@map("drill_questions")
@@ -818,6 +819,7 @@ model IAQuestion {
   difficulty     DifficultyType
   is_active      Boolean           @default(true)
   created_at     DateTime          @default(now()) @db.Timestamptz(6)
+  source_key     String?           @unique @db.VarChar(100)
 
   @@index([is_active], map: "idx_iaquestion_active")
   @@index([difficulty], map: "idx_iaquestion_difficulty")
@@ -863,6 +865,7 @@ model mockquestions {
   explanation    String?
   is_active      Boolean            @default(true)
   created_at     DateTime           @default(now()) @db.Timestamptz(6)
+  source_key     String?            @unique(map: "uq_mock_questions_source_key") @db.VarChar(100)
 
   @@index([skill, is_active], map: "idx_mock_questions_skill_active")
   @@index([skill, question_type], map: "idx_mock_questions_skill_type")
@@ -870,23 +873,22 @@ model mockquestions {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model mocksessions {
-  id                 String             @id(map: "pk_mock_sessions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id         String             @db.Uuid
-  attempt_type       MockAttemptType    @default(STANDARD)
-  month_year         String             @db.VarChar(7)
-  status             MockSessionStatus  @default(PENDING)
-  question_ids       Json               @default("[]")
-  answers            Json               @default("{}")
-  time_started_at    DateTime?          @db.Timestamptz(6)
-  time_submitted_at  DateTime?          @db.Timestamptz(6)
-  window_closes_at   DateTime           @db.Timestamptz(6)
+  id                 String               @id(map: "pk_mock_sessions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id         String               @db.Uuid
+  attempt_type       MockAttemptType      @default(STANDARD)
+  month_year         String               @db.VarChar(7)
+  status             MockSessionStatus    @default(PENDING)
+  question_ids       Json                 @default("[]")
+  answers            Json                 @default("{}")
+  time_started_at    DateTime?            @db.Timestamptz(6)
+  time_submitted_at  DateTime?            @db.Timestamptz(6)
+  window_closes_at   DateTime             @db.Timestamptz(6)
   scores             Json?
-  real_band_score    Decimal?           @db.Decimal(2, 1)
+  real_band_score    Decimal?             @db.Decimal(2, 1)
   momentum_awarded   Int?
-  created_at         DateTime           @default(now()) @db.Timestamptz(6)
-  institute_students institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_sessions_student")
-
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
   sections           MockSectionAttempt[]
+  institute_students institute_students   @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_sessions_student")
 
   @@unique([student_id, month_year, attempt_type], map: "uq_mock_sessions_student_month_type")
   @@index([status], map: "idx_mock_sessions_status")
@@ -895,9 +897,9 @@ model mocksessions {
 }
 
 model MockSectionAttempt {
-  id           String            @id(map: "pk_mock_section_attempts") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   session_id   String            @db.Uuid
-  section      String            @db.VarChar(20)
+  section      String            @db.VarChar
   status       MockSectionStatus @default(NOT_STARTED)
   started_at   DateTime?         @db.Timestamptz(6)
   expires_at   DateTime?         @db.Timestamptz(6)
@@ -905,11 +907,10 @@ model MockSectionAttempt {
   answers      Json              @default("{}")
   scores       Json?
   created_at   DateTime          @default(now()) @db.Timestamptz(6)
-
   session      mocksessions      @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_section_session")
 
-  @@unique([session_id, section], map: "uq_mock_section_session_section")
-  @@index([session_id], map: "idx_mock_section_session_id")
+  @@unique([session_id, section])
+  @@index([session_id])
   @@map("mock_section_attempts")
 }
 
