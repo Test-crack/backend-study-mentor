@@ -52,6 +52,18 @@ jobs:
             git reset --hard origin/${{ github.ref_name }}
             npm ci
             npm run build
+
+            echo "Checking for schema drift..."
+            DIFF_OUTPUT=$(npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script 2>&1)
+            echo "$DIFF_OUTPUT"
+
+            if echo "$DIFF_OUTPUT" | grep -qE "^(CREATE|ALTER|DROP)"; then
+              echo "❌ Schema drift detected — this code expects database changes that haven't been pushed yet."
+              echo "Run: npx prisma db push   (against this environment's DB), then redeploy."
+              exit 1
+            fi
+            echo "✅ No schema drift — database matches what this code expects."
+
             pm2 restart ${{ steps.vars.outputs.app_name }}
 
             echo "Waiting for ${{ steps.vars.outputs.app_name }} to report healthy on port ${{ steps.vars.outputs.port }}..."
