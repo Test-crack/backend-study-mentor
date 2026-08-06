@@ -233,7 +233,7 @@ export async function createInstitute(req: AuthRequest, res: Response) {
         // 1. Create the auth user + send the owner a role-specific branded invite email
         //    (Resend). Redirect targets FRONTEND_URL/auth/callback (set-password flow).
         const { userId: supabaseUserId, emailSent } = await sendInvite({
-            email: ownerEmail, name: ownerName, role: 'INSTITUTE_OWNER', institute: instituteName,
+            email: ownerEmail, name: ownerName, role: 'INSTITUTE_OWNER', institute: instituteName, origin: req.get('origin') ?? undefined,
         });
 
         // 2. Upsert User row in our DB

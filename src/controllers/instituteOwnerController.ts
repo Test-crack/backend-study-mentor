@@ -210,7 +210,7 @@ export async function addAdmin(req: AuthRequest, res: Response) {
         // Create the auth user + send a role-specific branded invite email (Resend).
         // Redirect targets FRONTEND_URL/auth/callback (set-password flow), not /login.
         const { userId: supabaseUserId, emailSent } = await sendInvite({
-            email: adminEmail, name: adminName, role: 'INSTITUTE_ADMIN',
+            email: adminEmail, name: adminName, role: 'INSTITUTE_ADMIN', origin: req.get('origin') ?? undefined,
         });
 
         if (!dbUser) {

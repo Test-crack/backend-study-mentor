@@ -42,14 +42,11 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 
-// Define allowed origins
-const allowedOrigins = [
-  'http://localhost:8080',              // Dev client
-  'https://testcrack.com',               // Production site
-  'https://dev.testcrack.com',           // Development site
-  'https://www.testcrack.com',           // Optional: www variant
-  'http://72.60.221.118:5000',   // Frontend served via VPS
-];
+// Allowed origins: configure via ALLOWED_ORIGINS env var (comma-separated).
+// The default covers localhost, both prod and dev subdomains, and the VPS IP.
+const ORIGINS_DEFAULT = 'http://localhost:8080,https://testcrack.com,https://www.testcrack.com,https://dev.testcrack.com,http://72.60.221.118:5000';
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? ORIGINS_DEFAULT)
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 // Dynamic CORS configuration
 const corsOptions: cors.CorsOptions = {

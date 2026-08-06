@@ -117,7 +117,7 @@ export async function addStudent(req: AuthRequest, res: Response) {
         // 2. Create the auth user + send a role-specific branded invite email (Resend).
         //    Redirect targets FRONTEND_URL/auth/callback (set-password flow), not /login.
         const { userId: supabaseUserId, emailSent } = await sendInvite({
-            email, name, role: 'STUDENT',
+            email, name, role: 'STUDENT', origin: req.get('origin') ?? undefined,
         });
 
         // 3 + 4. Atomic: create/link User row AND institute_students in one transaction.
@@ -321,7 +321,7 @@ export async function addTutor(req: AuthRequest, res: Response) {
 
         // 1. Create the auth user + send a role-specific branded invite email (Resend).
         const { userId: supabaseUserId, emailSent } = await sendInvite({
-            email, name, role: 'INSTRUCTOR',
+            email, name, role: 'INSTRUCTOR', origin: req.get('origin') ?? undefined,
         });
 
         // 2 + 3. Atomic: create User row AND institute_instructors in one transaction.
@@ -561,6 +561,7 @@ export async function resendStudentInvite(req: AuthRequest, res: Response) {
             name:      row.User.name ?? '',
             role:      'STUDENT',
             institute: row.institutes.name,
+            origin:    req.get('origin') ?? undefined,
         });
 
         return res.json({ data: { emailSent: result.emailSent } });

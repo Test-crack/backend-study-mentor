@@ -13,10 +13,22 @@ import { supabaseAdmin } from './supabase';
 import { sendMail } from './mailer';
 import { buildInviteEmail, InviteRole } from './inviteEmails';
 
-function inviteRedirect(): string {
+// Origins that are allowed to be used as invite redirect bases.
+// Must match the ALLOWED_ORIGINS list in index.ts.
+const ORIGINS_DEFAULT = 'https://testcrack.com,https://www.testcrack.com,https://dev.testcrack.com';
+const KNOWN_ORIGINS = new Set(
+  (process.env.ALLOWED_ORIGINS ?? ORIGINS_DEFAULT)
+    .split(',').map(s => s.trim()).filter(s => s.startsWith('https://'))
+);
+
+function inviteRedirect(requestOrigin?: string): string {
+    // Prefer the origin the invite was triggered from — ensures dev.testcrack.com
+    // invites redirect back to dev.testcrack.com rather than the production site.
+    if (requestOrigin && KNOWN_ORIGINS.has(requestOrigin)) {
+        return `${requestOrigin.replace(/\/+$/, '')}/auth/callback`;
+    }
     const base = process.env.FRONTEND_URL;
     if (!base) {
-        // Loud in logs; still functional locally. Production MUST set FRONTEND_URL.
         console.warn('[sendInvite] FRONTEND_URL not set — falling back to http://localhost:8080');
     }
     return `${(base || 'http://localhost:8080').replace(/\/+$/, '')}/auth/callback`;
@@ -33,9 +45,11 @@ export async function sendInvite(opts: {
     name: string;
     role: InviteRole;
     institute?: string;
+    /** Pass req.get('origin') so the invite link resolves back to the same site (prod vs dev). */
+    origin?: string;
 }): Promise<SendInviteResult> {
     const email      = opts.email.trim().toLowerCase();
-    const redirectTo = inviteRedirect();
+    const redirectTo = inviteRedirect(opts.origin);
     const data       = { full_name: opts.name, role: opts.role };
 
     let actionLink:  string | null = null;
