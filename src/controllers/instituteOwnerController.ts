@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 import { todayStartIST } from '../lib/timezone';
+import { paramStr } from '../utils/httpParams';
 import {
     computeBatchDashboard,
     toISTDateString,
@@ -209,7 +210,7 @@ export async function addAdmin(req: AuthRequest, res: Response) {
         // Create the auth user + send a role-specific branded invite email (Resend).
         // Redirect targets FRONTEND_URL/auth/callback (set-password flow), not /login.
         const { userId: supabaseUserId, emailSent } = await sendInvite({
-            email: adminEmail, name: adminName, role: 'INSTITUTE_ADMIN',
+            email: adminEmail, name: adminName, role: 'INSTITUTE_ADMIN', origin: req.get('origin') ?? undefined,
         });
 
         if (!dbUser) {
@@ -255,7 +256,7 @@ export async function addAdmin(req: AuthRequest, res: Response) {
 // ─── DELETE /api/institute-owner/admins/:userId ───────────────────────────────
 
 export async function removeAdmin(req: AuthRequest, res: Response) {
-    const { userId } = req.params;
+    const userId = paramStr(req.params.userId);
 
     try {
         const appUserId = (req as any).appUserId as string;
@@ -290,7 +291,7 @@ export async function removeAdmin(req: AuthRequest, res: Response) {
 // ─── GET /api/institute-owner/batches/:batchId/analytics ──────────────────────
 
 export async function getBatchAnalytics(req: AuthRequest, res: Response) {
-    const { batchId } = req.params;
+    const batchId = paramStr(req.params.batchId);
 
     try {
         const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(batchId);
@@ -898,7 +899,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
 export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
-        const { batchId } = req.params;
+        const batchId = paramStr(req.params.batchId);
 
         const instituteId = await getCallerInstitute(appUserId);
         if (!instituteId) {
@@ -1128,7 +1129,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
 export async function getOwnerStudentFullProgress(req: AuthRequest, res: Response) {
     try {
         const appUserId  = (req as any).appUserId as string;
-        const { studentId } = req.params; // studentId = User.id
+        const studentId = paramStr(req.params.studentId); // studentId = User.id
 
         const instituteId = await getCallerInstitute(appUserId);
         if (!instituteId) {

@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { applySmoothing } from '../lib/iaProcessor';
 import { BAND_MIN, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
+import { paramStr } from '../utils/httpParams';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -12,16 +13,22 @@ const MOCK_EARNED_COST      = 1500;
 const MOCK_EARNED_MIN_IAS   = 4;
 const MOCK_EARNED_MIN_DAYS  = 14;
 const MOCK_BAND_IMPROVEMENT = 0.5;
-const MOCK_WINDOW_MS        = 72 * 60 * 60 * 1000;  // 72h to submit (session window)
-const MOCK_TOTAL_MS         = 3  * 60 * 60 * 1000;  // 3-hour global test timer
+const MOCK_WINDOW_MS        = 24 * 60 * 60 * 1000;  // 24h reattempt window
 const IST_OFFSET_MS         = 5.5 * 60 * 60 * 1000;
 
+// Per-section durations in ms
+const SECTION_DURATIONS_MS: Record<string, number> = {
+    LISTENING: 30 * 60 * 1000,
+    READING:   60 * 60 * 1000,
+    WRITING:   60 * 60 * 1000,
+    SPEAKING:  15 * 60 * 1000,
+};
+
 // Question counts per section
-const MOCK_Q_LISTENING = 20;   // 20 MCQ from 1 audio (4 sub-skill groups × 5)
-const MOCK_Q_READING   = 20;   // 20 MCQ from 1 passage (4 sub-skill groups × 5)
-const MOCK_Q_WS_MCQ    = 4;    // MCQ per sub-skill for Writing/Speaking
-const MOCK_Q_WS_PROMPT = 1;    // 1 AI prompt per sub-skill for Writing/Speaking
-// → Writing/Speaking total = 4 sub-skills × (4 MCQ + 1 prompt) = 20 questions
+const MOCK_Q_LISTENING = 20;
+const MOCK_Q_READING   = 20;
+const MOCK_Q_WS_MCQ    = 4;
+const MOCK_Q_WS_PROMPT = 1;
 
 const MOCK_SKILL_ORDER = ['LISTENING', 'READING', 'WRITING', 'SPEAKING'] as const;
 
@@ -66,20 +73,10 @@ function sanitize(qs: any[]): any[] {
     return qs.map(({ correct_answer: _ca, explanation: _ex, ...safe }) => safe);
 }
 
-// Internal 1–10 → platform band [4,9] (internal 1 anchors to the 4.0 floor).
-// Delegates to the canonical transform so IA and Mock can never diverge.
 function scaleToIELTS(score1to10: number): number {
     return internalToBand(score1to10);
 }
 
-/**
- * Fetch questions for one mock skill section.
- *
- * LISTENING : 20 MCQ from 1 randomly-chosen audio group
- * READING   : 20 MCQ from 1 randomly-chosen passage group
- * WRITING   : 4 sub-skills × (4 MCQ + 1 WRITING_PROMPT)  = 20 questions
- * SPEAKING  : 4 sub-skills × (4 MCQ + 1 SPEAKING_PROMPT) = 20 questions
- */
 async function fetchMockSectionQuestions(skill: string): Promise<{
     section_type: string;
     audio_url:    string | null;
@@ -89,7 +86,6 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
 }> {
     const base = { skill, is_active: true } as any;
 
-    // ── LISTENING ─────────────────────────────────────────────────────────────
     if (skill === 'LISTENING') {
         const pool = await prisma.mockquestions.findMany({
             where:  { ...base, audio_url: { not: null } },
@@ -102,7 +98,6 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
         return { section_type: 'AUDIO', audio_url: chosen, passage_text: null, passage_id: null, questions: qs };
     }
 
-    // ── READING ───────────────────────────────────────────────────────────────
     if (skill === 'READING') {
         const pool = await prisma.mockquestions.findMany({
             where:  { ...base, passage_id: { not: null } },
@@ -120,8 +115,6 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
         };
     }
 
-    // ── WRITING / SPEAKING ────────────────────────────────────────────────────
-    // 4 sub-skills × 4 MCQ + 4 sub-skills × 1 prompt = 20 questions
     const subSkills   = skill === 'WRITING' ? WRITING_SUB_SKILLS : SPEAKING_SUB_SKILLS;
     const promptType  = skill === 'WRITING' ? 'WRITING_PROMPT' : 'SPEAKING_PROMPT';
 
@@ -150,7 +143,7 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
     return { section_type: 'MCQ_MIX', audio_url: null, passage_text: null, passage_id: null, questions };
 }
 
-// ─── Eligibility helper ───────────────────────────────────────────────────────
+// ─── Eligibility ──────────────────────────────────────────────────────────────
 
 interface EligibilityResult {
     isEligible:      boolean;
@@ -228,6 +221,28 @@ async function checkEligibility(studentId: string): Promise<EligibilityResult> {
     return { isEligible: reasons.length === 0, reasons, totalIAs, skillsCovered, bandImproved, bestImprovement, improvedSkill, diagnosticBands, currentBands };
 }
 
+// ─── Section helpers ──────────────────────────────────────────────────────────
+
+/**
+ * For a session, mark any IN_PROGRESS section rows whose expires_at has passed as EXPIRED.
+ * Returns the updated set of section rows.
+ */
+async function lazySweepSectionExpiry(sessionId: string) {
+    const now = new Date();
+    await prisma.mockSectionAttempt.updateMany({
+        where: { session_id: sessionId, status: 'IN_PROGRESS' as any, expires_at: { lt: now } },
+        data:  { status: 'EXPIRED' as any }
+    });
+    return prisma.mockSectionAttempt.findMany({
+        where:   { session_id: sessionId },
+        orderBy: { created_at: 'asc' }
+    });
+}
+
+function sectionIsTerminal(status: string) {
+    return status === 'SUBMITTED' || status === 'EXPIRED';
+}
+
 // ─── GET /api/mock/status ─────────────────────────────────────────────────────
 
 export async function getMockStatus(req: AuthRequest, res: Response) {
@@ -238,37 +253,49 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        // ── Expiry sweep: sessions whose 72-hour window has closed ──────────────
-        // M-4: if the student produced real answers, AUTO-GRADE them (capture the work)
-        // instead of discarding — mirrors the IA auto-grade-on-miss behaviour. A session
-        // with no real answers is simply marked ABANDONED (slot consumed, no penalty).
-        // Runs on every status call so the dashboard always reflects current reality.
+        // ── Expiry sweep: sessions whose 24h window has closed ─────────────────
         const expiredSessions = await prisma.mocksessions.findMany({
             where: { student_id: student.id, window_closes_at: { lt: new Date() }, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
-            select: { id: true, answers: true }
+            select: { id: true, answers: true, question_ids: true }
         });
-        const abandonedCount = expiredSessions.length; // sessions whose window closed this call
         for (const exp of expiredSessions) {
-            const ans = (exp.answers ?? {}) as Record<string, unknown>;
-            const hasRealAnswers = Object.entries(ans).some(([k, v]) => {
-                if (k === '__meta') return false;
+            // Mark any lingering IN_PROGRESS sections as EXPIRED
+            await prisma.mockSectionAttempt.updateMany({
+                where: { session_id: exp.id, status: { in: ['IN_PROGRESS', 'NOT_STARTED'] as any } },
+                data:  { status: 'EXPIRED' as any }
+            });
+
+            // Aggregate answers from section rows; fall back to session.answers for legacy rows
+            const sectionRows = await prisma.mockSectionAttempt.findMany({ where: { session_id: exp.id } });
+            let aggregatedAnswers: Record<string, string>;
+            if (sectionRows.length > 0) {
+                aggregatedAnswers = {};
+                for (const row of sectionRows) {
+                    Object.assign(aggregatedAnswers, row.answers as Record<string, string>);
+                }
+            } else {
+                const raw = (exp.answers ?? {}) as Record<string, unknown>;
+                aggregatedAnswers = Object.fromEntries(
+                    Object.entries(raw).filter(([k, v]) => k !== '__meta' && String(v ?? '').trim() !== '')
+                ) as Record<string, string>;
+            }
+
+            const hasRealAnswers = Object.values(aggregatedAnswers).some(v => {
                 const t = String(v ?? '').trim();
                 return t !== '' && t !== '[no transcript]';
             });
+
             if (hasRealAnswers) {
                 try {
                     const full = await prisma.mocksessions.findUnique({ where: { id: exp.id } });
                     if (full && (full.status === 'PENDING' || full.status === 'IN_PROGRESS')) {
-                        await processMockSession(full, student);
+                        await processMockSession(full, student, aggregatedAnswers);
                     }
                 } catch (e: any) {
-                    if (e instanceof MockAlreadyCompletedError) { /* concurrent submit graded it */ }
+                    if (e instanceof MockAlreadyCompletedError) { /* concurrent */ }
                     else if (e instanceof AIGradingError) {
-                        // Grader down — leave IN_PROGRESS so a later sweep can grade it. It will
-                        // be re-attempted; the 72h window is already past but auto-grade ignores that.
-                        console.warn(`[Mock] auto-grade unavailable for ${exp.id}; will retry next sweep.`);
+                        console.warn(`[Mock] auto-grade unavailable for ${exp.id}; will retry.`);
                     } else {
-                        // Unexpected failure — fall back to ABANDONED so it can't loop forever.
                         console.error(`[Mock] auto-grade failed for ${exp.id}:`, e);
                         await prisma.mocksessions.updateMany({
                             where: { id: exp.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
@@ -277,7 +304,6 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
                     }
                 }
             } else {
-                // No real work → ABANDONED (status guard avoids a submit-race clobber).
                 await prisma.mocksessions.updateMany({
                     where: { id: exp.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
                     data:  { status: 'ABANDONED' as any }
@@ -295,17 +321,11 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
 
         const standardSession = thisMonthSessions.find(s => s.attempt_type === 'STANDARD');
         const earnedSession   = thisMonthSessions.find(s => s.attempt_type === 'EARNED');
-        // MK-B-07: query globally (no month_year filter) so a PENDING/IN_PROGRESS session
-        // from last month whose 72-hour window is still open isn't invisible to the gate.
-        // The abandoned sweep above has already expired stale sessions, so any remaining
-        // PENDING/IN_PROGRESS is genuinely still active regardless of which month it's from.
         const activeSession   = await prisma.mocksessions.findFirst({
             where:  { student_id: student.id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
             select: { id: true, status: true }
         });
 
-        // ABANDONED counts as "used" — window expired, slot is forfeited for this attempt type.
-        // Only PENDING is treated as "not yet started" (slot reserved but no test in progress).
         const standardUsed = !!standardSession && standardSession.status !== 'PENDING';
         const earnedUsed   = !!earnedSession   && earnedSession.status   !== 'PENDING';
 
@@ -324,7 +344,7 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
 
         return res.json({
             success:                   true,
-            abandoned_count:           abandonedCount,
+            abandoned_count:           expiredSessions.length,
             is_eligible:               eligibility.isEligible,
             eligibility_reasons:       eligibility.reasons,
             can_start_mock:            eligibility.isEligible && !standardUsed && !activeSession,
@@ -354,7 +374,8 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/mock/questions ──────────────────────────────────────────────────
+// ─── GET /api/mock/questions — create or resume session, return overview ──────
+// Returns section statuses only; questions are fetched per-section via startMockSection.
 
 export async function getMockQuestions(req: AuthRequest, res: Response) {
     try {
@@ -367,54 +388,33 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         const attemptType = (req.query.attempt_type as string ?? 'STANDARD').toUpperCase() as 'STANDARD' | 'EARNED';
         const monthYear   = currentMonthYear();
 
-        // ── 1. Resume any active session (any type) ───────────────────────────
+        // ── 1. Resume any active session ──────────────────────────────────────
         const activeSession = await prisma.mocksessions.findFirst({
             where: { student_id: student.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } }
         });
 
         if (activeSession) {
-            const savedConfig = activeSession.question_ids as Array<{ skill: string; ids: string[] }>;
-            const allIds      = savedConfig.flatMap(s => s.ids);
-            const questionRows = await prisma.mockquestions.findMany({
-                where:  { id: { in: allIds } },
-                select: { id: true, skill: true, sub_skill: true, question_type: true, prompt_text: true, options: true, audio_url: true, passage_id: true, passage_text: true }
-            });
-            const sections = savedConfig.map(cfg => {
-                const qs         = cfg.ids.map(id => questionRows.find(q => q.id === id)).filter(Boolean)
-                    .map(q => ({ id: q!.id, sub_skill: q!.sub_skill, question_type: q!.question_type, prompt_text: q!.prompt_text, options: q!.options }));
-                const audioUrl   = questionRows.find(q => cfg.ids.includes(q.id) && q.audio_url)?.audio_url ?? null;
-                const passageId  = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_id)?.passage_id ?? null;
-                const passageTxt = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_text)?.passage_text ?? null;
-                return { skill: cfg.skill, section_type: audioUrl ? 'AUDIO' : passageId ? 'PASSAGE' : 'MCQ_MIX', audio_url: audioUrl, passage_text: passageTxt, passage_id: passageId, questions: qs };
-            });
-
-            const allAnswers   = (activeSession.answers as Record<string, any>) ?? {};
-            const meta         = (allAnswers.__meta ?? {}) as { current_section?: number };
-            const resumeIdx    = meta.current_section ?? 0;
-
-            // Global timer: elapsed since test started
-            const elapsed       = Date.now() - (activeSession.time_started_at?.getTime() ?? Date.now());
-            const timeRemaining = Math.max(0, MOCK_TOTAL_MS - elapsed);
-
+            // Lazy expiry sweep for sections
+            const sections = await lazySweepSectionExpiry(activeSession.id);
             if (activeSession.status === 'PENDING') {
-                allAnswers.__meta = { current_section: 0 };
                 await prisma.mocksessions.update({
                     where: { id: activeSession.id },
-                    data:  { status: 'IN_PROGRESS', time_started_at: new Date(), answers: allAnswers as any }
+                    data:  { status: 'IN_PROGRESS' as any, time_started_at: new Date() }
                 });
             }
-
             return res.json({
-                success:             true,
-                session_id:          activeSession.id,
-                resume:              true,
-                attempt_type:        activeSession.attempt_type,
-                current_section_idx: resumeIdx,
-                sections,
-                saved_answers:       activeSession.answers,
-                window_closes_at:    activeSession.window_closes_at.toISOString(),
-                time_remaining_ms:   timeRemaining,
-                total_time_ms:       MOCK_TOTAL_MS,
+                success:          true,
+                session_id:       activeSession.id,
+                resume:           true,
+                attempt_type:     activeSession.attempt_type,
+                window_closes_at: activeSession.window_closes_at.toISOString(),
+                sections:         sections.map(s => ({
+                    section:      s.section,
+                    status:       s.status,
+                    started_at:   s.started_at?.toISOString() ?? null,
+                    expires_at:   s.expires_at?.toISOString() ?? null,
+                    submitted_at: s.submitted_at?.toISOString() ?? null,
+                }))
             });
         }
 
@@ -423,31 +423,26 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         if (!eligibility.isEligible) return res.status(403).json({ success: false, error: 'Not eligible for mock test.', reasons: eligibility.reasons });
 
         // ── 3. Check monthly slot ─────────────────────────────────────────────
-        // Must handle every terminal status here. Previously only COMPLETED was checked,
-        // so an ABANDONED slot fell through to prisma.create() → P2002 unique constraint
-        // crash, permanently locking the student out for the month (MK-B-01).
         const existingSlot = await prisma.mocksessions.findFirst({
             where: { student_id: student.id, month_year: monthYear, attempt_type: attemptType as any }
         });
         if (existingSlot) {
-            // All non-null statuses consume the monthly slot — no retries.
-            // ABANDONED = the 72-hour window expired without submission; slot is forfeited.
-            // COMPLETED = submitted normally.  IN_PROGRESS/PENDING = resume path above handles.
             const msg = existingSlot.status === 'ABANDONED'
-                ? `Your ${attemptType.toLowerCase()} mock session expired without submission. This month's slot is consumed — a new slot opens on the 1st.`
+                ? `Your ${attemptType.toLowerCase()} mock session expired. This month's slot is consumed.`
                 : `${attemptType} mock already used this month.`;
             return res.status(409).json({ success: false, error: msg, slot_status: existingSlot.status });
         }
 
-        // ── 4. Earned: validate + deduct momentum atomically ──────────────────
+        // ── 4. Earned: pre-validate (soft checks; balance enforced inside transaction) ──
         if (attemptType === 'EARNED') {
             const days = Math.floor((Date.now() - student.created_at.getTime()) / 86_400_000);
-            if (student.momentum_score < MOCK_EARNED_COST)  return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_COST} momentum.` });
             if (eligibility.totalIAs < MOCK_EARNED_MIN_IAS) return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_MIN_IAS} IAs.` });
             if (days < MOCK_EARNED_MIN_DAYS)                 return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_MIN_DAYS} days on platform.` });
+            // Balance check is re-validated atomically inside the transaction (prevents double-spend)
+            if (student.momentum_score < MOCK_EARNED_COST)  return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_COST} momentum.` });
         }
 
-        // ── 5. Fetch all 4 sections in parallel ───────────────────────────────
+        // ── 5. Pre-fetch all 4 sections' question pools (validate before creating session) ──
         const [rawL, rawR, rawW, rawS] = await Promise.all([
             fetchMockSectionQuestions('LISTENING'),
             fetchMockSectionQuestions('READING'),
@@ -455,17 +450,12 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
             fetchMockSectionQuestions('SPEAKING'),
         ]);
         const rawSections = [rawL, rawR, rawW, rawS];
-
-        // Validate every section is populated BEFORE creating the session. An empty or
-        // underfilled section would grade as band 0, get blended into the student's
-        // matrix, blank-screen the client, and consume the monthly slot — for what is
-        // really a content-availability problem. Fail cleanly without consuming the slot.
         const emptySections = MOCK_SKILL_ORDER.filter((_, i) => (rawSections[i]?.questions?.length ?? 0) === 0);
         if (emptySections.length > 0) {
             console.error(`[MockQuestions] Missing question pool for: ${emptySections.join(', ')}`);
             return res.status(503).json({
                 success: false,
-                error:   'The mock test is temporarily unavailable (question set incomplete). Please try again later — no attempt has been used.',
+                error:   'The mock test is temporarily unavailable (question set incomplete). Please try again later.',
             });
         }
 
@@ -476,59 +466,196 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
 
         const now            = Date.now();
         const windowClosesAt = new Date(now + MOCK_WINDOW_MS);
-        const initialAnswers = { __meta: { current_section: 0 } };
 
-        // ── 6. Create session ─────────────────────────────────────────────────
+        // ── 6. Create session + 4 NOT_STARTED section rows ───────────────────
         const session = await prisma.$transaction(async (tx) => {
             if (attemptType === 'EARNED') {
+                // Re-read balance inside transaction to prevent double-spend on concurrent clicks
+                const freshStudent = await tx.institute_students.findUnique({ where: { id: student.id }, select: { momentum_score: true } });
+                if (!freshStudent || freshStudent.momentum_score < MOCK_EARNED_COST) {
+                    throw Object.assign(new Error('Insufficient momentum'), { code: 'INSUFFICIENT_MOMENTUM' });
+                }
                 await tx.institute_students.update({ where: { id: student.id }, data: { momentum_score: { decrement: MOCK_EARNED_COST } } });
             }
-            return tx.mocksessions.create({
+            const newSession = await tx.mocksessions.create({
                 data: {
                     student_id:       student.id,
                     attempt_type:     attemptType as any,
                     month_year:       monthYear,
                     status:           'IN_PROGRESS' as any,
                     question_ids:     questionIdsConfig as any,
-                    answers:          initialAnswers as any,
+                    answers:          {} as any,
                     time_started_at:  new Date(now),
                     window_closes_at: windowClosesAt,
                 }
             });
+            await tx.mockSectionAttempt.createMany({
+                data: MOCK_SKILL_ORDER.map(skill => ({
+                    session_id: newSession.id,
+                    section:    skill,
+                    status:     'NOT_STARTED' as any,
+                    answers:    {} as any,
+                }))
+            });
+            return newSession;
         });
 
-        const sections = MOCK_SKILL_ORDER.map((skill, i) => ({
-            skill,
-            ...rawSections[i],
-            questions: sanitize(rawSections[i].questions),
-        }));
-
         return res.json({
-            success:             true,
-            session_id:          session.id,
-            resume:              false,
-            attempt_type:        attemptType,
-            current_section_idx: 0,
-            sections,
-            saved_answers:       {},
-            window_closes_at:    windowClosesAt.toISOString(),
-            time_remaining_ms:   MOCK_TOTAL_MS,
-            total_time_ms:       MOCK_TOTAL_MS,
+            success:          true,
+            session_id:       session.id,
+            resume:           false,
+            attempt_type:     attemptType,
+            window_closes_at: windowClosesAt.toISOString(),
+            sections: MOCK_SKILL_ORDER.map(skill => ({
+                section:      skill,
+                status:       'NOT_STARTED',
+                started_at:   null,
+                expires_at:   null,
+                submitted_at: null,
+            }))
         });
 
     } catch (err: any) {
-        // Concurrent start of the same slot: the unique (student, month, attempt_type)
-        // constraint makes exactly one create win. Return a clean 409 (slot already
-        // taken) instead of a raw 500. Any EARNED momentum deduct rolled back with the tx.
         if (err?.code === 'P2002') {
             return res.status(409).json({ success: false, error: 'A mock for this slot already exists this month.' });
+        }
+        if (err?.code === 'INSUFFICIENT_MOMENTUM') {
+            return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_COST} momentum.` });
         }
         console.error('[MockQuestions] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }
 
-// ─── POST /api/mock/answer ────────────────────────────────────────────────────
+// ─── GET /api/mock/session/:sessionId — lazy expiry + section state ───────────
+
+export async function getSessionState(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const sessionId = paramStr(req.params.sessionId);
+        const session = await prisma.mocksessions.findUnique({ where: { id: sessionId } });
+        if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
+
+        const sections = await lazySweepSectionExpiry(sessionId);
+
+        return res.json({
+            success:          true,
+            session_id:       session.id,
+            status:           session.status,
+            attempt_type:     session.attempt_type,
+            window_closes_at: session.window_closes_at.toISOString(),
+            sections: sections.map(s => ({
+                section:      s.section,
+                status:       s.status,
+                started_at:   s.started_at?.toISOString() ?? null,
+                expires_at:   s.expires_at?.toISOString() ?? null,
+                submitted_at: s.submitted_at?.toISOString() ?? null,
+            }))
+        });
+    } catch (err) {
+        console.error('[GetSessionState] error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// ─── POST /api/mock/sections/start — start a section, return its questions ────
+
+export async function startMockSection(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { session_id, section } = req.body;
+        if (!session_id || !section) return res.status(400).json({ success: false, error: 'session_id and section are required.' });
+
+        const sectionUpper = String(section).toUpperCase();
+        if (!MOCK_SKILL_ORDER.includes(sectionUpper as any)) return res.status(400).json({ success: false, error: 'Invalid section.' });
+
+        const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
+        if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
+        if (session.status === 'COMPLETED' || session.status === 'ABANDONED') return res.status(400).json({ success: false, error: 'Session already finalised.' });
+        if (new Date() > session.window_closes_at) return res.status(400).json({ success: false, error: 'Mock window has closed.' });
+
+        // Lazy expiry check for this specific section
+        const sectionRow = await prisma.mockSectionAttempt.findUnique({
+            where: { session_id_section: { session_id, section: sectionUpper } }
+        });
+        if (!sectionRow) return res.status(404).json({ success: false, error: 'Section row not found.' });
+
+        // Auto-expire if timer ran out
+        if (sectionRow.status === 'IN_PROGRESS' && sectionRow.expires_at && new Date() > sectionRow.expires_at) {
+            await prisma.mockSectionAttempt.update({
+                where: { id: sectionRow.id },
+                data:  { status: 'EXPIRED' as any }
+            });
+            return res.status(400).json({ success: false, error: 'Section timer has expired.', status: 'EXPIRED' });
+        }
+        if (sectionRow.status === 'SUBMITTED') return res.status(400).json({ success: false, error: 'Section already submitted.', status: 'SUBMITTED' });
+        if (sectionRow.status === 'EXPIRED')   return res.status(400).json({ success: false, error: 'Section timer has expired.', status: 'EXPIRED' });
+
+        const isResume = sectionRow.status === 'IN_PROGRESS';
+        const durationMs = SECTION_DURATIONS_MS[sectionUpper] ?? 30 * 60 * 1000;
+
+        let startedAt   = sectionRow.started_at;
+        let expiresAt   = sectionRow.expires_at;
+
+        if (!isResume) {
+            // First start: stamp the timer
+            startedAt = new Date();
+            expiresAt = new Date(startedAt.getTime() + durationMs);
+            await prisma.mockSectionAttempt.update({
+                where: { id: sectionRow.id },
+                data:  { status: 'IN_PROGRESS' as any, started_at: startedAt, expires_at: expiresAt }
+            });
+        }
+
+        // Load questions from the session's saved config
+        const questionIdsConfig = session.question_ids as Array<{ skill: string; ids: string[] }>;
+        const cfg = questionIdsConfig.find(c => c.skill === sectionUpper);
+        if (!cfg) return res.status(500).json({ success: false, error: 'Question config missing.' });
+
+        const questionRows = await prisma.mockquestions.findMany({
+            where:  { id: { in: cfg.ids } },
+            select: { id: true, skill: true, sub_skill: true, question_type: true, prompt_text: true, options: true, audio_url: true, passage_id: true, passage_text: true }
+        });
+        const questions   = sanitize(cfg.ids.map(id => questionRows.find(q => q.id === id)).filter(Boolean));
+        const audioUrl    = questionRows.find(q => cfg.ids.includes(q.id) && q.audio_url)?.audio_url ?? null;
+        const passageId   = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_id)?.passage_id ?? null;
+        const passageTxt  = questionRows.find(q => cfg.ids.includes(q.id) && q.passage_text)?.passage_text ?? null;
+        const sectionType = audioUrl ? 'AUDIO' : passageId ? 'PASSAGE' : 'MCQ_MIX';
+
+        const savedAnswers = (sectionRow.answers ?? {}) as Record<string, string>;
+
+        return res.json({
+            success:       true,
+            section:       sectionUpper,
+            status:        'IN_PROGRESS',
+            resumed:       isResume,
+            started_at:    startedAt!.toISOString(),
+            expires_at:    expiresAt!.toISOString(),
+            duration_ms:   durationMs,
+            section_type:  sectionType,
+            audio_url:     audioUrl,
+            passage_text:  passageTxt,
+            passage_id:    passageId,
+            questions,
+            saved_answers: savedAnswers,
+        });
+    } catch (err) {
+        console.error('[StartMockSection] error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// ─── POST /api/mock/answer — save answer to section row ──────────────────────
 
 export async function saveMockAnswer(req: AuthRequest, res: Response) {
     try {
@@ -538,55 +665,46 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
         const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const { session_id, question_id, answer, section_advance } = req.body;
-        if (!session_id) return res.status(400).json({ success: false, error: 'session_id is required.' });
+        const { session_id, section, question_id, answer } = req.body;
+        if (!session_id || !section) return res.status(400).json({ success: false, error: 'session_id and section are required.' });
+
+        const sectionUpper = String(section).toUpperCase();
 
         const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
         if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.status === 'COMPLETED' || session.status === 'ABANDONED') return res.status(400).json({ success: false, error: 'Session already finalised.' });
         if (new Date() > session.window_closes_at) return res.status(400).json({ success: false, error: 'Mock window expired.' });
 
-        const sectionConfig = (session.question_ids as Array<{ ids: string[] }>) ?? [];
-
-        if (section_advance !== undefined) {
-            // Reject NaN / out-of-range indices — an unvalidated Number(section_advance)
-            // could write current_section: NaN, which breaks resume (sections[NaN]).
-            const nextSection = Number(section_advance);
-            if (!Number.isInteger(nextSection) || nextSection < 0 || nextSection >= Math.max(sectionConfig.length, 1)) {
-                return res.status(400).json({ success: false, error: 'Invalid section index.' });
-            }
-            // Atomic JSONB merge of just the __meta key — read-modify-write of the whole
-            // answers object would let a concurrent answer save clobber this (and vice versa).
-            const nav = JSON.stringify({ current_section: nextSection });
-            await prisma.$executeRaw`
-                UPDATE mocksessions
-                SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object('__meta', ${nav}::jsonb)
-                WHERE id = ${session_id}::uuid
-            `;
-            return res.json({ success: true, saved: true });
-        }
-
         if (!question_id || answer === undefined) return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
-        if (typeof answer !== 'string' && typeof answer !== 'number') {
-            return res.status(400).json({ success: false, error: 'answer must be a string or number.' });
+        if (typeof answer !== 'string' && typeof answer !== 'number') return res.status(400).json({ success: false, error: 'answer must be a string or number.' });
+
+        // Validate question belongs to this session+section
+        const sectionConfig = (session.question_ids as Array<{ skill: string; ids: string[] }>)
+            .find(c => c.skill === sectionUpper);
+        if (!sectionConfig || !sectionConfig.ids.includes(String(question_id))) {
+            return res.status(400).json({ success: false, error: 'Unknown question for this session/section.' });
         }
-        // Reject question ids that aren't part of this session — stops unbounded JSON growth.
-        const validIds = new Set(sectionConfig.flatMap(c => c.ids));
-        if (!validIds.has(String(question_id))) {
-            return res.status(400).json({ success: false, error: 'Unknown question for this session.' });
-        }
-        // Atomic single-key JSONB merge — two overlapping saves each preserve the other's
-        // answer instead of last-writer-wins clobbering the whole object.
-        await prisma.$executeRaw`
-            UPDATE mocksessions
-            SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object(${String(question_id)}::text, ${String(answer)}::text)
-            WHERE id = ${session_id}::uuid
-        `;
-        // Flip PENDING → IN_PROGRESS once (touches status only; never the answers blob).
-        await prisma.mocksessions.updateMany({
-            where: { id: session_id, status: 'PENDING' as any },
-            data:  { status: 'IN_PROGRESS' as any },
+
+        // Guard: reject writes to locked or expired sections
+        const sectionRow = await prisma.mockSectionAttempt.findUnique({
+            where: { session_id_section: { session_id, section: sectionUpper } }
         });
+        if (!sectionRow) return res.status(404).json({ success: false, error: 'Section row not found.' });
+        if (String(sectionRow.status) === 'SUBMITTED' || String(sectionRow.status) === 'EXPIRED') {
+            return res.status(400).json({ success: false, error: 'Section is already locked.' });
+        }
+        // Inline timer expiry check (lazy sweep may not have run)
+        if (String(sectionRow.status) === 'IN_PROGRESS' && sectionRow.expires_at && new Date() > sectionRow.expires_at) {
+            await prisma.mockSectionAttempt.update({ where: { id: sectionRow.id }, data: { status: 'EXPIRED' as any } });
+            return res.status(400).json({ success: false, error: 'Section timer has expired.' });
+        }
+
+        // Atomic JSONB merge on section row
+        await prisma.$executeRaw`
+            UPDATE mock_section_attempts
+            SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object(${String(question_id)}::text, ${String(answer)}::text)
+            WHERE session_id = ${session_id}::uuid AND section = ${sectionUpper}
+        `;
         return res.json({ success: true, saved: true });
     } catch (err) {
         console.error('[MockAnswer] error:', err);
@@ -594,24 +712,101 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/mock/submit ────────────────────────────────────────────────────
+// ─── POST /api/mock/submit — submit one section; grade when all sections done ──
+
+export async function submitMock(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
+
+        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        const { session_id, section } = req.body;
+        if (!session_id || !section) return res.status(400).json({ success: false, error: 'session_id and section are required.' });
+
+        const sectionUpper = String(section).toUpperCase();
+
+        const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
+        if (!session)                            return res.status(404).json({ success: false, error: 'Session not found.' });
+        if (session.student_id !== student.id)   return res.status(403).json({ success: false, error: 'Forbidden.' });
+        if (session.status === 'COMPLETED')      return res.json({ success: true, already_done: true, real_band_score: session.real_band_score != null ? Number(session.real_band_score) : null, scores: session.scores, momentum_awarded: session.momentum_awarded });
+        if (session.status === 'ABANDONED')      return res.status(400).json({ success: false, error: 'Session window has expired.' });
+
+        const sectionRow = await prisma.mockSectionAttempt.findUnique({
+            where: { session_id_section: { session_id, section: sectionUpper } }
+        });
+        if (!sectionRow) return res.status(404).json({ success: false, error: 'Section not found.' });
+        if (String(sectionRow.status) === 'NOT_STARTED') return res.status(400).json({ success: false, error: 'Section has not been started yet.' });
+        if (sectionRow.status === 'SUBMITTED') {
+            // Already submitted — idempotent, check if all done
+        } else {
+            // Mark section as SUBMITTED (allow slight grace past expires_at)
+            await prisma.mockSectionAttempt.update({
+                where: { id: sectionRow.id },
+                data:  { status: 'SUBMITTED' as any, submitted_at: new Date() }
+            });
+        }
+
+        // Check if all sections are terminal (SUBMITTED or EXPIRED)
+        const allSections = await prisma.mockSectionAttempt.findMany({ where: { session_id } });
+        const allTerminal = allSections.every(s => sectionIsTerminal(String(s.status)));
+
+        if (!allTerminal) {
+            // More sections remain — return dashboard update
+            return res.json({
+                success:              true,
+                section_submitted:    true,
+                all_sections_complete: false,
+                sections: allSections.map(s => ({
+                    section:      s.section,
+                    status:       s.status,
+                    started_at:   s.started_at?.toISOString() ?? null,
+                    expires_at:   s.expires_at?.toISOString() ?? null,
+                    submitted_at: s.submitted_at?.toISOString() ?? null,
+                }))
+            });
+        }
+
+        // All sections done → grade the whole test
+        const aggregatedAnswers: Record<string, string> = {};
+        for (const row of allSections) {
+            Object.assign(aggregatedAnswers, row.answers as Record<string, string>);
+        }
+
+        const result = await processMockSession(session, student, aggregatedAnswers);
+        return res.json({ success: true, all_sections_complete: true, ...result });
+    } catch (err) {
+        if (err instanceof MockAlreadyCompletedError) {
+            const s = await prisma.mocksessions.findUnique({ where: { id: req.body?.session_id } });
+            return res.json({ success: true, already_done: true, all_sections_complete: true, real_band_score: s?.real_band_score != null ? Number(s.real_band_score) : null, scores: s?.scores ?? null, momentum_awarded: s?.momentum_awarded ?? 0 });
+        }
+        if (err instanceof AIGradingError) {
+            return res.status(502).json({ success: false, can_retry: true, error: 'AI grading is temporarily unavailable. Your answers are saved — please submit again in a moment.' });
+        }
+        console.error('[MockSubmit] error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// ─── Scoring engine (shared by submitMock and expiry auto-grade sweep) ────────
 
 type MockSubSkillScore = {
     sub_skill:  string;
-    band:       number;  // 4-9 IELTS, combined MCQ+AI
+    band:       number;
     correct:    number;
     total_mcq:  number;
-    ai_band:    number | null;  // 4-9 IELTS equivalent of AI score
+    ai_band:    number | null;
     ai_feedback?: { rationale: string; key_observations: string[] };
 };
 
 type MockSkillScore = {
     skill:             string;
-    band:              number;  // overall skill band (avg of sub-skills for W/S, direct MCQ for L/R)
+    band:              number;
     correct:           number;
     total:             number;
     ai_graded:         boolean;
-    sub_skill_scores?: MockSubSkillScore[];  // only W/S
+    sub_skill_scores?: MockSubSkillScore[];
 };
 
 type MockSkillScoreResponse = MockSkillScore & {
@@ -623,36 +818,36 @@ type MockSkillScoreResponse = MockSkillScore & {
 
 class MockAlreadyCompletedError extends Error {}
 
-/**
- * Grades a mock session's saved answers, updates the competency matrix + real band,
- * awards momentum, and marks the session COMPLETED — all in one transaction.
- * Shared by submitMock (student clicks submit) and the abandoned-mock auto-grade
- * sweep (M-4: window closed with answers → capture the work instead of discarding).
- *
- * Throws MockAlreadyCompletedError if a concurrent submit already graded it, or
- * AIGradingError if the grader is unavailable (caller leaves the session recoverable).
- * Callers MUST validate session ownership/status before calling.
- */
-async function processMockSession(session: any, student: { id: string }) {
-    // ── 2. Load questions + strip __meta ──────────────────────────────────
+async function processMockSession(
+    session: any,
+    student: { id: string },
+    aggregatedAnswers?: Record<string, string>
+) {
     const questionIdsConfig = session.question_ids as Array<{ skill: string; ids: string[] }>;
     const allIds = questionIdsConfig.flatMap(c => c.ids);
     const questions = await prisma.mockquestions.findMany({
         where:  { id: { in: allIds } },
         select: { id: true, skill: true, sub_skill: true, question_type: true, correct_answer: true, prompt_text: true }
     });
-    const answers = Object.fromEntries(
-        Object.entries((session.answers ?? {}) as Record<string, unknown>).filter(([k]) => k !== '__meta')
-    ) as Record<string, string>;
 
-    // ── 3. Launch AI grading for W/S prompts in parallel ─────────────────
+    // Resolve answers: provided directly (new model) or from session (legacy)
+    let answers: Record<string, string>;
+    if (aggregatedAnswers) {
+        answers = aggregatedAnswers;
+    } else {
+        // Legacy: answers on session row (pre-section-model sessions)
+        answers = Object.fromEntries(
+            Object.entries((session.answers ?? {}) as Record<string, unknown>).filter(([k]) => k !== '__meta')
+        ) as Record<string, string>;
+    }
+
+    // AI grading for W/S prompts
     type AIJob = { key: string; band: number; rationale: string; key_observations: string[] };
     const aiJobs: Promise<AIJob>[] = [];
 
     for (let i = 0; i < questionIdsConfig.length; i++) {
         const cfg = questionIdsConfig[i];
         if (cfg.skill !== 'WRITING' && cfg.skill !== 'SPEAKING') continue;
-
         const subQs = questions.filter(q => cfg.ids.includes(q.id));
         const aiQs  = subQs.filter(q => q.question_type === 'WRITING_PROMPT' || q.question_type === 'SPEAKING_PROMPT');
         for (const q of aiQs) {
@@ -668,15 +863,15 @@ async function processMockSession(session: any, student: { id: string }) {
             })());
         }
     }
-    const aiResults           = await Promise.all(aiJobs);
-    const aiByKey             = new Map<string, number>();
-    const aiFeedbackByKey     = new Map<string, { rationale: string; key_observations: string[] }>();
+    const aiResults       = await Promise.all(aiJobs);
+    const aiByKey         = new Map<string, number>();
+    const aiFeedbackByKey = new Map<string, { rationale: string; key_observations: string[] }>();
     for (const j of aiResults) {
         aiByKey.set(j.key, j.band);
         if (j.rationale) aiFeedbackByKey.set(j.key, { rationale: j.rationale, key_observations: j.key_observations });
     }
 
-    // ── 4. Score each skill ────────────────────────────────────────────────
+    // Score each skill
     const skillScores: MockSkillScore[] = [];
 
     for (let i = 0; i < questionIdsConfig.length; i++) {
@@ -691,10 +886,8 @@ async function processMockSession(session: any, student: { id: string }) {
                 const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
                 if (sa && ca && sa === ca) correct++;
             }
-            // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
             const band = mcqQs.length > 0 ? fractionToBand(correct / mcqQs.length) : BAND_MIN;
             skillScores.push({ skill: cfg.skill, band, correct, total: mcqQs.length, ai_graded: false });
-
         } else {
             const subSkills = cfg.skill === 'WRITING' ? WRITING_SUB_SKILLS : SPEAKING_SUB_SKILLS;
             const subSkillScores: MockSubSkillScore[] = [];
@@ -704,7 +897,6 @@ async function processMockSession(session: any, student: { id: string }) {
             for (const ss of subSkills) {
                 const ssQs  = subQs.filter(q => String(q.sub_skill) === ss);
                 const ssMCQ = ssQs.filter(q => q.question_type === 'MCQ' || q.question_type === 'TFNG');
-
                 let ssCorrect = 0;
                 for (const q of ssMCQ) {
                     const sa = (answers[q.id] ?? '').trim().toUpperCase();
@@ -714,11 +906,8 @@ async function processMockSession(session: any, student: { id: string }) {
                 totalCorrect += ssCorrect;
                 totalMCQ     += ssMCQ.length;
 
-                const mcqScore1to10 = ssMCQ.length > 0
-                    ? Math.min(10, 1 + (ssCorrect / ssMCQ.length) * 9)
-                    : null;
-
-                const aiScore1to10 = aiByKey.get(`${cfg.skill}:${ss}`) ?? null;
+                const mcqScore1to10 = ssMCQ.length > 0 ? Math.min(10, 1 + (ssCorrect / ssMCQ.length) * 9) : null;
+                const aiScore1to10  = aiByKey.get(`${cfg.skill}:${ss}`) ?? null;
 
                 let combined1to10: number;
                 if      (mcqScore1to10 === null && aiScore1to10 === null) combined1to10 = 1;
@@ -748,17 +937,10 @@ async function processMockSession(session: any, student: { id: string }) {
         }
     }
 
-    // ── 5. Pre-fetch matrix + diagnostic for delta calculation ────────────
+    // Pre-fetch matrix + diagnostic
     const [competencyPre, diagnosticHistory] = await Promise.all([
-        prisma.studentCompetencyMatrix.findMany({
-            where:  { student_id: student.id },
-            select: { skill: true, band_score: true, sub_scores: true }
-        }),
-        prisma.assessmentHistory.findMany({
-            where:   { student_id: student.id, mode: 'DIAGNOSTIC' },
-            select:  { skill: true, band_score: true, created_at: true },
-            orderBy: { created_at: 'desc' }
-        })
+        prisma.studentCompetencyMatrix.findMany({ where: { student_id: student.id }, select: { skill: true, band_score: true, sub_scores: true } }),
+        prisma.assessmentHistory.findMany({ where: { student_id: student.id, mode: 'DIAGNOSTIC' }, select: { skill: true, band_score: true, created_at: true }, orderBy: { created_at: 'desc' } })
     ]);
 
     const prevMatrixBands = new Map<string, number>();
@@ -771,7 +953,7 @@ async function processMockSession(session: any, student: { id: string }) {
         if (!diagnosticBands.has(s)) diagnosticBands.set(s, parseFloat(String(h.band_score)) || 0);
     }
 
-    // ── 6. Pre-compute W/S sub-skill updates (single source of truth) ────────
+    // Pre-compute W/S sub-skill updates
     type WSUpdate = { updatedSS: Record<string, number>; newMatrixBand: number };
     const wsUpdates = new Map<string, WSUpdate>();
     for (const s of skillScores) {
@@ -784,9 +966,6 @@ async function processMockSession(session: any, student: { id: string }) {
             const key   = SUB_SCORE_KEY_MAP[ss.sub_skill];
             if (!key) continue;
             const curSS = existingSS[key] ?? null;
-            // applySmoothing = 0.4*old + 0.6*new with a ±2 movement cap, rounded to 0.5,
-            // clamped 0–9 — identical formula to the mock's 0.6*new + 0.4*old but WITH the
-            // cap the mock previously lacked. Shared with IA so both stay in lockstep.
             const newSS = applySmoothing(curSS, ss.band);
             updatedSS[key] = newSS;
             newBands.push(newSS);
@@ -797,30 +976,25 @@ async function processMockSession(session: any, student: { id: string }) {
         wsUpdates.set(s.skill, { updatedSS, newMatrixBand });
     }
 
-    // ── 7. Apply scoring formula + build response ─────────────────────────
+    // Build response + apply smoothing
     const skillScoresResponse: MockSkillScoreResponse[] = skillScores.map(s => {
         const prevBand = prevMatrixBands.get(s.skill) ?? null;
         const diagBand = diagnosticBands.get(s.skill) ?? null;
-
         let newMatrixBand: number;
         if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
             newMatrixBand = wsUpdates.get(s.skill)!.newMatrixBand;
         } else {
-            // L/R skill-level blend with the same ±2 cap as IA.
             newMatrixBand = applySmoothing(prevBand, s.band);
         }
-
         const deltaFromDiag = diagBand !== null ? Math.round((newMatrixBand - diagBand) * 10) / 10 : null;
         return { ...s, new_matrix_band: newMatrixBand, prev_matrix_band: prevBand, diagnostic_band: diagBand, delta_from_diag: deltaFromDiag };
     });
 
-    // ── 8. Real Band + momentum ───────────────────────────────────────────
-    const allNewBands  = skillScoresResponse.map(s => s.new_matrix_band);
-    const realBandRaw  = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
+    // Real Band + momentum
+    const allNewBands   = skillScoresResponse.map(s => s.new_matrix_band);
+    const realBandRaw   = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
     const realBandScore = toBand(realBandRaw);
 
-    // Missing skills default to the 4.0 floor — with ?? 0 a skill with no data would
-    // drag prevOverall below the valid domain and skew the threshold-bonus check.
     const prevOverall = Math.round(
         (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? BAND_MIN), 0) / MOCK_SKILL_ORDER.length) * 2
     ) / 2;
@@ -833,17 +1007,11 @@ async function processMockSession(session: any, student: { id: string }) {
         momentumBreakdown.push({ reason: `New band threshold — crossed ${realBandScore.toFixed(1)}`, points: 500 });
     }
 
-    // ── 9. DB transaction ─────────────────────────────────────────────────
+    // DB transaction
     const updatedMomentum = await prisma.$transaction(async (tx) => {
         const marked = await tx.mocksessions.updateMany({
             where: { id: session.id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
-            data:  {
-                status:            'COMPLETED' as any,
-                scores:            skillScores as any,
-                real_band_score:   realBandScore,
-                momentum_awarded:  momentumAwarded,
-                time_submitted_at: new Date()
-            }
+            data:  { status: 'COMPLETED' as any, scores: skillScores as any, real_band_score: realBandScore, momentum_awarded: momentumAwarded, time_submitted_at: new Date() }
         });
         if (marked.count === 0) throw new MockAlreadyCompletedError();
 
@@ -851,7 +1019,6 @@ async function processMockSession(session: any, student: { id: string }) {
             await tx.assessmentHistory.create({
                 data: { student_id: student.id, skill: s.skill as any, mode: 'MOCK' as any, band_score: s.new_matrix_band }
             });
-
             if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
                 const { updatedSS } = wsUpdates.get(s.skill)!;
                 await tx.studentCompetencyMatrix.upsert({
@@ -886,67 +1053,4 @@ async function processMockSession(session: any, student: { id: string }) {
         updated_momentum:   updatedMomentum,
         skill_scores:       skillScoresResponse,
     };
-}
-
-export async function submitMock(req: AuthRequest, res: Response) {
-    try {
-        const appUserId = (req as any).appUserId as string;
-        if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
-
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
-        if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
-
-        const { session_id } = req.body;
-        if (!session_id) return res.status(400).json({ success: false, error: 'session_id is required.' });
-
-        // ── 1. Validate session ────────────────────────────────────────────────
-        const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
-        if (!session)                            return res.status(404).json({ success: false, error: 'Session not found.' });
-        if (session.student_id !== student.id)   return res.status(403).json({ success: false, error: 'Forbidden.' });
-        if (session.status === 'COMPLETED')      return res.json({
-            success: true,
-            already_done:    true,
-            // Coerce the Prisma Decimal to a number — it serializes as a string otherwise,
-            // and the client calls realBand.toFixed(1) which throws on a string.
-            real_band_score: session.real_band_score != null ? Number(session.real_band_score) : null,
-            scores:          session.scores,
-            momentum_awarded: session.momentum_awarded,
-        });
-        if (session.status === 'ABANDONED')      return res.status(400).json({ success: false, error: 'Session window has expired.' });
-        // MK-B-11: the 3-hour session length is enforced client-side only (frontend timer).
-        // Server-side, the only hard gate is the 72-hour window_closes_at. This is intentional:
-        // students may pause and resume within the window; the frontend prevents starting new
-        // sections once the 3-hour clock runs out, but the server accepts a late submit rather
-        // than silently discarding completed work.
-        if (new Date() > session.window_closes_at) {
-            await prisma.mocksessions.update({ where: { id: session_id }, data: { status: 'ABANDONED' as any } });
-            return res.status(400).json({ success: false, error: 'Mock window has closed.' });
-        }
-
-        // ── 2..9: grade, update matrix + real band, award momentum, mark COMPLETED ──
-        const result = await processMockSession(session, student);
-        return res.json({ success: true, ...result });
-    } catch (err) {
-        if (err instanceof MockAlreadyCompletedError) {
-            const s = await prisma.mocksessions.findUnique({ where: { id: req.body?.session_id } });
-            return res.json({
-                success: true, already_done: true,
-                real_band_score:  s?.real_band_score != null ? Number(s.real_band_score) : null,
-                scores:           s?.scores ?? null,
-                momentum_awarded: s?.momentum_awarded ?? 0,
-            });
-        }
-        // AI grading failed (infra). The status transaction never ran, so the session
-        // stays IN_PROGRESS and remains submittable within its 72h window. Tell the
-        // client to retry rather than fabricating a band or consuming the slot.
-        if (err instanceof AIGradingError) {
-            return res.status(502).json({
-                success:   false,
-                can_retry: true,
-                error:     'AI grading is temporarily unavailable. Your answers are saved — please submit again in a moment.',
-            });
-        }
-        console.error('[MockSubmit] error:', err);
-        return res.status(500).json({ success: false, error: 'Internal server error.' });
-    }
 }

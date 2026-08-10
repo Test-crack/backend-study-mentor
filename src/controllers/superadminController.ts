@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
+import { paramStr } from '../utils/httpParams';
 
 const VALID_ROLES = Object.values(UserRoleType);
 
@@ -138,7 +139,7 @@ export async function getInstitutes(req: AuthRequest, res: Response) {
 // Body: { isActive: boolean }
 
 export async function toggleInstituteStatus(req: AuthRequest, res: Response) {
-    const { id } = req.params;
+    const id = paramStr(req.params.id);
     const { isActive } = req.body as { isActive: boolean };
 
     if (typeof isActive !== 'boolean') {
@@ -170,7 +171,7 @@ export async function toggleInstituteStatus(req: AuthRequest, res: Response) {
 }
 
 export async function updateInstitute(req: AuthRequest, res: Response) {
-    const { id } = req.params;
+    const id = paramStr(req.params.id);
     const { name, address, logoUrl } = req.body as { name?: string; address?: string; logoUrl?: string };
 
     try {
@@ -232,7 +233,7 @@ export async function createInstitute(req: AuthRequest, res: Response) {
         // 1. Create the auth user + send the owner a role-specific branded invite email
         //    (Resend). Redirect targets FRONTEND_URL/auth/callback (set-password flow).
         const { userId: supabaseUserId, emailSent } = await sendInvite({
-            email: ownerEmail, name: ownerName, role: 'INSTITUTE_OWNER', institute: instituteName,
+            email: ownerEmail, name: ownerName, role: 'INSTITUTE_OWNER', institute: instituteName, origin: req.get('origin') ?? undefined,
         });
 
         // 2. Upsert User row in our DB

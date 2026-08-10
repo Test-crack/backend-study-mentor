@@ -1,0 +1,12 @@
+[
+  { "base_word": "BIG",      "target_word": "SUBSTANTIAL",  "hint": "Large in size or amount, often used formally.",          "difficulty": "INTERMEDIATE", "target_band": 6.5 },
+  { "base_word": "HAPPY",    "target_word": "ELATED",       "hint": "Feeling great joy or pride.",                            "difficulty": "ADVANCED",     "target_band": 7.0 },
+  { "base_word": "SAD",      "target_word": "DESPONDENT",   "hint": "In low spirits from loss of hope or courage.",           "difficulty": "ADVANCED",     "target_band": 7.5 },
+  { "base_word": "FAST",     "target_word": "EXPEDITIOUS",  "hint": "Done with speed and efficiency.",                        "difficulty": "ADVANCED",     "target_band": 8.0 },
+  { "base_word": "SHOW",     "target_word": "DEMONSTRATE",  "hint": "To show clearly with evidence or examples.",             "difficulty": "INTERMEDIATE", "target_band": 6.0 },
+  { "base_word": "HELP",     "target_word": "FACILITATE",   "hint": "To make an action or process easier.",                   "difficulty": "INTERMEDIATE", "target_band": 6.5 },
+  { "base_word": "THINK",    "target_word": "CONTEMPLATE",  "hint": "To think about carefully over a period of time.",        "difficulty": "INTERMEDIATE", "target_band": 7.0 },
+  { "base_word": "HARD",     "target_word": "ARDUOUS",      "hint": "Involving or requiring strenuous effort; difficult.",    "difficulty": "ADVANCED",     "target_band": 7.5 },
+  { "base_word": "CHANGE",   "target_word": "TRANSFORM",    "hint": "To make a thorough or dramatic change in form.",         "difficulty": "BEGINNER",     "target_band": 5.5 },
+  { "base_word": "USE",      "target_word": "UTILISE",      "hint": "To make practical or effective use of something.",       "difficulty": "BEGINNER",     "target_band": 5.5 }
+]

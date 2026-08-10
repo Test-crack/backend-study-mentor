@@ -4,6 +4,9 @@ on:
   push:
     branches: [main, dev]
 
+permissions:
+  contents: write   # needed to push the last-good-<branch> tag
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,26 +24,93 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for tag operations
+
       - name: Determine target app
         id: vars
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
             echo "app_name=backend-main" >> "$GITHUB_OUTPUT"
+            echo "port=4000" >> "$GITHUB_OUTPUT"
           else
             echo "app_name=backend-dev" >> "$GITHUB_OUTPUT"
+            echo "port=4001" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            cd /var/www/testcrack/${{ steps.vars.outputs.app_name }}
-            git fetch origin
-            git reset --hard origin/${{ github.ref_name }}
-            npm ci
-            npm run build
-            pm2 restart ${{ steps.vars.outputs.app_name }}
+      - name: Write remote deploy script
+        run: |
+          cat > deploy_remote.sh << 'SCRIPT'
+          set -e
+          cd /var/www/testcrack/${{ steps.vars.outputs.app_name }}
+          git fetch origin
+          git reset --hard origin/${{ github.ref_name }}
+          npm ci
+          npm run build
+
+          echo "Checking for schema drift..."
+          DIFF_OUTPUT=$(npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script 2>&1)
+          echo "$DIFF_OUTPUT"
+          if echo "$DIFF_OUTPUT" | grep -qE "^(CREATE|ALTER|DROP)"; then
+            echo "❌ Schema drift detected — this code expects database changes that haven't been pushed yet."
+            echo "Run: npx prisma db push   (against this environment's DB), then redeploy."
+            exit 1
+          fi
+          echo "✅ No schema drift — database matches what this code expects."
+
+          pm2 restart ${{ steps.vars.outputs.app_name }}
+
+          echo "Waiting for ${{ steps.vars.outputs.app_name }} to report healthy on port ${{ steps.vars.outputs.port }}..."
+          for i in $(seq 1 10); do
+            if curl -sf "http://localhost:${{ steps.vars.outputs.port }}/health" > /dev/null; then
+              echo "Health check passed."
+              exit 0
+            fi
+            echo "Attempt $i/10 failed, retrying in 2s..."
+            sleep 2
+          done
+          echo "Health check failed after 10 attempts — deploy considered unhealthy."
+          exit 1
+          SCRIPT
+
+      - name: Deploy to VPS (with connection retry)
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set +e   # we branch on each exit code ourselves below — default -e would abort on the first non-zero ssh exit
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          MAX_ATTEMPTS=4
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "SSH connection attempt $attempt/$MAX_ATTEMPTS..."
+            ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/deploy_key "$VPS_USER@$VPS_HOST" 'bash -s' < deploy_remote.sh
+            exit_code=$?
+
+            if [ $exit_code -eq 0 ]; then
+              echo "Deploy succeeded."
+              exit 0
+            elif [ $exit_code -eq 255 ]; then
+              echo "SSH connection itself failed (exit 255) — likely transient network blip."
+              if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+                echo "Retrying in 15s..."
+                sleep 15
+              fi
+            else
+              echo "Remote deploy script failed with exit code $exit_code — a real failure, not a connection issue. Not retrying."
+              exit $exit_code
+            fi
+          done
+          echo "All $MAX_ATTEMPTS connection attempts failed."
+          exit 1
+
+      # Only runs if "Deploy to VPS" succeeded — a failed deploy never moves this tag
+      - name: Tag last-good deploy
+        run: |
+          git tag -f last-good-${{ github.ref_name }}
+          git push origin -f last-good-${{ github.ref_name }}

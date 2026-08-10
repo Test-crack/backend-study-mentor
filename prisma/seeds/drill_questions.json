@@ -1,0 +1,13 @@
+[
+  {
+    "source_key":    "drill_listen_listen_beg_001",
+    "skill":         "LISTENING",
+    "sub_skill":     "LISTENING",
+    "level":         "BEGINNER",
+    "drill_type":    "MCQ",
+    "prompt_text":   "You hear: 'The meeting is at half past three.' When is the meeting?",
+    "options":       { "A": "2:30", "B": "3:00", "C": "3:30", "D": "4:30" },
+    "correct_answer": "\"C\"",
+    "explanation":   "Half past three means 30 minutes after 3 o'clock = 3:30."
+  }
+]

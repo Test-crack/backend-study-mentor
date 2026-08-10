@@ -9,6 +9,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { paramStr } from '../utils/httpParams';
 
 /**
  * GET /notifications?limit=20&cursor=<ISO created_at>
@@ -94,7 +95,7 @@ export async function dismissUserNotification(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const { id } = req.params;
+        const id = paramStr(req.params.id);
         const now = new Date();
 
         // updateMany so the user_id scope is part of the WHERE — nobody can
