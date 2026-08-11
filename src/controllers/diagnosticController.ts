@@ -336,17 +336,20 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             });
 
             if (total === 0) {
-                return res.status(400).json({ error: 'Could not resolve the question set for grading.' });
+                // Nothing answered, so no set to grade against. Score the floor rather
+                // than 400 — a timed-out section must still be submittable.
+                bandScore = BAND_MIN;
+                subScores = { total_questions: 0, correct_answers: 0, accuracy_percentage: 0, by_question_type: {} };
+            } else {
+                // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
+                bandScore = fractionToBand(correct / total);
+                subScores = {
+                    total_questions:     total,
+                    correct_answers:     correct,
+                    accuracy_percentage: Math.round((correct / total) * 100),
+                    by_question_type:    byType
+                };
             }
-
-            // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
-            bandScore = fractionToBand(correct / total);
-            subScores = {
-                total_questions:     total,
-                correct_answers:     correct,
-                accuracy_percentage: Math.round((correct / total) * 100),
-                by_question_type:    byType
-            };
 
         // ── WRITING — fetch prompt by question_id, send to Gemini ─────────────
         } else if (skillUpper === 'WRITING') {
