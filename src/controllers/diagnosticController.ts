@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
@@ -32,18 +33,20 @@ async function pickRandomSetId(level: string, skill: string): Promise<string | n
     return rows[0]?.set_id ?? null;
 }
 
-/** Shared: write AssessmentHistory + upsert StudentCompetencyMatrix. */
+// Writes AssessmentHistory + StudentCompetencyMatrix. Takes a tx client —
+// caller must run this inside a $transaction, not call it with plain prisma.
 async function saveDiagnosticAssessment(
+    tx: Prisma.TransactionClient,
     studentId: string,
     skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING',
     bandScore: number,
     answers: any,
     subScores: any
 ) {
-    await prisma.assessmentHistory.create({
+    await tx.assessmentHistory.create({
         data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores }
     });
-    await prisma.studentCompetencyMatrix.upsert({
+    await tx.studentCompetencyMatrix.upsert({
         where:  { student_id_skill: { student_id: studentId, skill } },
         update: { band_score: bandScore, sub_scores: subScores, assessments_count: { increment: 1 }, last_updated: new Date() },
         create: { student_id: studentId, skill, band_score: bandScore, sub_scores: subScores, assessments_count: 1 }
@@ -410,7 +413,9 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
 
         // Universal exit gate: round to 0.5 and clamp to [4,9] (adds the previously-missing floor).
         bandScore = toBand(bandScore);
-        await saveDiagnosticAssessment(student.id, skillUpper, bandScore, parsedAnswers, subScores);
+        await prisma.$transaction(async (tx) => {
+            await saveDiagnosticAssessment(tx, student.id, skillUpper, bandScore, parsedAnswers, subScores);
+        });
         const overallComplete = await checkAndMarkDiagnosed(student.id);
 
         res.json({ message: `${skillUpper} diagnostic submitted successfully`, bandScore, overallComplete, sub_scores: subScores, feedback: subScores?.feedback });
@@ -494,7 +499,9 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
             try { fs.unlinkSync(req.file.path); } catch { /* already removed */ }
         }
 
-        await saveDiagnosticAssessment(student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
+        await prisma.$transaction(async (tx) => {
+            await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
+        });
         const overallComplete = await checkAndMarkDiagnosed(student.id);
 
         res.json({ message: 'SPEAKING diagnostic submitted successfully', bandScore, overallComplete, sub_scores: subScores, transcript, feedback: subScores?.feedback });
