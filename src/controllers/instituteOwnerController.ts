@@ -1203,7 +1203,9 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
             });
             await tx.institute_students.update({
                 where: { id: instStudent.id },
-                data:  { isDiagnosed: false },
+                // updated_at is explicit, not @updatedAt-managed — the frontend reads it
+                // via /status to know a reset happened and clear its cached progress.
+                data:  { isDiagnosed: false, updated_at: new Date() },
             });
         });
 

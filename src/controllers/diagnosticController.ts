@@ -100,12 +100,17 @@ export const getDiagnosticStatus = async (req: AuthRequest & { appUserId?: strin
         const student = await prisma.institute_students.findUnique({ where: { user_id: userId } });
         if (!student) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false });
 
-        if (student.isDiagnosed) return res.json({ isDiagnosed: true, listening_scored: true, reading_scored: true, writing_scored: true, speaking_scored: true, overall_complete: true });
+        // Frontend compares this against what it cached locally — a mismatch means an
+        // admin reset happened server-side since the last time it saved progress, and
+        // it should discard its cached phase/answers/timer instead of resuming stale state.
+        const reset_marker = student.updated_at.toISOString();
+
+        if (student.isDiagnosed) return res.json({ isDiagnosed: true, listening_scored: true, reading_scored: true, writing_scored: true, speaking_scored: true, overall_complete: true, reset_marker });
 
         const status: any[] = await prisma.$queryRaw`SELECT * FROM "diagnostic_status" WHERE "student_id" = ${student.id}::uuid`;
-        if (status.length === 0) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false, overall_complete: false });
+        if (status.length === 0) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false, overall_complete: false, reset_marker });
 
-        res.json({ isDiagnosed: false, ...status[0] });
+        res.json({ isDiagnosed: false, ...status[0], reset_marker });
     } catch (err) {
         console.error('[getDiagnosticStatus]', err);
         res.status(500).json({ error: 'Failed to fetch diagnostic status' });
