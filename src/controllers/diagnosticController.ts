@@ -33,6 +33,16 @@ async function pickRandomSetId(level: string, skill: string): Promise<string | n
     return rows[0]?.set_id ?? null;
 }
 
+class DiagnosticAlreadyScoredError extends Error {}
+
+// Serializes concurrent submits for the same student+skill so the isSkillAlreadyScored
+// check and the save can't both pass for two requests racing each other — the advisory
+// lock makes the second request wait for the first's transaction to finish before it
+// re-checks. Released automatically when the transaction ends (xact-scoped).
+async function lockDiagnosticSkill(tx: Prisma.TransactionClient, studentId: string, skill: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${studentId} || ${skill}))`;
+}
+
 // Writes AssessmentHistory + StudentCompetencyMatrix. Takes a tx client —
 // caller must run this inside a $transaction, not call it with plain prisma.
 async function saveDiagnosticAssessment(
@@ -417,6 +427,8 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
         // Universal exit gate: round to 0.5 and clamp to [4,9] (adds the previously-missing floor).
         bandScore = toBand(bandScore);
         await prisma.$transaction(async (tx) => {
+            await lockDiagnosticSkill(tx, student.id, skillUpper);
+            if (await isSkillAlreadyScored(student.id, skillUpper)) throw new DiagnosticAlreadyScoredError();
             await saveDiagnosticAssessment(tx, student.id, skillUpper, bandScore, parsedAnswers, subScores);
         });
         const overallComplete = await checkAndMarkDiagnosed(student.id);
@@ -424,6 +436,9 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
         res.json({ message: `${skillUpper} diagnostic submitted successfully`, bandScore, overallComplete, sub_scores: subScores, feedback: subScores?.feedback });
 
     } catch (err) {
+        if (err instanceof DiagnosticAlreadyScoredError) {
+            return res.status(409).json({ error: `The ${paramStr(req.params.skill).toUpperCase()} section has already been submitted.` });
+        }
         console.error('[submitDiagnosticAssessment]', err);
         res.status(500).json({ error: 'Failed to submit assessment' });
     }
@@ -503,6 +518,8 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         }
 
         await prisma.$transaction(async (tx) => {
+            await lockDiagnosticSkill(tx, student.id, 'SPEAKING');
+            if (await isSkillAlreadyScored(student.id, 'SPEAKING')) throw new DiagnosticAlreadyScoredError();
             await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
         });
         const overallComplete = await checkAndMarkDiagnosed(student.id);
@@ -511,6 +528,9 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
 
     } catch (err) {
         if (req.file) fs.unlink(req.file.path, () => {});
+        if (err instanceof DiagnosticAlreadyScoredError) {
+            return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' });
+        }
         console.error('[submitDiagnosticSpeaking]', err);
         res.status(500).json({ error: 'Failed to submit speaking assessment' });
     }
