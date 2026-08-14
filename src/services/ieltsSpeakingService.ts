@@ -109,7 +109,7 @@ export async function analyzeSpeaking(
     return emptyAudioResponse('Audio file is too small to contain any meaningful speech.');
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0 } });
 
   // ── Layer 2: Prompt with mandatory content_assessment field ───────────────
   // This forces Gemini to explicitly classify content BEFORE scoring.
