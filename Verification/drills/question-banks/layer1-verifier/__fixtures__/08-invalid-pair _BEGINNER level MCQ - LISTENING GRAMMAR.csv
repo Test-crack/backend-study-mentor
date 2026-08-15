@@ -1,0 +1,4 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+LISTENING,GRAMMAR,BEGINNER,"What did the speaker say about the deadline?","{""A"":""It moved earlier"",""B"":""It moved later"",""C"":""It was cancelled"",""D"":""It was met""}","""B""","The speaker announces a two-week extension."
+LISTENING,GRAMMAR,BEGINNER,"Which detail does the speaker repeat?","{""A"":""The room number"",""B"":""The price"",""C"":""The date"",""D"":""The name""}","""C""","The date is stated twice for emphasis."
+LISTENING,GRAMMAR,BEGINNER,"What is the speaker's attitude?","{""A"":""Annoyed"",""B"":""Delighted"",""C"":""Neutral"",""D"":""Confused""}","""A""","The tone and word choice signal irritation."

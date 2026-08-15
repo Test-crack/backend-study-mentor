@@ -1,0 +1,4 @@
+﻿Skill,Sub Skill,Level,Prompt Text,Options,Correct Answer,Explanation
+LISTENING,LISTENING,BEGINNER,"This file uses Title Case headers with spaces.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""A""","It must pass: header casing is a formatting difference, not an error."
+LISTENING,LISTENING,BEGINNER,"This file is CRLF terminated.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""B""","Windows line endings must not affect the result."
+LISTENING,LISTENING,BEGINNER,"This file starts with a UTF-8 BOM.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""C""","A BOM from a spreadsheet export must be stripped, not read as part of the first header cell."

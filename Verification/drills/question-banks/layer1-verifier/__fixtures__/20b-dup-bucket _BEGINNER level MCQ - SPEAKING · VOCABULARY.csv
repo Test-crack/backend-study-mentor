@@ -1,0 +1,3 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+SPEAKING,VOCABULARY,BEGINNER,"Which word describes a quiet village?","{""A"":""bustling"",""B"":""peaceful"",""C"":""noisy"",""D"":""hectic""}","""B""","Peaceful describes a calm, quiet place."
+SPEAKING,VOCABULARY,BEGINNER,"Which word means happening every year?","{""A"":""weekly"",""B"":""monthly"",""C"":""annual"",""D"":""daily""}","""C""","Annual means once per year."

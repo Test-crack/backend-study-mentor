@@ -156,3 +156,12 @@ cookies/
 # Google Cloud Credentials
 credentials/*.json
 
+# Question-bank verification: real CSVs and generated reports are local-only
+Verification/drills/question-banks/drills/**
+Verification/drills/results/
+Verification/drills/cache/
+Verification/diagnostic/results/
+Verification/diagnostic/cache/
+# CSV files are local-only, never push to origin
+*.csv
+
