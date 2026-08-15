@@ -406,15 +406,20 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
                 }
 
-                bandScore = Number(analysis.bandScore) || BAND_MIN;
-
-                // Enforce anti-gaming caps server-side (the AI prompt asks for these, but
+                // Enforce the anti-gaming cap server-side (the AI prompt asks for this, but
                 // relying on the model alone is unreliable — same reason speaking has hard caps).
+                // Cap only the Task Achievement/Response criterion, then re-derive the overall
+                // band from the (possibly capped) criteria — capping the already-averaged
+                // bandScore a second time double-penalizes essays that are strong elsewhere.
                 if (wordCount < minWords) {
-                    // Under the required length → Task Achievement capped at 5.0, so the
-                    // averaged band cannot exceed 5.0 on length grounds.
-                    bandScore = Math.min(bandScore, 5.0);
+                    analysis.taskResponseScore = Math.min(Number(analysis.taskResponseScore) || BAND_MIN, 5.0);
                 }
+                bandScore = (
+                    Number(analysis.taskResponseScore) +
+                    Number(analysis.coherenceScore) +
+                    Number(analysis.vocabularyScore) +
+                    Number(analysis.grammarScore)
+                ) / 4;
 
                 subScores = {
                     word_count:        wordCount,
