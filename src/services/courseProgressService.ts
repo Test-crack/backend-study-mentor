@@ -1,4 +1,4 @@
-import prisma from '../lib/prisma';
+﻿import prisma from '../lib/prisma';
 import { ProgressStatus } from '@prisma/client';
 import {
   ProgressData,
@@ -18,8 +18,8 @@ export const calculateModuleProgress = async (
   // Get total required items in this module
   const totalResult = await prisma.$queryRaw<Array<{ total: bigint }>>`
     SELECT COUNT(*)::bigint as total
-    FROM "CourseContentItem" cci
-    JOIN "ModuleConcept" mc ON cci."concept_id" = mc."concept_id"
+    FROM "course_content_items" cci
+    JOIN "module_concepts" mc ON cci."concept_id" = mc."concept_id"
     WHERE mc."module_id" = ${moduleId}::uuid
       AND cci."is_required" = true
   `;
@@ -27,8 +27,8 @@ export const calculateModuleProgress = async (
   // Get completed items by user
   const completedResult = await prisma.$queryRaw<Array<{ completed: bigint }>>`
     SELECT COUNT(*)::bigint as completed
-    FROM "UserContentProgress" ucp
-    JOIN "CourseContentItem" cci ON ucp."content_item_id" = cci."id"
+    FROM "user_content_progress" ucp
+    JOIN "course_content_items" cci ON ucp."content_item_id" = cci."id"
     WHERE ucp."user_id" = ${userId}::uuid
       AND ucp."module_id" = ${moduleId}::uuid
       AND ucp."status" = 'COMPLETED'
@@ -74,8 +74,8 @@ export const calculateCourseProgress = async (
     SELECT 
       COUNT(DISTINCT CASE WHEN ump."status" = 'COMPLETED' THEN cm."module_id" END)::bigint as completed_modules,
       COUNT(DISTINCT cm."module_id")::bigint as total_modules
-    FROM "CourseModule" cm
-    LEFT JOIN "UserModuleProgress" ump ON cm."module_id" = ump."module_id" 
+    FROM "course_modules" cm
+    LEFT JOIN "user_module_progress" ump ON cm."module_id" = ump."module_id" 
       AND ump."user_id" = ${userId}::uuid
       AND ump."course_id" = ${courseId}::uuid
     WHERE cm."course_id" = ${courseId}::uuid
@@ -124,7 +124,7 @@ export const calculateOverallCourseProgress = async (
     SELECT 
       cm."module_id",
       cm."order_index"
-    FROM "CourseModule" cm
+    FROM "course_modules" cm
     WHERE cm."course_id" = ${courseId}::uuid
     ORDER BY cm."order_index" ASC
   `;
@@ -621,9 +621,9 @@ export const getResumeData = async (userId: string, courseId: string) => {
         ucp.last_accessed_at,
         cci.sequence_order,
         mc.order_index as concept_order
-      FROM "UserContentProgress" ucp
-      JOIN "CourseContentItem" cci ON ucp.content_item_id = cci.id
-      JOIN "ModuleConcept" mc ON cci.concept_id = mc.concept_id AND mc.module_id = ${courseModule.module_id}::uuid
+      FROM "user_content_progress" ucp
+      JOIN "course_content_items" cci ON ucp.content_item_id = cci.id
+      JOIN "module_concepts" mc ON cci.concept_id = mc.concept_id AND mc.module_id = ${courseModule.module_id}::uuid
       WHERE ucp.user_id = ${userId}::uuid
         AND ucp.module_id = ${courseModule.module_id}::uuid
     ),

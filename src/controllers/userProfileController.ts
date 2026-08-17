@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+﻿import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth';
 
@@ -120,7 +120,7 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
     const targetBand = req.body.targetBand ?? req.body.target_band;
     const examDate   = req.body.examDate   ?? req.body.exam_date;
 
-    // ── User fields ────────────────────────────────────────────────────────
+    // â”€â”€ User fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const updateData: any = { updatedAt: new Date() };
     if (name !== undefined)        updateData.name = name;
     if (countryCode !== undefined) updateData.countryCode = countryCode;
@@ -142,7 +142,7 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
       },
     });
 
-    // ── Student goal fields (target_band, exam_date) — validated ─────────────
+    // â”€â”€ Student goal fields (target_band, exam_date) â€” validated â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const studentData: any = {};
 
     if (targetBand !== undefined && targetBand !== null) {
@@ -169,7 +169,7 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
     }
 
     if (Object.keys(studentData).length > 0) {
-      const result = await prisma.institute_students.updateMany({
+      const result = await prisma.instituteStudent.updateMany({
         where: { user_id: userId },
         data:  studentData,
       });

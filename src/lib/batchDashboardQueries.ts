@@ -1,4 +1,4 @@
-/**
+﻿/**
  * batchDashboardQueries.ts
  *
  * Shared, controller-agnostic function that computes the batch dashboard summary.
@@ -12,7 +12,7 @@
 import prisma from './prisma';
 import { todayStartIST } from './timezone';
 
-// ─── Re-exported IST helpers (consumed by owner controller too) ───────────────
+// â”€â”€â”€ Re-exported IST helpers (consumed by owner controller too) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
@@ -70,7 +70,7 @@ export function computeCurrentBand(
     return Math.round(mean * 2) / 2;
 }
 
-// ─── Shared input types ───────────────────────────────────────────────────────
+// â”€â”€â”€ Shared input types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface InstStudentRow {
     id: string;
@@ -134,7 +134,7 @@ export interface DashboardSummary {
     };
 }
 
-// ─── Core computation (no auth, no HTTP) ─────────────────────────────────────
+// â”€â”€â”€ Core computation (no auth, no HTTP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Runs all parallel queries and computes the batch dashboard summary.
@@ -148,7 +148,7 @@ export async function computeBatchDashboard(
     instStudents: InstStudentRow[],
     userById: Map<string, UserRow>
 ): Promise<DashboardSummary> {
-    // Map instStudent.id → User for downstream use
+    // Map instStudent.id â†’ User for downstream use
     const userByInstId = new Map(
         instStudents.map(s => [s.id, userById.get(s.user_id)])
     );
@@ -162,13 +162,13 @@ export async function computeBatchDashboard(
         };
     }
 
-    // ── Date anchors (all IST) ────────────────────────────────────────────
+    // â”€â”€ Date anchors (all IST) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const todayStart      = todayStartIST();
     const yesterdayStart  = daysBeforeIST(1);
     const sevenDaysAgo    = daysBeforeIST(7);
     const currentMonthYear = todayISTString().slice(0, 7); // "YYYY-MM"
 
-    // ── Parallel data fetch — one query per concern, no N+1 ──────────────
+    // â”€â”€ Parallel data fetch â€” one query per concern, no N+1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const [
         todayDrills,
         yesterdayDrills,
@@ -180,12 +180,12 @@ export async function computeBatchDashboard(
         mockThisMonth,
         lexigridToday,
     ] = await Promise.all([
-        // today's completed drills (for active/DCS/unlocked counts — STARTED excluded)
+        // today's completed drills (for active/DCS/unlocked counts â€” STARTED excluded)
         prisma.drillSession.findMany({
             where: { student_id: { in: instStudentIds }, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any[] }, created_at: { gte: todayStart } },
             select: { student_id: true, correct_answers: true, total_questions: true },
         }),
-        // yesterday's completed drills (for trend arrows — STARTED excluded)
+        // yesterday's completed drills (for trend arrows â€” STARTED excluded)
         prisma.drillSession.findMany({
             where: { student_id: { in: instStudentIds }, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any[] }, created_at: { gte: yesterdayStart, lt: todayStart } },
             select: { student_id: true, correct_answers: true, total_questions: true },
@@ -222,7 +222,7 @@ export async function computeBatchDashboard(
             },
         }),
         // Mock completions this calendar month
-        prisma.mocksessions.count({
+        prisma.mockSession.count({
             where: {
                 student_id: { in: instStudentIds },
                 status: 'COMPLETED' as any,
@@ -230,7 +230,7 @@ export async function computeBatchDashboard(
             },
         }),
         // LexiGrid completions today (for activity grid)
-        // session_date is a DATE column (stores IST date) — Postgres casts DATE to TIMESTAMPTZ
+        // session_date is a DATE column (stores IST date) â€” Postgres casts DATE to TIMESTAMPTZ
         // at midnight UTC when comparing, so new Date(todayISTString()) = "YYYY-MM-DDT00:00:00Z"
         // gives an exact DATE match without the IST drift that a raw TIMESTAMPTZ range would cause.
         (prisma as any).studentGameScore.findMany({
@@ -243,7 +243,7 @@ export async function computeBatchDashboard(
         }),
     ]);
 
-    // ── Engagement today ─────────────────────────────────────────────────
+    // â”€â”€ Engagement today â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const todayDrillsByStudent = new Map<string, typeof todayDrills>();
     for (const d of todayDrills) {
         const arr = todayDrillsByStudent.get(d.student_id) ?? [];
@@ -278,7 +278,7 @@ export async function computeBatchDashboard(
 
     const streaksAlive = instStudents.filter(s => s.daily_streak > 0).length;
 
-    // ── Build lookup maps for per-student data ────────────────────────────
+    // â”€â”€ Build lookup maps for per-student data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const missedCountByStudentId = new Map(
         missedIACounts.map(r => [r.student_id, (r._count as any).id as number])
     );
@@ -306,7 +306,7 @@ export async function computeBatchDashboard(
         }
     }
 
-    // LexiGrid lookup: student_id → { done, words }
+    // LexiGrid lookup: student_id â†’ { done, words }
     const lexiByStudentId = new Map<string, { done: boolean; words: number }>();
     for (const l of (lexigridToday as any[])) {
         lexiByStudentId.set(l.student_id, { done: l.completed, words: l.words_solved ?? 0 });
@@ -314,7 +314,7 @@ export async function computeBatchDashboard(
 
     const nowMs = Date.now();
 
-    // ── at_risk list ──────────────────────────────────────────────────────
+    // â”€â”€ at_risk list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const atRisk: DashboardSummary['at_risk'] = [];
 
     for (const s of instStudents) {
@@ -364,7 +364,7 @@ export async function computeBatchDashboard(
 
     const atRiskById = new Map(atRisk.map(r => [r.student_id, r]));
 
-    // ── band_overview ─────────────────────────────────────────────────────
+    // â”€â”€ band_overview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const bandOverview: DashboardSummary['band_overview'] = instStudents.map(s => {
         const user         = userByInstId.get(s.id);
         const competency   = competencyByStudentId.get(s.id) ?? [];
