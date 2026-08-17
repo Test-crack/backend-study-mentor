@@ -33,6 +33,7 @@ router.get('/at-risk',                              shared, Owner.getInstituteAt
 router.get('/instructors',                          shared, Owner.getInstituteInstructors);
 router.get('/assessment-overview',                  shared, Owner.getInstituteAssessmentOverview);
 router.get('/students/:studentId/full-progress',    shared, Owner.getOwnerStudentFullProgress);
+router.post('/students/:studentId/diagnostic/reset', shared, Owner.resetStudentDiagnostic);
 router.get('/batches/:batchId/dashboard-summary',   shared, Owner.getOwnerBatchDashboardSummary);
 
 router.get('/analytics/cohort-progress',            shared, Owner.getAnalyticsCohortProgress);
