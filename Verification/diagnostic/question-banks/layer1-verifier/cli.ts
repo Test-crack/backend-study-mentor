@@ -28,7 +28,6 @@ export const EXIT_FAILURES = 1;
 export const EXIT_WARNINGS = 2;
 export const EXIT_USAGE = 3;
 
-const DEFAULT_EXPECTED_ROWS = 10; // 2 sets of 5 — the agreed batch size.
 const RESULTS_DIR = path.resolve(__dirname, '..', '..', 'results', 'layer1-verifier');
 
 const MARK: Record<RowOutcome, string> = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' };
@@ -36,7 +35,7 @@ const MARK: Record<RowOutcome, string> = { pass: 'PASS', warn: 'WARN', fail: 'FA
 interface CliOptions {
   dir?: string;
   file?: string[];
-  expected: string;
+  expected?: string;
   out?: string;
   quiet?: boolean;
 }
@@ -55,7 +54,8 @@ function positiveInt(raw: string, context: string): number {
   return n;
 }
 
-function parseExpected(raw: string): ExpectedSpec {
+function parseExpected(raw: string | undefined): ExpectedSpec | null {
+  if (raw === undefined) return null;
   return { count: positiveInt(raw, '--expected') };
 }
 
@@ -85,6 +85,20 @@ function resolveInputFiles(opts: CliOptions, positional: string[]): string[] {
     throw new UsageError(`No .csv files found in ${dir}.\n  Nothing was checked — this is an error, not a pass.`);
   }
   return found;
+}
+
+/** A path with a file extension (e.g. `.xlsx`) is treated as the exact output
+ * file; anything else (including a bare name) is treated as a directory,
+ * where an auto-named, timestamped report is written. */
+function resolveOutPath(out: string | undefined): string {
+  if (out === undefined) {
+    return path.join(RESULTS_DIR, `diagnostic-layer1--${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+  }
+  const resolved = path.resolve(out);
+  const looksLikeDir = (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) || path.extname(resolved) === '';
+  return looksLikeDir
+    ? path.join(resolved, `diagnostic-layer1--${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`)
+    : resolved;
 }
 
 function tally(findings: Finding[]): Array<[string, number]> {
@@ -144,7 +158,7 @@ async function main(): Promise<void> {
     .name('diagnostic:verify')
     .option('--dir <path>', 'directory of staging CSVs to check')
     .option('--file <path>', 'a specific file to check (repeatable)', collect, [] as string[])
-    .option('--expected <spec>', 'expected row count per file', String(DEFAULT_EXPECTED_ROWS))
+    .option('--expected <spec>', 'expected row count, enforced for every file in this run (omit to allow each file its own actual count — for combining batches of different legitimate sizes)')
     .option('--out <path>', 'report output path or directory')
     .option('--quiet', 'suppress per-file console lines (report still written)')
     .argument('[files...]')
@@ -160,10 +174,8 @@ async function main(): Promise<void> {
 
     printReport(run, opts.quiet === true);
 
-    const outDir = opts.out ? path.resolve(opts.out) : RESULTS_DIR;
-    fs.mkdirSync(outDir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outPath = path.join(outDir, `diagnostic-layer1--${stamp}.xlsx`);
+    const outPath = resolveOutPath(opts.out);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
     await writeRunReport(run, outPath);
     console.log(`Report: ${outPath}`);
 

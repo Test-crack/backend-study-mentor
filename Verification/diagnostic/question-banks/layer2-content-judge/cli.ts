@@ -32,6 +32,17 @@ const DEFAULT_CONCURRENCY = 4;
 
 class UsageError extends Error {}
 
+function resolveOutPath(out: string | undefined): string {
+  if (out === undefined) {
+    return path.join(RESULTS_DIR, `diagnostic-layer2--${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+  }
+  const resolved = path.resolve(out);
+  const looksLikeDir = (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) || path.extname(resolved) === '';
+  return looksLikeDir
+    ? path.join(resolved, `diagnostic-layer2--${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`)
+    : resolved;
+}
+
 interface CliOptions {
   file?: string[];
   dir?: string;
@@ -142,10 +153,8 @@ async function main(): Promise<void> {
 
     console.log(`\nFresh model calls: ${stats.apiCalls}   Served from cache: ${stats.cacheHits}\n`);
 
-    const outDir = opts.out ? path.resolve(opts.out) : RESULTS_DIR;
-    fs.mkdirSync(outDir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outPath = path.join(outDir, `diagnostic-layer2--${stamp}.xlsx`);
+    const outPath = resolveOutPath(opts.out);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
     await writeJudgeReport(run, outPath);
     console.log(`Report: ${outPath}`);
 

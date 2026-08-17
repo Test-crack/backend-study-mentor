@@ -64,12 +64,14 @@ function checkByQuestionType(row: DiagnosticCsvRow): Finding[] {
 }
 
 export interface VerifyOptions {
-  expectedRowCount: number;
+  /** null means "don't enforce a count — use this file's own actual row count", for combining files of different legitimate sizes into one run. */
+  expectedRowCount: number | null;
 }
 
 export function verifyFile(filePath: string, options: VerifyOptions): FileResult {
   const loaded = loadDiagnosticCsv(filePath);
   const fileFindings: Finding[] = [...loaded.findings];
+  const expectedRowCount = options.expectedRowCount ?? loaded.rows.length;
 
   const base: FileResult = {
     filePath: loaded.filePath,
@@ -78,19 +80,19 @@ export function verifyFile(filePath: string, options: VerifyOptions): FileResult
     setResults: [],
     rowResults: [],
     outcome: 'fail',
-    expectedRowCount: options.expectedRowCount,
+    expectedRowCount,
   };
 
   if (loaded.fatal) {
     return { ...base, outcome: outcomeOf(fileFindings) };
   }
 
-  if (loaded.rows.length !== options.expectedRowCount) {
+  if (loaded.rows.length !== expectedRowCount) {
     fileFindings.push(
       makeFinding(
         'ROW_COUNT_MISMATCH',
         'file',
-        `File has ${loaded.rows.length} data row(s) but ${options.expectedRowCount} were expected. ` +
+        `File has ${loaded.rows.length} data row(s) but ${expectedRowCount} were expected. ` +
           `Re-run with --expected ${loaded.rows.length} if this batch is legitimately a different size.`,
       ),
     );
@@ -148,14 +150,14 @@ export function verifyFile(filePath: string, options: VerifyOptions): FileResult
   return { ...base, setResults, rowResults, outcome };
 }
 
-export function verifyRun(filePaths: string[], spec: ExpectedSpec): RunResult {
-  const files = filePaths.map(p => verifyFile(p, { expectedRowCount: spec.count }));
+export function verifyRun(filePaths: string[], spec: ExpectedSpec | null): RunResult {
+  const files = filePaths.map(p => verifyFile(p, { expectedRowCount: spec?.count ?? null }));
 
   return {
     files,
     runFindings: [],
     outcome: worst(files.map(f => f.outcome)),
-    expectedLabel: describeExpected(spec),
+    expectedLabel: spec ? describeExpected(spec) : 'each file\'s own count (not enforced)',
   };
 }
 
