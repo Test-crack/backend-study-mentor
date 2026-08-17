@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { DrillSessionStatus } from '@prisma/client';
@@ -16,10 +16,10 @@ const LEXIGRID_BONUS_PTS    = 5;
 const SKIP_GATE_COST        = 150;  // Momentum pts to skip the LexiGrid gate (must match frontend)
 
 async function resolveStudent(appUserId: string) {
-    return prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+    return prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
 }
 
-// ─── GET /api/student/daily-drill-state ──────────────────────────────────────
+// â”€â”€â”€ GET /api/student/daily-drill-state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function getDailyDrillState(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
@@ -28,7 +28,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         const student = await resolveStudent(appUserId);
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        // Validate streak on every load — resets to 0 if student missed a day
+        // Validate streak on every load â€” resets to 0 if student missed a day
         const daily_streak = await getValidatedStreak(student);
 
         // TIMESTAMPTZ boundary for drill_sessions.created_at
@@ -45,7 +45,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
                 where: {
                     student_id: student.id,
                     game_type:    'LEXIGRID',
-                    session_date: sessionToday   // exact IST date match — no gte skew
+                    session_date: sessionToday   // exact IST date match â€” no gte skew
                 }
             }),
             prisma.studentCompetencyMatrix.findMany({
@@ -57,7 +57,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         const validBands = competencyMatrix
             .map(m => Number(m.band_score))
             .filter(s => s > 0);
-        // 0 here is a deliberate "no data yet" sentinel (out of the [4,9] band domain) —
+        // 0 here is a deliberate "no data yet" sentinel (out of the [4,9] band domain) â€”
         // unreachable in practice since the diagnostic populates all 4 skills before
         // the dashboard is accessible. Never fabricate a floor band for missing data.
         const current_band = validBands.length > 0
@@ -66,7 +66,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
 
         const drills_completed_today   = drillSessions.length;
         const lexigrid_completed_today = !!lexiGridRecord;
-        // Dashboard unlocks when Drill 2 is accessed — still threshold of 2
+        // Dashboard unlocks when Drill 2 is accessed â€” still threshold of 2
         const dashboard_unlocked       = drills_completed_today >= 2;
         const extra_sessions_today     = drillSessions.filter(s => s.is_extra_session).length;
         const sessions_remaining       = MAX_SESSIONS_PER_DAY - drills_completed_today;
@@ -76,11 +76,11 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         const hasDCSForExtra = daily_dcs >= DCS_EXTRA_THRESHOLD;
         const hasMomForExtra = student.momentum_score >= EXTRA_SESSION_COST;
 
-        // ── next_action decision tree ──────────────────────────────────────────
-        // DRILL_1 → LEXIGRID gate → DRILL_2 → DRILL_3 (all free)
-        // → EXTRA_DRILL_READY   (credit already purchased, not yet consumed)
-        // → EXTRA_DRILL_AVAILABLE (eligible to purchase: DCS≥40% + 300 momentum pts)
-        // → DRILL_LOCKED_LOW_DCS / DRILL_LOCKED_INSUFFICIENT_PTS
+        // â”€â”€ next_action decision tree â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // DRILL_1 â†’ LEXIGRID gate â†’ DRILL_2 â†’ DRILL_3 (all free)
+        // â†’ EXTRA_DRILL_READY   (credit already purchased, not yet consumed)
+        // â†’ EXTRA_DRILL_AVAILABLE (eligible to purchase: DCSâ‰¥40% + 300 momentum pts)
+        // â†’ DRILL_LOCKED_LOW_DCS / DRILL_LOCKED_INSUFFICIENT_PTS
         const pendingCredit = student.extra_drill_credits > 0;
 
         let next_action: string;
@@ -93,11 +93,11 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
         } else if (drills_completed_today === 2) {
             next_action = 'DRILL_3';
         } else if (drills_completed_today >= MAX_SESSIONS_PER_DAY) {
-            // All 4 drills done — hard cap reached for today
+            // All 4 drills done â€” hard cap reached for today
             next_action = 'DAILY_LIMIT_REACHED';
         } else if (drills_completed_today >= FREE_SESSIONS_PER_DAY) {
             if (pendingCredit) {
-                // Student already paid — go straight to drill, no re-payment
+                // Student already paid â€” go straight to drill, no re-payment
                 next_action = 'EXTRA_DRILL_READY';
             } else if (!hasDCSForExtra) {
                 next_action = 'DRILL_LOCKED_LOW_DCS';
@@ -139,7 +139,7 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/student/game-score ────────────────────────────────────────────
+// â”€â”€â”€ POST /api/student/game-score â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { game_type, words_solved, total_attempts, bonus_eligible }
 export async function saveGameScore(req: AuthRequest, res: Response) {
     try {
@@ -151,7 +151,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
 
         const { game_type, words_solved, total_attempts, bonus_eligible, session_token, status } = req.body;
 
-        // ─── Skip Gate branch ─────────────────────────────────────────────────────
+        // â”€â”€â”€ Skip Gate branch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Frontend sends { game_type: 'LEXIGRID', status: 'skipped', momentum_spent: 150 }
         // when the student spends momentum to bypass the LexiGrid gate.
         // We ignore momentum_spent from the client and use the server constant instead.
@@ -162,43 +162,43 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
 
             const sessionToday = currentISTDate();
 
-            // Interactive transaction — guarantees atomicity:
-            //   • Idempotency check is read-consistent with the writes
-            //   • If the momentum deduct guard fails (count=0), an error is thrown
+            // Interactive transaction â€” guarantees atomicity:
+            //   â€¢ Idempotency check is read-consistent with the writes
+            //   â€¢ If the momentum deduct guard fails (count=0), an error is thrown
             //     which auto-rolls back the game-score INSERT, preventing a free skip
-            //   • If a concurrent request races and creates the record first, the
+            //   â€¢ If a concurrent request races and creates the record first, the
             //     INSERT will throw a unique-constraint violation, rolling back the
-            //     deduct — no double-spend
+            //     deduct â€” no double-spend
             const result = await prisma.$transaction(async (tx) => {
                 // Idempotency: any existing record for today means the gate is already
                 // open (either already skipped or already played normally). In both
-                // cases just return the current balance — do NOT deduct again.
+                // cases just return the current balance â€” do NOT deduct again.
                 const existing = await tx.studentGameScore.findFirst({
                     where: { student_id: student.id, game_type: 'LEXIGRID', session_date: sessionToday },
                     select: { id: true, words_solved: true },
                 });
 
                 if (existing) {
-                    const fresh = await tx.institute_students.findUnique({
+                    const fresh = await tx.instituteStudent.findUnique({
                         where:  { id: student.id },
                         select: { momentum_score: true },
                     });
                     return { already_done: true, momentum_score: fresh!.momentum_score };
                 }
 
-                // Atomic deduct — WHERE guard prevents double-spend under any race.
+                // Atomic deduct â€” WHERE guard prevents double-spend under any race.
                 // count=0 means the student does not have enough momentum right now.
-                const deducted = await tx.institute_students.updateMany({
+                const deducted = await tx.instituteStudent.updateMany({
                     where: { id: student.id, momentum_score: { gte: SKIP_GATE_COST } },
                     data:  { momentum_score: { decrement: SKIP_GATE_COST } },
                 });
 
                 if (deducted.count === 0) {
-                    // Throw to trigger transaction rollback — caught below as 400
+                    // Throw to trigger transaction rollback â€” caught below as 400
                     throw Object.assign(new Error('INSUFFICIENT_MOMENTUM'), { isAppError: true, statusCode: 400 });
                 }
 
-                // Record the skip — completed:true is what getDailyDrillState checks
+                // Record the skip â€” completed:true is what getDailyDrillState checks
                 // to determine lexigrid_completed_today and flip next_action to DRILL_2.
                 // words_solved=0 and momentum_earned=0 distinguish a skip from a play.
                 await tx.studentGameScore.create({
@@ -216,7 +216,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                     },
                 } as any);
 
-                const fresh = await tx.institute_students.findUnique({
+                const fresh = await tx.instituteStudent.findUnique({
                     where:  { id: student.id },
                     select: { momentum_score: true },
                 });
@@ -231,7 +231,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                 momentum_score: result.momentum_score,
             });
         }
-        // ─── End skip branch ──────────────────────────────────────────────────────
+        // â”€â”€â”€ End skip branch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         if (!game_type || words_solved === undefined) {
             return res.status(400).json({ success: false, error: 'game_type and words_solved are required.' });
@@ -240,8 +240,8 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         const wordsSolvedNum = Math.max(0, parseInt(words_solved));
 
         // Verify the session token for LexiGrid to prevent client-side score inflation.
-        // 'missing' = offline/fallback session → allow but award zero momentum.
-        // 'invalid' = tampered token → reject outright.
+        // 'missing' = offline/fallback session â†’ allow but award zero momentum.
+        // 'invalid' = tampered token â†’ reject outright.
         if (game_type === 'LEXIGRID') {
             const tokenStatus = verifyLexiGridSession(session_token, student.id, wordsSolvedNum);
             if (tokenStatus === 'invalid') {
@@ -249,7 +249,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                 return res.status(400).json({ success: false, error: 'Invalid session token.' });
             }
             if (tokenStatus === 'missing') {
-                // Offline/fallback play — record the session but award no momentum.
+                // Offline/fallback play â€” record the session but award no momentum.
                 const sessionToday = currentISTDate();
                 try {
                     await (prisma as any).studentGameScore.create({
@@ -257,7 +257,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
                     });
                 } catch (e: any) {
                     if (e?.code !== 'P2002') throw e;
-                    // A record already exists today — refresh stats only if it is NOT yet
+                    // A record already exists today â€” refresh stats only if it is NOT yet
                     // completed, so an offline replay can't clobber the day's real gate score.
                     await (prisma as any).studentGameScore.updateMany({
                         where: { student_id: student.id, game_type, session_date: sessionToday, completed: false },
@@ -278,7 +278,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         const POINTS_PER_WORD = 15;
         // Bonus requires all 5 words solved within 2 attempts each. Enforce a server-side
         // plausibility bound on total_attempts so the client can't just assert the bonus:
-        // "≤2 tries for each of 5 words" ⇒ at most 10 attempts total.
+        // "â‰¤2 tries for each of 5 words" â‡’ at most 10 attempts total.
         const attemptsUsed  = Math.max(0, parseInt(total_attempts ?? '0'));
         const bonusEarned   = (bonus_eligible === true || bonus_eligible === 'true')
             && wordsSolvedNum >= WORDS_PER_SESSION
@@ -295,7 +295,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         // day's first completion and is the only one allowed to award momentum. A
         // concurrent duplicate (e.g. the localStorage pending-submit retry firing while
         // the original request is still in flight) hits the unique constraint, falls to
-        // the update branch, and awards nothing — no double-award. (Previously a
+        // the update branch, and awards nothing â€” no double-award. (Previously a
         // check-then-upsert-then-increment could double-award under that race.)
         let isFirstCompletion = false;
         try {
@@ -317,7 +317,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         } catch (e: any) {
             if (e?.code !== 'P2002') throw e;
             // A record for today already exists. Only refresh stats if it is NOT yet
-            // completed — a standalone replay must not overwrite the day's real gate
+            // completed â€” a standalone replay must not overwrite the day's real gate
             // score with a (possibly worse, momentum-0) replay. Awards no momentum either way.
             await prisma.studentGameScore.updateMany({
                 where: { student_id: student.id, game_type, session_date: sessionToday, completed: false },
@@ -331,10 +331,10 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
             });
         }
 
-        // Award momentum only to the request that won the insert — idempotent under retries.
+        // Award momentum only to the request that won the insert â€” idempotent under retries.
         let updated_momentum = student.momentum_score;
         if (isFirstCompletion && momentum_earned > 0) {
-            const updatedStudent = await prisma.institute_students.update({
+            const updatedStudent = await prisma.instituteStudent.update({
                 where: { id: student.id },
                 data:  { momentum_score: { increment: momentum_earned } },
             });
@@ -359,9 +359,9 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
         }
         // Concurrent skip double-tap: the second request's INSERT hits the unique
         // (student, game, date) constraint and rolls back its own deduct. The gate is
-        // already open — return a clean already_done with the current balance, not a 500.
+        // already open â€” return a clean already_done with the current balance, not a 500.
         if (err?.code === 'P2002') {
-            const fresh = await prisma.institute_students.findUnique({
+            const fresh = await prisma.instituteStudent.findUnique({
                 where: { user_id: (req as any).appUserId as string }, select: { momentum_score: true },
             });
             return res.json({ success: true, already_done: true, momentum_score: fresh?.momentum_score ?? 0 });
@@ -371,7 +371,7 @@ export async function saveGameScore(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/drills/authorize-extra ────────────────────────────────────────
+// â”€â”€â”€ POST /api/drills/authorize-extra â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Deducts EXTRA_DRILL_COST (300) pts to authorise one extra drill beyond the free daily limit.
 export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
     try {
@@ -407,12 +407,12 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             });
         }
 
-        // DCS gate — student must score ≥ 40% today to unlock extra drill
+        // DCS gate â€” student must score â‰¥ 40% today to unlock extra drill
         const daily_dcs = await computeDailyDCS(student.id);
         if (daily_dcs < DCS_EXTRA_THRESHOLD) {
             return res.status(400).json({
                 success: false,
-                error: `Your Daily Competency Score (${daily_dcs}%) must be ≥${DCS_EXTRA_THRESHOLD}% to unlock an extra drill.`,
+                error: `Your Daily Competency Score (${daily_dcs}%) must be â‰¥${DCS_EXTRA_THRESHOLD}% to unlock an extra drill.`,
                 daily_dcs,
                 required_dcs: DCS_EXTRA_THRESHOLD
             });
@@ -427,8 +427,8 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
 
         // Atomic purchase: guards live in the WHERE clause so two concurrent requests
         // that both pass the soft checks above cannot both decrement.
-        // If count === 0 the DB rejected the write — stale read (race) or state changed.
-        const result = await prisma.institute_students.updateMany({
+        // If count === 0 the DB rejected the write â€” stale read (race) or state changed.
+        const result = await prisma.instituteStudent.updateMany({
             where: {
                 id:                  student.id,
                 momentum_score:      { gte: EXTRA_SESSION_COST },
@@ -444,12 +444,12 @@ export async function authorizeExtraDrill(req: AuthRequest, res: Response) {
             return res.status(409).json({
                 success: false,
                 error:   'purchase_failed',
-                message: 'Purchase failed — your balance or credit status changed. Please refresh and try again.',
+                message: 'Purchase failed â€” your balance or credit status changed. Please refresh and try again.',
             });
         }
 
-        // updateMany does not return the updated row — fetch fresh values for the response.
-        const fresh = await prisma.institute_students.findUnique({
+        // updateMany does not return the updated row â€” fetch fresh values for the response.
+        const fresh = await prisma.instituteStudent.findUnique({
             where:  { id: student.id },
             select: { momentum_score: true, extra_drill_credits: true },
         });

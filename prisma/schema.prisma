@@ -28,6 +28,7 @@ model Concept {
   @@index([conceptSlug])
   @@index([domain])
   @@index([keywords], type: Gin)
+  @@map("concepts_legacy")
 }
 
 model Content {
@@ -43,6 +44,7 @@ model Content {
 
   @@index([conceptId])
   @@index([contentType])
+  @@map("content_items_legacy")
 }
 
 model Course {
@@ -72,6 +74,7 @@ model Course {
   @@index([instructorId], map: "idx_course_instructor")
   @@index([is_published], map: "idx_course_published")
   @@index([slug], map: "idx_course_slug")
+  @@map("courses_legacy")
 }
 
 model CourseContentItem {
@@ -90,6 +93,7 @@ model CourseContentItem {
 
   @@index([concept_id], map: "idx_content_concept")
   @@index([content_kind], map: "idx_content_kind")
+  @@map("course_content_items_legacy")
 }
 
 model CourseModule {
@@ -104,8 +108,10 @@ model CourseModule {
   @@unique([course_id, module_id], map: "unique_course_module")
   @@unique([course_id, order_index], map: "unique_course_module_position")
   @@index([course_id, order_index], map: "idx_course_module_composite")
+  @@map("course_modules_legacy")
 }
 
+/// LEGACY: No active code references found. Razorpay course purchase flow was never shipped.
 model CourseOrder {
   id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   userId            String         @db.Uuid
@@ -122,6 +128,7 @@ model CourseOrder {
 
   @@index([status])
   @@index([userId])
+  @@map("course_orders_legacy")
 }
 
 model Domain {
@@ -134,6 +141,7 @@ model Domain {
   Course      Course[]
 
   @@index([slug], map: "idx_domain_slug")
+  @@map("domains_legacy")
 }
 
 model IeltsReadingAssessment {
@@ -161,6 +169,7 @@ model IeltsReadingAssessment {
   @@index([userId, category], map: "idx_ielts_reading_assessment_user_cat")
   @@index([userId, createdAt], map: "idx_ielts_reading_assessment_user_date")
   @@index([userId, grade], map: "idx_ielts_reading_assessment_user_grade")
+  @@map("ielts_reading_assessments")
 }
 
 model IeltsSpeakingAssessment {
@@ -180,6 +189,7 @@ model IeltsSpeakingAssessment {
 
   @@index([topicId], map: "IeltsReadingAssessment_topicId_idx")
   @@index([userId], map: "IeltsReadingAssessment_userId_idx")
+  @@map("ielts_speaking_assessments")
 }
 
 model IeltsSpeakingPractice {
@@ -198,6 +208,7 @@ model IeltsSpeakingPractice {
   IeltsSpeakingAssessment IeltsSpeakingAssessment[]
 
   @@index([band], map: "idx_ielts_reading_practice_band")
+  @@map("ielts_speaking_practice")
 }
 
 model IeltsSpeedReadingExercise {
@@ -213,6 +224,7 @@ model IeltsSpeedReadingExercise {
   IeltsSpeedReadingReport IeltsSpeedReadingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@index([reportId])
+  @@map("ielts_speed_reading_exercises")
 }
 
 model IeltsSpeedReadingReport {
@@ -227,6 +239,7 @@ model IeltsSpeedReadingReport {
   IeltsSpeedReadingExercise IeltsSpeedReadingExercise[]
 
   @@index([category])
+  @@map("ielts_speed_reading_reports")
 }
 
 model IeltsVoicePrompt {
@@ -244,6 +257,7 @@ model IeltsVoicePrompt {
   @@index([isActive], map: "idx_voice_prompt_active")
   @@index([band], map: "idx_voice_prompt_band")
   @@index([feature], map: "idx_voice_prompt_feature")
+  @@map("ielts_voice_prompts")
 }
 
 model IeltsWritingTask {
@@ -256,6 +270,7 @@ model IeltsWritingTask {
   IeltsWritingAssessment IeltsWritingAssessment[]
 
   @@index([assignedDate])
+  @@map("ielts_writing_tasks")
 }
 
 model IeltsWritingAssessment {
@@ -280,6 +295,7 @@ model IeltsWritingAssessment {
 
   @@index([userId])
   @@index([taskId])
+  @@map("ielts_writing_assessments")
 }
 
 model Instructor {
@@ -295,6 +311,7 @@ model Instructor {
   User           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@map("instructors_legacy")
 }
 
 model MCQ {
@@ -306,6 +323,8 @@ model MCQ {
   explanation       String?
   difficulty        String?           @default("medium") @db.VarChar(20)
   CourseContentItem CourseContentItem @relation(fields: [content_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_content_item")
+
+  @@map("mcqs_legacy")
 }
 
 model Module {
@@ -321,6 +340,7 @@ model Module {
   UserModuleProgress  UserModuleProgress[]
 
   @@index([domain], map: "idx_module_domain")
+  @@map("modules_legacy")
 }
 
 model ModuleConcept {
@@ -335,6 +355,7 @@ model ModuleConcept {
   @@unique([module_id, concept_id], map: "unique_module_concept")
   @@unique([module_id, order_index], map: "unique_module_concept_position")
   @@index([module_id, order_index], map: "idx_module_concept_composite")
+  @@map("module_concepts_legacy")
 }
 
 model Note {
@@ -344,8 +365,11 @@ model Note {
   body              String
   version           Int?              @default(1)
   CourseContentItem CourseContentItem @relation(fields: [content_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_content_item")
+
+  @@map("notes_legacy")
 }
 
+/// LEGACY: No active code references found. Superseded by IeltsReadingAssessment for speed-reading tracking.
 model ReadingAssessmentHistory {
   id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   userId             String   @db.Uuid
@@ -367,6 +391,7 @@ model ReadingAssessmentHistory {
 
   @@index([userId, createdAt])
   @@index([userId, difficulty])
+  @@map("reading_assessment_history_legacy")
 }
 
 model User {
@@ -391,25 +416,21 @@ model User {
   UserCourseEnrollment     UserCourseEnrollment[]
   UserModuleProgress       UserModuleProgress[]
   UserReadingProfile       UserReadingProfile?
-  ielts_batch_instructors  ielts_batch_instructors[]
-  ielts_batch_students     ielts_batch_students[]
-  ielts_batches            ielts_batches[]
-  institute_admins         institute_admins?
-  institute_instructors    institute_instructors?
-  institute_owners         institute_owners?
-  institute_students       institute_students?
-  institutes               institutes[]
+  ielts_batch_instructors  IeltsBatchInstructor[]
+  ielts_batch_students     IeltsBatchStudent[]
+  ielts_batches            IeltsBatch[]
+  institute_admins         InstituteAdmin?
+  institute_instructors    InstituteInstructor?
+  institute_owners         InstituteOwner?
+  institute_students       InstituteStudent?
+  institutes               Institute[]
   UserNotifications        UserNotification[]
 
   @@index([email])
+  @@map("users")
 }
 
-/// Recipient-generic persisted notifications, keyed by User.id — serves
-/// instructors today (STUDENT_IA_MISSED fan-out) and owners/admins later
-/// without schema changes. Student-facing notifications live in the separate
-/// student_notifications table (already deployed). Same semantics: payload is
-/// type-specific JSON, dedupe_key makes producers idempotent, read_at powers
-/// the bell badge, dismissed_at hides items from prominent surfaces.
+/// Recipient-generic persisted notifications, keyed by User.id
 model UserNotification {
   id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   user_id      String    @db.Uuid
@@ -437,6 +458,7 @@ model UserConcept {
   @@unique([userId, conceptId])
   @@index([conceptId])
   @@index([userId])
+  @@map("user_concepts")
 }
 
 model UserContentProgress {
@@ -460,6 +482,7 @@ model UserContentProgress {
   @@index([user_id, course_id, module_id], map: "idx_user_content_lookup")
   @@index([user_id, status], map: "idx_user_content_status")
   @@index([user_id, module_id, last_accessed_at(sort: Desc)], map: "idx_user_module_content")
+  @@map("user_content_progress_legacy")
 }
 
 model UserCourseEnrollment {
@@ -476,6 +499,7 @@ model UserCourseEnrollment {
 
   @@unique([user_id, course_id], map: "unique_user_course_enrollment")
   @@index([user_id, status], map: "idx_user_course_enrollment")
+  @@map("user_course_enrollments_legacy")
 }
 
 model UserModuleProgress {
@@ -492,6 +516,7 @@ model UserModuleProgress {
 
   @@unique([user_id, module_id, course_id], map: "unique_user_module_progress")
   @@index([user_id, course_id], map: "idx_user_progress_lookup")
+  @@map("user_module_progress_legacy")
 }
 
 model UserReadingProfile {
@@ -512,9 +537,9 @@ model UserReadingProfile {
   User                  User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([userId])
+  @@map("user_reading_profiles_legacy")
 }
 
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model YouTubeTranscript {
   id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   videoId      String   @unique @db.VarChar(20)
@@ -531,91 +556,98 @@ model YouTubeTranscript {
   @@index([accessCount])
   @@index([lastAccessed])
   @@index([videoId])
+  @@map("youtube_transcripts_legacy")
 }
 
-model ielts_batch_instructors {
-  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id      String        @db.Uuid
-  user_id       String        @db.Uuid
-  assigned_at   DateTime      @default(now()) @db.Timestamptz(6)
-  ielts_batches ielts_batches @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User          User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model IeltsBatchInstructor {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id      String     @db.Uuid
+  user_id       String     @db.Uuid
+  assigned_at   DateTime   @default(now()) @db.Timestamptz(6)
+  ielts_batches IeltsBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User          User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([batch_id, user_id])
   @@index([batch_id], map: "idx_ielts_batch_instructors_batch")
   @@index([user_id], map: "idx_ielts_batch_instructors_user")
+  @@map("ielts_batch_instructors")
 }
 
-model ielts_batch_students {
-  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id      String        @db.Uuid
-  user_id       String        @db.Uuid
-  enrolled_at   DateTime      @default(now()) @db.Timestamptz(6)
-  ielts_batches ielts_batches @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User          User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model IeltsBatchStudent {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id      String     @db.Uuid
+  user_id       String     @db.Uuid
+  enrolled_at   DateTime   @default(now()) @db.Timestamptz(6)
+  ielts_batches IeltsBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User          User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([batch_id, user_id])
   @@index([batch_id], map: "idx_ielts_batch_students_batch")
   @@index([user_id], map: "idx_ielts_batch_students_user")
+  @@map("ielts_batch_students")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model ielts_batches {
-  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  institute_id            String                    @db.Uuid
-  name                    String                    @db.VarChar(255)
-  description             String?
-  status                  String                    @default("ACTIVE") @db.VarChar(20)
-  max_students            Int?
-  created_by              String?                   @db.Uuid
-  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
-  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
-  ielts_batch_instructors ielts_batch_instructors[]
-  ielts_batch_students    ielts_batch_students[]
-  User                    User?                     @relation(fields: [created_by], references: [id], onUpdate: NoAction)
-  institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model IeltsBatch {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institute_id          String                 @db.Uuid
+  name                  String                 @db.VarChar(255)
+  description           String?
+  status                String                 @default("ACTIVE") @db.VarChar(20)
+  max_students          Int?
+  created_by            String?                @db.Uuid
+  created_at            DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime               @default(now()) @db.Timestamptz(6)
+  ielts_batch_instructors IeltsBatchInstructor[]
+  ielts_batch_students    IeltsBatchStudent[]
+  User                  User?                  @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  institutes            Institute              @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([institute_id], map: "idx_ielts_batches_institute")
   @@index([status], map: "idx_ielts_batches_status")
+  @@map("ielts_batches")
 }
 
-model institute_admins {
-  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id      String     @unique @db.Uuid
-  institute_id String     @db.Uuid
-  created_at   DateTime   @default(now()) @db.Timestamptz(6)
-  institutes   institutes @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User         User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model InstituteAdmin {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String    @unique @db.Uuid
+  institute_id String    @db.Uuid
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  institutes   Institute @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User         User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([institute_id], map: "idx_institute_admins_institute")
+  @@map("institute_admins")
 }
 
-model institute_instructors {
-  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id        String     @unique @db.Uuid
-  institute_id   String     @db.Uuid
+model InstituteInstructor {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String    @unique @db.Uuid
+  institute_id   String    @db.Uuid
   bio            String?
-  specialization String?    @db.VarChar(255)
-  created_at     DateTime   @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime   @default(now()) @db.Timestamptz(6)
-  institutes     institutes @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User           User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  specialization String?   @db.VarChar(255)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  institutes     Institute @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User           User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([institute_id], map: "idx_institute_instructors_institute")
+  @@map("institute_instructors")
 }
 
-model institute_owners {
-  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id      String     @unique @db.Uuid
-  institute_id String     @db.Uuid
-  created_at   DateTime   @default(now()) @db.Timestamptz(6)
-  institutes   institutes @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User         User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model InstituteOwner {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String    @unique @db.Uuid
+  institute_id String    @db.Uuid
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  institutes   Institute @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User         User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([institute_id], map: "idx_institute_owners_institute")
+  @@map("institute_owners")
 }
 
-model institute_students {
+model InstituteStudent {
   id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id                 String                    @unique @db.Uuid
   institute_id            String                    @db.Uuid
@@ -623,8 +655,8 @@ model institute_students {
   is_active               Boolean                   @default(true)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
-  isDiagnosed             Boolean                   @default(false)
-  recommendationSeeded    Boolean                   @default(false)
+  isDiagnosed             Boolean                   @default(false) @map("is_diagnosed")
+  recommendationSeeded    Boolean                   @default(false) @map("recommendation_seeded")
   target_band             Float?
   momentum_score          Int                       @default(0)
   daily_streak            Int                       @default(0)
@@ -635,47 +667,50 @@ model institute_students {
   IASession               IASession[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
   DrillSessions           DrillSession[]
-  institutes              institutes                @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  institutes              Institute                 @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  mocksessions            mocksessions[]
+  mocksessions            MockSession[]
   GameScores              StudentGameScore[]
 
   @@index([is_active], map: "idx_institute_students_active")
   @@index([institute_id], map: "idx_institute_students_institute")
+  @@map("institute_students")
 }
 
-model institutes {
-  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                  String                  @db.VarChar(255)
+model Institute {
+  id                    String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                  String                @db.VarChar(255)
   address               String?
   logo_url              String?
-  is_active             Boolean                 @default(true)
-  created_by            String?                 @db.Uuid
-  created_at            DateTime                @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
-  ielts_batches         ielts_batches[]
-  institute_admins      institute_admins[]
-  institute_instructors institute_instructors[]
-  institute_owners      institute_owners[]
-  institute_students    institute_students[]
-  User                  User?                   @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  is_active             Boolean               @default(true)
+  created_by            String?               @db.Uuid
+  created_at            DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime              @default(now()) @db.Timestamptz(6)
+  ielts_batches         IeltsBatch[]
+  institute_admins      InstituteAdmin[]
+  institute_instructors InstituteInstructor[]
+  institute_owners      InstituteOwner[]
+  institute_students    InstituteStudent[]
+  User                  User?                 @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@index([is_active], map: "idx_institutes_is_active")
+  @@map("institutes")
 }
 
 model StudentCompetencyMatrix {
-  id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id         String             @db.Uuid
+  id                 String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id         String           @db.Uuid
   skill              IeltsSkillType
-  band_score         Decimal?           @db.Decimal(2, 1)
-  level              String?            @db.Char(1)
+  band_score         Decimal?         @db.Decimal(2, 1)
+  level              String?          @db.Char(1)
   sub_scores         Json?
-  assessments_count  Int                @default(0)
-  last_updated       DateTime           @default(now()) @db.Timestamptz(6)
-  institute_students institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
+  assessments_count  Int              @default(0)
+  last_updated       DateTime         @default(now()) @db.Timestamptz(6)
+  institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@unique([student_id, skill])
   @@index([student_id])
+  @@map("student_competency_matrix")
 }
 
 model AssessmentHistory {
@@ -689,11 +724,12 @@ model AssessmentHistory {
   transcript         String?
   raw_answers        Json?
   created_at         DateTime           @default(now()) @db.Timestamptz(6)
-  institute_students institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade)
+  institute_students InstituteStudent   @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@index([student_id])
   @@index([skill])
   @@index([mode])
+  @@map("assessment_history")
 }
 
 model RecommendationItem {
@@ -708,11 +744,12 @@ model RecommendationItem {
   skill_type    IeltsSkillType
   level         RecommendationLevel
   is_active     Boolean             @default(true)
-  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime            @default(now()) @db.Timestamptz(6)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt     DateTime            @default(now()) @db.Timestamptz(6) @map("updated_at")
   sub_skill     IeltsSubSkillType?
 
   @@index([skill_type, level, is_active])
+  @@map("recommendation_items")
 }
 
 model DrillSession {
@@ -735,7 +772,7 @@ model DrillSession {
   drill_completed_at DateTime?          @db.Timestamptz(6)
   apply_completed_at DateTime?          @db.Timestamptz(6)
   level              String?
-  Student            institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Student            InstituteStudent   @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([student_id], map: "idx_drill_sessions_student_id")
   @@index([student_id, skill, sub_skill, status, created_at(sort: Desc)], map: "idx_drill_sessions_student_skill_status")
@@ -744,20 +781,20 @@ model DrillSession {
 }
 
 model StudentGameScore {
-  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  student_id      String             @db.Uuid
-  game_type       String             @db.VarChar(30)
-  session_date    DateTime           @default(dbgenerated("((now() AT TIME ZONE 'Asia/Kolkata'::text))::date")) @db.Date
-  words_solved    Int                @default(0)
-  total_words     Int                @default(0)
-  bonus_eligible  Boolean            @default(false)
-  momentum_earned Int                @default(0)
-  completed       Boolean            @default(false)
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id      String           @db.Uuid
+  game_type       String           @db.VarChar(30)
+  session_date    DateTime         @default(dbgenerated("((now() AT TIME ZONE 'Asia/Kolkata'::text))::date")) @db.Date
+  words_solved    Int              @default(0)
+  total_words     Int              @default(0)
+  bonus_eligible  Boolean          @default(false)
+  momentum_earned Int              @default(0)
+  completed       Boolean          @default(false)
   played_word_ids Json?
-  created_at      DateTime           @default(now()) @db.Timestamptz(6)
-  total_attempts  Int                @default(0)
-  skipped         Boolean            @default(false)
-  Student         institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "student_game_scores_student_fk")
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+  total_attempts  Int              @default(0)
+  skipped         Boolean          @default(false)
+  Student         InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "student_game_scores_student_fk")
 
   @@unique([student_id, game_type, session_date], map: "student_game_scores_student_game_date_uniq")
   @@index([student_id])
@@ -824,33 +861,35 @@ model IAQuestion {
   @@index([is_active], map: "idx_iaquestion_active")
   @@index([difficulty], map: "idx_iaquestion_difficulty")
   @@index([skill, sub_skill], map: "idx_iaquestion_skill_subskill")
+  @@map("ia_questions")
 }
 
 model IASession {
-  id                      String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id              String             @db.Uuid
+  id                      String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id              String           @db.Uuid
   ia_number               Int
-  ia_date                 DateTime           @db.Date
-  status                  IASessionStatus    @default(PENDING)
-  selected_subskills      Json               @default("[]")
-  question_ids            Json               @default("[]")
-  answers                 Json               @default("{}")
-  time_started_at         DateTime?          @db.Timestamptz(6)
-  time_submitted_at       DateTime?          @db.Timestamptz(6)
-  window_closes_at        DateTime           @db.Timestamptz(6)
+  ia_date                 DateTime         @db.Date
+  status                  IASessionStatus  @default(PENDING)
+  selected_subskills      Json             @default("[]")
+  question_ids            Json             @default("[]")
+  answers                 Json             @default("{}")
+  time_started_at         DateTime?        @db.Timestamptz(6)
+  time_submitted_at       DateTime?        @db.Timestamptz(6)
+  window_closes_at        DateTime         @db.Timestamptz(6)
   scores                  Json?
   momentum_awarded        Int?
-  carry_forward_subskills Json               @default("[]")
-  created_at              DateTime           @default(now()) @db.Timestamptz(6)
-  institute_students      institute_students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  carry_forward_subskills Json             @default("[]")
+  created_at              DateTime         @default(now()) @db.Timestamptz(6)
+  institute_students      InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([student_id, ia_date], map: "uq_iasession_student_date")
   @@index([status], map: "idx_iasession_status")
   @@index([student_id, ia_date], map: "idx_iasession_student_date")
   @@index([student_id], map: "idx_iasession_student_id")
+  @@map("ia_sessions")
 }
 
-model mockquestions {
+model MockQuestion {
   id             String             @id(map: "pk_mock_questions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   skill          IeltsSkillType
   sub_skill      IeltsSubSkillType?
@@ -869,31 +908,33 @@ model mockquestions {
 
   @@index([skill, is_active], map: "idx_mock_questions_skill_active")
   @@index([skill, question_type], map: "idx_mock_questions_skill_type")
+  @@map("mock_questions")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model mocksessions {
-  id                 String               @id(map: "pk_mock_sessions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  student_id         String               @db.Uuid
-  attempt_type       MockAttemptType      @default(STANDARD)
-  month_year         String               @db.VarChar(7)
-  status             MockSessionStatus    @default(PENDING)
-  question_ids       Json                 @default("[]")
-  answers            Json                 @default("{}")
-  time_started_at    DateTime?            @db.Timestamptz(6)
-  time_submitted_at  DateTime?            @db.Timestamptz(6)
-  window_closes_at   DateTime             @db.Timestamptz(6)
+model MockSession {
+  id                 String             @id(map: "pk_mock_sessions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  student_id         String             @db.Uuid
+  attempt_type       MockAttemptType    @default(STANDARD)
+  month_year         String             @db.VarChar(7)
+  status             MockSessionStatus  @default(PENDING)
+  question_ids       Json               @default("[]")
+  answers            Json               @default("{}")
+  time_started_at    DateTime?          @db.Timestamptz(6)
+  time_submitted_at  DateTime?          @db.Timestamptz(6)
+  window_closes_at   DateTime           @db.Timestamptz(6)
   scores             Json?
-  real_band_score    Decimal?             @db.Decimal(2, 1)
+  real_band_score    Decimal?           @db.Decimal(2, 1)
   momentum_awarded   Int?
-  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
   sections           MockSectionAttempt[]
-  institute_students institute_students   @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_sessions_student")
+  institute_students InstituteStudent   @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_sessions_student")
 
   @@unique([student_id, month_year, attempt_type], map: "uq_mock_sessions_student_month_type")
   @@index([status], map: "idx_mock_sessions_status")
   @@index([student_id], map: "idx_mock_sessions_student_id")
   @@index([student_id, month_year], map: "idx_mock_sessions_student_month")
+  @@map("mock_sessions")
 }
 
 model MockSectionAttempt {
@@ -907,7 +948,7 @@ model MockSectionAttempt {
   answers      Json              @default("{}")
   scores       Json?
   created_at   DateTime          @default(now()) @db.Timestamptz(6)
-  session      mocksessions      @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_section_session")
+  session      MockSession       @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mock_section_session")
 
   @@unique([session_id, section])
   @@index([session_id])
@@ -915,7 +956,7 @@ model MockSectionAttempt {
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model diagnostic_questions {
+model DiagnosticQuestion {
   id             String         @id(map: "pk_diagnostic_questions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   level          String         @db.Char(1)
   skill          IeltsSkillType
@@ -934,6 +975,7 @@ model diagnostic_questions {
   @@index([level, skill, is_active], map: "idx_dq_level_skill_active")
   @@index([set_id], map: "idx_dq_set_id")
   @@index([set_id, sequence], map: "idx_dq_set_sequence")
+  @@map("diagnostic_questions")
 }
 
 enum IeltsSubSkillType {

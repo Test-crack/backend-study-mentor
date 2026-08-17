@@ -1,4 +1,4 @@
-// src/controllers/superadminController.ts
+﻿// src/controllers/superadminController.ts
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
@@ -8,7 +8,7 @@ import { paramStr } from '../utils/httpParams';
 
 const VALID_ROLES = Object.values(UserRoleType);
 
-// ─── GET /api/superadmin/users ───────────────────────────────────────────────
+// â”€â”€â”€ GET /api/superadmin/users â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAllUsers(req: AuthRequest, res: Response) {
     try {
@@ -79,7 +79,7 @@ export async function getAllUsers(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/superadmin/institutes ─────────────────────────────────────────
+// â”€â”€â”€ GET /api/superadmin/institutes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getInstitutes(req: AuthRequest, res: Response) {
     try {
@@ -89,7 +89,7 @@ export async function getInstitutes(req: AuthRequest, res: Response) {
             ? { name: { contains: search, mode: 'insensitive' as const } }
             : undefined;
 
-        const result = await prisma.institutes.findMany({
+        const result = await prisma.institute.findMany({
             where,
             orderBy: { created_at: 'desc' },
             include: {
@@ -135,7 +135,7 @@ export async function getInstitutes(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── PATCH /api/superadmin/institutes/:id/status ──────────────────────────────
+// â”€â”€â”€ PATCH /api/superadmin/institutes/:id/status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { isActive: boolean }
 
 export async function toggleInstituteStatus(req: AuthRequest, res: Response) {
@@ -147,12 +147,12 @@ export async function toggleInstituteStatus(req: AuthRequest, res: Response) {
     }
 
     try {
-        const existing = await prisma.institutes.findUnique({ where: { id } });
+        const existing = await prisma.institute.findUnique({ where: { id } });
         if (!existing) {
             return res.status(404).json({ error: 'Institute not found.' });
         }
 
-        const updated = await prisma.institutes.update({
+        const updated = await prisma.institute.update({
             where: { id },
             data: { is_active: isActive },
         });
@@ -175,12 +175,12 @@ export async function updateInstitute(req: AuthRequest, res: Response) {
     const { name, address, logoUrl } = req.body as { name?: string; address?: string; logoUrl?: string };
 
     try {
-        const existing = await prisma.institutes.findUnique({ where: { id } });
+        const existing = await prisma.institute.findUnique({ where: { id } });
         if (!existing) {
             return res.status(404).json({ error: 'Institute not found.' });
         }
 
-        const updated = await prisma.institutes.update({
+        const updated = await prisma.institute.update({
             where: { id },
             data: {
                 ...(name !== undefined ? { name: name.trim() } : {}),
@@ -203,7 +203,7 @@ export async function updateInstitute(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/superadmin/institutes ─────────────────────────────────────────
+// â”€â”€â”€ POST /api/superadmin/institutes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { instituteName, address?, ownerName, ownerEmail }
 // Flow:
 //   1. Invite owner via Supabase (sends magic link email)
@@ -259,7 +259,7 @@ export async function createInstitute(req: AuthRequest, res: Response) {
         }
 
         // 3. Create the institute
-        const institute = await prisma.institutes.create({
+        const institute = await prisma.institute.create({
             data: {
                 name: instituteName.trim(),
                 address: address?.trim() ?? null,
@@ -269,7 +269,7 @@ export async function createInstitute(req: AuthRequest, res: Response) {
         });
 
         // 4. Link owner to institute
-        await prisma.institute_owners.upsert({
+        await prisma.instituteOwner.upsert({
             where: { user_id: dbUser.id },
             update: { institute_id: institute.id },
             create: { user_id: dbUser.id, institute_id: institute.id },

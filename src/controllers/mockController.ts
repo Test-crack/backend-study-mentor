@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
@@ -6,7 +6,7 @@ import { applySmoothing } from '../lib/iaProcessor';
 import { BAND_MIN, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
 import { paramStr } from '../utils/httpParams';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const MOCK_IA_THRESHOLD     = 6;
 const MOCK_EARNED_COST      = 1500;
@@ -44,7 +44,7 @@ const SUB_SCORE_KEY_MAP: Record<string, string> = {
     PRONUNCIATION: 'pronunciationScore',
 };
 
-// ─── IST helpers ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ IST helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function toISTDateString(d: Date): string {
     const ist = new Date(d.getTime() + IST_OFFSET_MS);
@@ -59,7 +59,7 @@ function currentMonthYear(): string {
     return toISTDateString(new Date()).slice(0, 7);
 }
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function shuffle<T>(arr: T[]): T[] {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -87,7 +87,7 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
     const base = { skill, is_active: true } as any;
 
     if (skill === 'LISTENING') {
-        const pool = await prisma.mockquestions.findMany({
+        const pool = await prisma.mockQuestion.findMany({
             where:  { ...base, audio_url: { not: null } },
             select: { id: true, sub_skill: true, audio_url: true, question_type: true, prompt_text: true, options: true }
         });
@@ -99,7 +99,7 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
     }
 
     if (skill === 'READING') {
-        const pool = await prisma.mockquestions.findMany({
+        const pool = await prisma.mockQuestion.findMany({
             where:  { ...base, passage_id: { not: null } },
             select: { id: true, sub_skill: true, passage_id: true, passage_text: true, question_type: true, prompt_text: true, options: true }
         });
@@ -120,11 +120,11 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
 
     const subSkillData = await Promise.all(subSkills.map(async ss => {
         const [mcqs, prompts] = await Promise.all([
-            prisma.mockquestions.findMany({
+            prisma.mockQuestion.findMany({
                 where:  { skill: skill as any, sub_skill: ss as any, question_type: 'MCQ', is_active: true },
                 select: { id: true, sub_skill: true, question_type: true, prompt_text: true, options: true }
             }),
-            prisma.mockquestions.findMany({
+            prisma.mockQuestion.findMany({
                 where:  { skill: skill as any, sub_skill: ss as any, question_type: promptType, is_active: true },
                 select: { id: true, sub_skill: true, question_type: true, prompt_text: true, options: true }
             })
@@ -143,7 +143,7 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
     return { section_type: 'MCQ_MIX', audio_url: null, passage_text: null, passage_id: null, questions };
 }
 
-// ─── Eligibility ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Eligibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface EligibilityResult {
     isEligible:      boolean;
@@ -216,12 +216,12 @@ async function checkEligibility(studentId: string): Promise<EligibilityResult> {
             reasons.push({ key: `ia_skill_${skill.toLowerCase()}`, message: `Complete at least 1 IA covering ${skill}` });
     }
     if (!bandImproved)
-        reasons.push({ key: 'band_improvement', message: `Improve any skill band ≥ ${MOCK_BAND_IMPROVEMENT} from diagnostic (best so far: +${bestImprovement.toFixed(1)})` });
+        reasons.push({ key: 'band_improvement', message: `Improve any skill band â‰¥ ${MOCK_BAND_IMPROVEMENT} from diagnostic (best so far: +${bestImprovement.toFixed(1)})` });
 
     return { isEligible: reasons.length === 0, reasons, totalIAs, skillsCovered, bandImproved, bestImprovement, improvedSkill, diagnosticBands, currentBands };
 }
 
-// ─── Section helpers ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Section helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * For a session, mark any IN_PROGRESS section rows whose expires_at has passed as EXPIRED.
@@ -243,18 +243,18 @@ function sectionIsTerminal(status: string) {
     return status === 'SUBMITTED' || status === 'EXPIRED';
 }
 
-// ─── GET /api/mock/status ─────────────────────────────────────────────────────
+// â”€â”€â”€ GET /api/mock/status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getMockStatus(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        // ── Expiry sweep: sessions whose 24h window has closed ─────────────────
-        const expiredSessions = await prisma.mocksessions.findMany({
+        // â”€â”€ Expiry sweep: sessions whose 24h window has closed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        const expiredSessions = await prisma.mockSession.findMany({
             where: { student_id: student.id, window_closes_at: { lt: new Date() }, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
             select: { id: true, answers: true, question_ids: true }
         });
@@ -287,7 +287,7 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
 
             if (hasRealAnswers) {
                 try {
-                    const full = await prisma.mocksessions.findUnique({ where: { id: exp.id } });
+                    const full = await prisma.mockSession.findUnique({ where: { id: exp.id } });
                     if (full && (full.status === 'PENDING' || full.status === 'IN_PROGRESS')) {
                         await processMockSession(full, student, aggregatedAnswers);
                     }
@@ -297,14 +297,14 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
                         console.warn(`[Mock] auto-grade unavailable for ${exp.id}; will retry.`);
                     } else {
                         console.error(`[Mock] auto-grade failed for ${exp.id}:`, e);
-                        await prisma.mocksessions.updateMany({
+                        await prisma.mockSession.updateMany({
                             where: { id: exp.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
                             data:  { status: 'ABANDONED' as any }
                         });
                     }
                 }
             } else {
-                await prisma.mocksessions.updateMany({
+                await prisma.mockSession.updateMany({
                     where: { id: exp.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } },
                     data:  { status: 'ABANDONED' as any }
                 });
@@ -314,14 +314,14 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
         const eligibility = await checkEligibility(student.id);
         const monthYear   = currentMonthYear();
 
-        const thisMonthSessions = await prisma.mocksessions.findMany({
+        const thisMonthSessions = await prisma.mockSession.findMany({
             where:  { student_id: student.id, month_year: monthYear },
             select: { id: true, attempt_type: true, status: true }
         });
 
         const standardSession = thisMonthSessions.find(s => s.attempt_type === 'STANDARD');
         const earnedSession   = thisMonthSessions.find(s => s.attempt_type === 'EARNED');
-        const activeSession   = await prisma.mocksessions.findFirst({
+        const activeSession   = await prisma.mockSession.findFirst({
             where:  { student_id: student.id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
             select: { id: true, status: true }
         });
@@ -374,7 +374,7 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/mock/questions — create or resume session, return overview ──────
+// â”€â”€â”€ GET /api/mock/questions â€” create or resume session, return overview â”€â”€â”€â”€â”€â”€
 // Returns section statuses only; questions are fetched per-section via startMockSection.
 
 export async function getMockQuestions(req: AuthRequest, res: Response) {
@@ -382,14 +382,14 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const attemptType = (req.query.attempt_type as string ?? 'STANDARD').toUpperCase() as 'STANDARD' | 'EARNED';
         const monthYear   = currentMonthYear();
 
-        // ── 1. Resume any active session ──────────────────────────────────────
-        const activeSession = await prisma.mocksessions.findFirst({
+        // â”€â”€ 1. Resume any active session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        const activeSession = await prisma.mockSession.findFirst({
             where: { student_id: student.id, status: { in: ['PENDING', 'IN_PROGRESS'] as any } }
         });
 
@@ -397,7 +397,7 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
             // Lazy expiry sweep for sections
             const sections = await lazySweepSectionExpiry(activeSession.id);
             if (activeSession.status === 'PENDING') {
-                await prisma.mocksessions.update({
+                await prisma.mockSession.update({
                     where: { id: activeSession.id },
                     data:  { status: 'IN_PROGRESS' as any, time_started_at: new Date() }
                 });
@@ -418,12 +418,12 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
             });
         }
 
-        // ── 2. Validate eligibility ────────────────────────────────────────────
+        // â”€â”€ 2. Validate eligibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const eligibility = await checkEligibility(student.id);
         if (!eligibility.isEligible) return res.status(403).json({ success: false, error: 'Not eligible for mock test.', reasons: eligibility.reasons });
 
-        // ── 3. Check monthly slot ─────────────────────────────────────────────
-        const existingSlot = await prisma.mocksessions.findFirst({
+        // â”€â”€ 3. Check monthly slot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        const existingSlot = await prisma.mockSession.findFirst({
             where: { student_id: student.id, month_year: monthYear, attempt_type: attemptType as any }
         });
         if (existingSlot) {
@@ -433,7 +433,7 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
             return res.status(409).json({ success: false, error: msg, slot_status: existingSlot.status });
         }
 
-        // ── 4. Earned: pre-validate (soft checks; balance enforced inside transaction) ──
+        // â”€â”€ 4. Earned: pre-validate (soft checks; balance enforced inside transaction) â”€â”€
         if (attemptType === 'EARNED') {
             const days = Math.floor((Date.now() - student.created_at.getTime()) / 86_400_000);
             if (eligibility.totalIAs < MOCK_EARNED_MIN_IAS) return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_MIN_IAS} IAs.` });
@@ -442,7 +442,7 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
             if (student.momentum_score < MOCK_EARNED_COST)  return res.status(403).json({ success: false, error: `Need ${MOCK_EARNED_COST} momentum.` });
         }
 
-        // ── 5. Pre-fetch all 4 sections' question pools (validate before creating session) ──
+        // â”€â”€ 5. Pre-fetch all 4 sections' question pools (validate before creating session) â”€â”€
         const [rawL, rawR, rawW, rawS] = await Promise.all([
             fetchMockSectionQuestions('LISTENING'),
             fetchMockSectionQuestions('READING'),
@@ -467,17 +467,17 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         const now            = Date.now();
         const windowClosesAt = new Date(now + MOCK_WINDOW_MS);
 
-        // ── 6. Create session + 4 NOT_STARTED section rows ───────────────────
+        // â”€â”€ 6. Create session + 4 NOT_STARTED section rows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const session = await prisma.$transaction(async (tx) => {
             if (attemptType === 'EARNED') {
                 // Re-read balance inside transaction to prevent double-spend on concurrent clicks
-                const freshStudent = await tx.institute_students.findUnique({ where: { id: student.id }, select: { momentum_score: true } });
+                const freshStudent = await tx.instituteStudent.findUnique({ where: { id: student.id }, select: { momentum_score: true } });
                 if (!freshStudent || freshStudent.momentum_score < MOCK_EARNED_COST) {
                     throw Object.assign(new Error('Insufficient momentum'), { code: 'INSUFFICIENT_MOMENTUM' });
                 }
-                await tx.institute_students.update({ where: { id: student.id }, data: { momentum_score: { decrement: MOCK_EARNED_COST } } });
+                await tx.instituteStudent.update({ where: { id: student.id }, data: { momentum_score: { decrement: MOCK_EARNED_COST } } });
             }
-            const newSession = await tx.mocksessions.create({
+            const newSession = await tx.mockSession.create({
                 data: {
                     student_id:       student.id,
                     attempt_type:     attemptType as any,
@@ -527,18 +527,18 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/mock/session/:sessionId — lazy expiry + section state ───────────
+// â”€â”€â”€ GET /api/mock/session/:sessionId â€” lazy expiry + section state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getSessionState(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const sessionId = paramStr(req.params.sessionId);
-        const session = await prisma.mocksessions.findUnique({ where: { id: sessionId } });
+        const session = await prisma.mockSession.findUnique({ where: { id: sessionId } });
         if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
 
         const sections = await lazySweepSectionExpiry(sessionId);
@@ -563,14 +563,14 @@ export async function getSessionState(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/mock/sections/start — start a section, return its questions ────
+// â”€â”€â”€ POST /api/mock/sections/start â€” start a section, return its questions â”€â”€â”€â”€
 
 export async function startMockSection(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { session_id, section } = req.body;
@@ -579,7 +579,7 @@ export async function startMockSection(req: AuthRequest, res: Response) {
         const sectionUpper = String(section).toUpperCase();
         if (!MOCK_SKILL_ORDER.includes(sectionUpper as any)) return res.status(400).json({ success: false, error: 'Invalid section.' });
 
-        const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
+        const session = await prisma.mockSession.findUnique({ where: { id: session_id } });
         if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.status === 'COMPLETED' || session.status === 'ABANDONED') return res.status(400).json({ success: false, error: 'Session already finalised.' });
         if (new Date() > session.window_closes_at) return res.status(400).json({ success: false, error: 'Mock window has closed.' });
@@ -622,7 +622,7 @@ export async function startMockSection(req: AuthRequest, res: Response) {
         const cfg = questionIdsConfig.find(c => c.skill === sectionUpper);
         if (!cfg) return res.status(500).json({ success: false, error: 'Question config missing.' });
 
-        const questionRows = await prisma.mockquestions.findMany({
+        const questionRows = await prisma.mockQuestion.findMany({
             where:  { id: { in: cfg.ids } },
             select: { id: true, skill: true, sub_skill: true, question_type: true, prompt_text: true, options: true, audio_url: true, passage_id: true, passage_text: true }
         });
@@ -655,14 +655,14 @@ export async function startMockSection(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/mock/answer — save answer to section row ──────────────────────
+// â”€â”€â”€ POST /api/mock/answer â€” save answer to section row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function saveMockAnswer(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { session_id, section, question_id, answer } = req.body;
@@ -670,7 +670,7 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
 
         const sectionUpper = String(section).toUpperCase();
 
-        const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
+        const session = await prisma.mockSession.findUnique({ where: { id: session_id } });
         if (!session || session.student_id !== student.id) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.status === 'COMPLETED' || session.status === 'ABANDONED') return res.status(400).json({ success: false, error: 'Session already finalised.' });
         if (new Date() > session.window_closes_at) return res.status(400).json({ success: false, error: 'Mock window expired.' });
@@ -712,14 +712,14 @@ export async function saveMockAnswer(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/mock/submit — submit one section; grade when all sections done ──
+// â”€â”€â”€ POST /api/mock/submit â€” submit one section; grade when all sections done â”€â”€
 
 export async function submitMock(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { session_id, section } = req.body;
@@ -727,7 +727,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
 
         const sectionUpper = String(section).toUpperCase();
 
-        const session = await prisma.mocksessions.findUnique({ where: { id: session_id } });
+        const session = await prisma.mockSession.findUnique({ where: { id: session_id } });
         if (!session)                            return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.student_id !== student.id)   return res.status(403).json({ success: false, error: 'Forbidden.' });
         if (session.status === 'COMPLETED')      return res.json({ success: true, already_done: true, real_band_score: session.real_band_score != null ? Number(session.real_band_score) : null, scores: session.scores, momentum_awarded: session.momentum_awarded });
@@ -739,7 +739,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
         if (!sectionRow) return res.status(404).json({ success: false, error: 'Section not found.' });
         if (String(sectionRow.status) === 'NOT_STARTED') return res.status(400).json({ success: false, error: 'Section has not been started yet.' });
         if (sectionRow.status === 'SUBMITTED') {
-            // Already submitted — idempotent, check if all done
+            // Already submitted â€” idempotent, check if all done
         } else {
             // Mark section as SUBMITTED (allow slight grace past expires_at)
             await prisma.mockSectionAttempt.update({
@@ -753,7 +753,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
         const allTerminal = allSections.every(s => sectionIsTerminal(String(s.status)));
 
         if (!allTerminal) {
-            // More sections remain — return dashboard update
+            // More sections remain â€” return dashboard update
             return res.json({
                 success:              true,
                 section_submitted:    true,
@@ -768,7 +768,7 @@ export async function submitMock(req: AuthRequest, res: Response) {
             });
         }
 
-        // All sections done → grade the whole test
+        // All sections done â†’ grade the whole test
         const aggregatedAnswers: Record<string, string> = {};
         for (const row of allSections) {
             Object.assign(aggregatedAnswers, row.answers as Record<string, string>);
@@ -778,18 +778,18 @@ export async function submitMock(req: AuthRequest, res: Response) {
         return res.json({ success: true, all_sections_complete: true, ...result });
     } catch (err) {
         if (err instanceof MockAlreadyCompletedError) {
-            const s = await prisma.mocksessions.findUnique({ where: { id: req.body?.session_id } });
+            const s = await prisma.mockSession.findUnique({ where: { id: req.body?.session_id } });
             return res.json({ success: true, already_done: true, all_sections_complete: true, real_band_score: s?.real_band_score != null ? Number(s.real_band_score) : null, scores: s?.scores ?? null, momentum_awarded: s?.momentum_awarded ?? 0 });
         }
         if (err instanceof AIGradingError) {
-            return res.status(502).json({ success: false, can_retry: true, error: 'AI grading is temporarily unavailable. Your answers are saved — please submit again in a moment.' });
+            return res.status(502).json({ success: false, can_retry: true, error: 'AI grading is temporarily unavailable. Your answers are saved â€” please submit again in a moment.' });
         }
         console.error('[MockSubmit] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }
 
-// ─── Scoring engine (shared by submitMock and expiry auto-grade sweep) ────────
+// â”€â”€â”€ Scoring engine (shared by submitMock and expiry auto-grade sweep) â”€â”€â”€â”€â”€â”€â”€â”€
 
 type MockSubSkillScore = {
     sub_skill:  string;
@@ -825,7 +825,7 @@ async function processMockSession(
 ) {
     const questionIdsConfig = session.question_ids as Array<{ skill: string; ids: string[] }>;
     const allIds = questionIdsConfig.flatMap(c => c.ids);
-    const questions = await prisma.mockquestions.findMany({
+    const questions = await prisma.mockQuestion.findMany({
         where:  { id: { in: allIds } },
         select: { id: true, skill: true, sub_skill: true, question_type: true, correct_answer: true, prompt_text: true }
     });
@@ -1004,12 +1004,12 @@ async function processMockSession(
     let momentumAwarded = 200;
     if (thresholdCrossed) {
         momentumAwarded += 500;
-        momentumBreakdown.push({ reason: `New band threshold — crossed ${realBandScore.toFixed(1)}`, points: 500 });
+        momentumBreakdown.push({ reason: `New band threshold â€” crossed ${realBandScore.toFixed(1)}`, points: 500 });
     }
 
     // DB transaction
     const updatedMomentum = await prisma.$transaction(async (tx) => {
-        const marked = await tx.mocksessions.updateMany({
+        const marked = await tx.mockSession.updateMany({
             where: { id: session.id, status: { in: ['IN_PROGRESS', 'PENDING'] as any } },
             data:  { status: 'COMPLETED' as any, scores: skillScores as any, real_band_score: realBandScore, momentum_awarded: momentumAwarded, time_submitted_at: new Date() }
         });
@@ -1035,7 +1035,7 @@ async function processMockSession(
             }
         }
 
-        const updated = await tx.institute_students.update({
+        const updated = await tx.instituteStudent.update({
             where:  { id: student.id },
             data:   { momentum_score: { increment: momentumAwarded } },
             select: { momentum_score: true }

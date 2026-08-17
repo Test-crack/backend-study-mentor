@@ -1,4 +1,4 @@
-/**
+﻿/**
  * studentProgressQueries.ts
  *
  * Shared, controller-agnostic function that computes the full progress view
@@ -19,7 +19,7 @@ import {
     avgBandFromScores,
 } from './batchDashboardQueries';
 
-// ─── Input shapes ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Input shapes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface InstStudentMinimal {
     id: string;
@@ -37,7 +37,7 @@ export interface StudentUserRow {
     profileImage: string | null;
 }
 
-// ─── Core computation ────────────────────────────────────────────────────────
+// â”€â”€â”€ Core computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Fetches and computes the full progress view for a single student.
@@ -47,12 +47,12 @@ export async function computeStudentFullProgress(
     instStudent: InstStudentMinimal,
     studentUser: StudentUserRow | null
 ): Promise<object> {
-    // ── Date anchors ──────────────────────────────────────────────────────
+    // â”€â”€ Date anchors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const todayStart      = todayStartIST();
     const fourteenDaysAgo = daysBeforeIST(14);
     const thirtyDaysAgo   = daysBeforeIST(30);
 
-    // ── Parallel data fetch ───────────────────────────────────────────────
+    // â”€â”€ Parallel data fetch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const [
         competencyRows,
         iaSessions,
@@ -74,7 +74,7 @@ export async function computeStudentFullProgress(
                 carry_forward_subskills: true, time_submitted_at: true,
             },
         }),
-        prisma.mocksessions.findMany({
+        prisma.mockSession.findMany({
             where:   { student_id: instStudent.id },
             orderBy: { created_at: 'desc' },
             select:  {
@@ -83,12 +83,12 @@ export async function computeStudentFullProgress(
                 time_submitted_at: true,
             },
         }),
-        // All-time drills — for avg_dcs_lifetime + sub-skill breakdown
+        // All-time drills â€” for avg_dcs_lifetime + sub-skill breakdown
         prisma.drillSession.findMany({
             where:  { student_id: instStudent.id },
             select: { correct_answers: true, total_questions: true, skill: true, sub_skill: true, created_at: true },
         }),
-        // Last 30 days — for calendar + last 14 DCS chart (superset)
+        // Last 30 days â€” for calendar + last 14 DCS chart (superset)
         prisma.drillSession.findMany({
             where:  { student_id: instStudent.id, created_at: { gte: thirtyDaysAgo } },
             select: { correct_answers: true, total_questions: true, sub_skill: true, created_at: true },
@@ -110,14 +110,14 @@ export async function computeStudentFullProgress(
         }),
     ]);
 
-    // ── avg_dcs_lifetime ──────────────────────────────────────────────────
+    // â”€â”€ avg_dcs_lifetime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const lifetimeCorrect   = allDrillsLifetime.reduce((sum, d) => sum + d.correct_answers, 0);
     const lifetimeQuestions = allDrillsLifetime.reduce((sum, d) => sum + d.total_questions, 0);
     const avgDcsLifetime    = lifetimeQuestions > 0
         ? Math.round((lifetimeCorrect / lifetimeQuestions) * 100)
         : 0;
 
-    // ── drill_stats.last_14_days ─────────────────────────────────────────
+    // â”€â”€ drill_stats.last_14_days â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const drillsByDate = new Map<string, { correct: number; total: number }>();
     for (const d of drills30Days) {
         const dateStr = toISTDateString(d.created_at);
@@ -138,7 +138,7 @@ export async function computeStudentFullProgress(
         });
     }
 
-    // ── drill_stats.sub_skill_counts ─────────────────────────────────────
+    // â”€â”€ drill_stats.sub_skill_counts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const subSkillMap = new Map<string, { skill: string; sub_skill: string; count: number; correct: number; total: number }>();
     for (const d of allDrillsLifetime) {
         const key   = `${String(d.skill)}::${String(d.sub_skill)}`;
@@ -157,7 +157,7 @@ export async function computeStudentFullProgress(
         }))
         .sort((a, b) => b.count - a.count);
 
-    // ── streak_calendar — last 30 IST calendar days ──────────────────────
+    // â”€â”€ streak_calendar â€” last 30 IST calendar days â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const activeDates = new Set(drills30Days.map(d => toISTDateString(d.created_at)));
     const streakCalendar: Array<{ date: string; active: boolean }> = [];
     for (let i = 29; i >= 0; i--) {
@@ -165,7 +165,7 @@ export async function computeStudentFullProgress(
         streakCalendar.push({ date: dateStr, active: activeDates.has(dateStr) });
     }
 
-    // ── LexiGrid stats ────────────────────────────────────────────────────
+    // â”€â”€ LexiGrid stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const lexiCompleted = (lexiGridScores as any[]).filter(s => s.completed);
     const lexiStats = {
         games_last_14:    lexiCompleted.length,
@@ -177,7 +177,7 @@ export async function computeStudentFullProgress(
             : 0,
     };
 
-    // ── ia_eligibility ────────────────────────────────────────────────────
+    // â”€â”€ ia_eligibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const firstDrill    = allDrillsLifetime.length > 0
         ? allDrillsLifetime.sort((a, b) => a.created_at.getTime() - b.created_at.getTime())[0]
         : null;
@@ -201,13 +201,13 @@ export async function computeStudentFullProgress(
         }
     }
 
-    // ── Serialize mock real_band_score (Decimal → number) ────────────────
+    // â”€â”€ Serialize mock real_band_score (Decimal â†’ number) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const serializedMocks = mockSessions.map(s => ({
         ...s,
         real_band_score: s.real_band_score != null ? parseFloat(String(s.real_band_score)) : null,
     }));
 
-    // ── Serialize IA ia_date (Date → string) ─────────────────────────────
+    // â”€â”€ Serialize IA ia_date (Date â†’ string) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const serializedIAs = iaSessions.map(s => ({
         ...s,
         ia_date: s.ia_date instanceof Date ? s.ia_date.toISOString().split('T')[0] : String(s.ia_date),
@@ -215,7 +215,7 @@ export async function computeStudentFullProgress(
 
     const current_band = computeCurrentBand(competencyRows);
 
-    // ── Diagnostic baseline + results (first entry per skill) ─────────────
+    // â”€â”€ Diagnostic baseline + results (first entry per skill) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const skillAbbr: Record<string, string> = { LISTENING: 'L', READING: 'R', WRITING: 'W', SPEAKING: 'S' };
     const seenBaseline = new Set<string>();
     const diagnosticBaseline: Record<string, number | null> = { L: null, R: null, W: null, S: null };
