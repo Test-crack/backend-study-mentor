@@ -31,11 +31,38 @@ ALTER TABLE IF EXISTS ielts_batches           RENAME TO batches;
 ALTER TABLE IF EXISTS ielts_batch_students    RENAME TO batch_students;
 ALTER TABLE IF EXISTS ielts_batch_instructors RENAME TO batch_instructors;
 
+-- ── PHASE 3b: Rename PK constraints after table renames ────
+-- PostgreSQL does NOT allow RENAME CONSTRAINT + ADD COLUMN in
+-- a single ALTER TABLE statement — this is a Prisma limitation.
+-- Renaming the constraints here means prisma db push only needs
+-- ADD COLUMN (no RENAME CONSTRAINT), which is always safe to combine.
+--
+-- Constraint names default to {old_table_name}_pkey in Postgres.
+-- If already renamed (re-run), the DO block silently skips.
+
+DO $$
+BEGIN
+  ALTER TABLE batches           RENAME CONSTRAINT ielts_batches_pkey           TO batches_pkey;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE batch_students    RENAME CONSTRAINT ielts_batch_students_pkey    TO batch_students_pkey;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE batch_instructors RENAME CONSTRAINT ielts_batch_instructors_pkey TO batch_instructors_pkey;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
 -- ── Then run: npx prisma db push ───────────────────────────
 -- Prisma will:
 --   • Create the ExamType enum
 --   • Add exam_type column (ExamType DEFAULT IELTS) to 8 tables
---   • Verify the renamed batch tables match the schema
+--   • Confirm the renamed batch tables + constraints match schema
 -- No interactive data-loss prompt expected — all changes are
 -- additive or already prepared above.
 -- ============================================================
