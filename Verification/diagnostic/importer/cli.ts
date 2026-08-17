@@ -75,7 +75,7 @@ async function main(): Promise<void> {
 
     const stagedRows = [...loaded.rows].sort((a, b) => Number(a.sequence) - Number(b.sequence));
 
-    const existing = await prisma.diagnostic_questions.findMany({
+    const existing = await prisma.diagnosticQuestion.findMany({
       where: { set_id: opts.setId },
       orderBy: { sequence: 'asc' },
     });
@@ -103,7 +103,7 @@ async function main(): Promise<void> {
     console.log(`  Mode: ${opts.confirm ? 'WRITE (--confirm)' : 'DRY RUN — nothing will be written'}`);
     console.log('═══════════════════════════════════════════════════════════\n');
 
-    const updates = existing.map((dbRow, i) => {
+    const updates = existing.map((dbRow: (typeof existing)[number], i: number) => {
       const staged = stagedRows[i];
 
       if (Number(staged.sequence) !== dbRow.sequence) {
@@ -154,7 +154,7 @@ async function main(): Promise<void> {
     fs.writeFileSync(backupPath, JSON.stringify(existing, null, 2), 'utf8');
     console.log(`Backup: ${existing.length} row(s) -> ${backupPath}\n`);
 
-    await prisma.$transaction(updates.map(u => prisma.diagnostic_questions.update({ where: { id: u.id }, data: u.after })));
+    await prisma.$transaction(updates.map(u => prisma.diagnosticQuestion.update({ where: { id: u.id }, data: u.after })));
 
     console.log(`Done. ${updates.length} row(s) updated in set "${opts.setId}".`);
     console.log(`Rollback: re-write the pre-update values from ${backupPath} if this was wrong.`);
