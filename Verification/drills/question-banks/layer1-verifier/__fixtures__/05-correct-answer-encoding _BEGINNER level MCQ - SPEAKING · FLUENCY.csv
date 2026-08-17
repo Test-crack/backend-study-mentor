@@ -1,0 +1,5 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+SPEAKING,FLUENCY,BEGINNER,"Which phrase best fills a pause naturally?","{""A"":""Let me think"",""B"":""Silence"",""C"":""Errr errr"",""D"":""Next question""}","""A""","Filler phrases keep speech flowing without dead air."
+SPEAKING,FLUENCY,BEGINNER,"What helps a speaker sound more fluent?","{""A"":""Longer pauses"",""B"":""Linking words"",""C"":""Slower speech"",""D"":""Louder voice""}",B,"Linking words connect ideas and reduce hesitation."
+SPEAKING,FLUENCY,BEGINNER,"Which response extends an answer best?","{""A"":""Yes"",""B"":""No"",""C"":""Yes, because I grew up nearby"",""D"":""Maybe""}",C,"Adding a reason turns a one-word reply into a full answer."
+SPEAKING,FLUENCY,BEGINNER,"What should you do if you forget a word?","{""A"":""Stop talking"",""B"":""Paraphrase it"",""C"":""Repeat the question"",""D"":""Switch topic""}","""B""","Paraphrasing keeps the turn going instead of stalling."

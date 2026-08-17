@@ -1,0 +1,3 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation,source_key
+WRITING,GRAMMAR,BEGINNER,"The cat ___ on the mat all afternoon.","{""A"":""sleep"",""B"":""sleeps"",""C"":""slept"",""D"":""sleeping""}","""C""","All afternoon with a finished action signals the simple past.",drill_writing_grammar_beginner_001
+WRITING,GRAMMAR,BEGINNER,"Neither answer ___ correct.","{""A"":""are"",""B"":""is"",""C"":""were"",""D"":""being""}","""B""","Neither takes a singular verb.",drill_writing_grammar_beginner_002

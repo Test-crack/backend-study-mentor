@@ -1,0 +1,5 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+WRITING,COHERENCE,BEGINNER,"Which linker shows contrast?","{""A"":""moreover"",""B"":""however"",""C"":""therefore"",""D"":""besides""}","""B""","However introduces a contrasting idea."
+WRITING,COHERENCE,BEGINNER,"Which sentence best opens a body paragraph?","{""A"":""In conclusion"",""B"":""Firstly, cities grow"",""C"":""However"",""D"":""Thanks""}","""B""","A body paragraph opens with a topic sentence."
+WRITING,TASK_RESPONSE,BEGINNER,"How many parts must a Task 2 answer address?","{""A"":""One"",""B"":""All parts of the prompt"",""C"":""Two"",""D"":""None""}","""B""","Task response requires covering every part of the prompt."
+WRITING,COHERENCE,BEGINNER,"Which linker adds information?","{""A"":""nevertheless"",""B"":""furthermore"",""C"":""although"",""D"":""whereas""}","""B""","Furthermore adds a supporting point."

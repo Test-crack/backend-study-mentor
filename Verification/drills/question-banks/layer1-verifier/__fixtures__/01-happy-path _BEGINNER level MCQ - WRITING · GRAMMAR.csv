@@ -1,0 +1,5 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+WRITING,GRAMMAR,BEGINNER,"She ___ to work by bus every morning.","{""A"":""go"",""B"":""goes"",""C"":""going"",""D"":""gone""}","""B""","Third-person singular in the present simple takes an -s ending."
+WRITING,GRAMMAR,BEGINNER,"They ___ football on Sundays.","{""A"":""plays"",""B"":""playing"",""C"":""play"",""D"":""played""}","""C""","A plural subject takes the base form of the verb."
+WRITING,GRAMMAR,BEGINNER,"I ___ never been to Paris.","{""A"":""has"",""B"":""have"",""C"":""had"",""D"":""having""}","""B""","The first person uses have in the present perfect."
+WRITING,GRAMMAR,BEGINNER,"He ___ his homework yesterday.","{""A"":""finish"",""B"":""finishes"",""C"":""finished"",""D"":""finishing""}","""C""","Yesterday signals the simple past tense."

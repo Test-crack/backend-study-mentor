@@ -1,0 +1,6 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+READING,B,RD_NEW_01,1,MCQ,"What is the main reason the author gives for the decline described in paragraph 2?","{""A"":""Option text A"",""B"":""Option text B"",""C"":""Option text C"",""D"":""Option text D""}",B,,"Full passage text goes here, repeated identically on every row that shares this set_id.",,
+READING,B,RD_NEW_01,2,TFNG,"The policy was fully reversed within a year.",,F,,"Full passage text goes here, repeated identically on every row that shares this set_id.",,
+WRITING,B,WR_NEW_01,1,WRITING_PROMPT,"Some argue that X should never be permitted under any circumstances, while others believe context always matters. Discuss both views and give your own opinion. Write at least 250 words.",,,250,,,
+SPEAKING,B,SP_NEW_01,1,SPEAKING_PROMPT,"Describe a time you had to make a difficult decision with incomplete information. Explain what you decided and whether you would decide differently now.",,,,,,
+LISTENING,B,LD_NEW_01,1,MCQ,"According to the speaker, what was the original purpose of the building?","{""A"":""Option text A"",""B"":""Option text B"",""C"":""Option text C"",""D"":""Option text D""}",C,,,harwick-heritage-02.mp3,"The exact verbatim script the audio reads from, repeated identically on every row that shares this set_id."

@@ -1,0 +1,4 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+READING,READING,BEGINNER,,"{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""A""","The prompt on this row is blank."
+READING,READING,BEGINNER,"This row has no explanation.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""B""",
+READING,READING,BEGINNER,"This row is the control and must pass.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""C""","Everything on this row is present."
