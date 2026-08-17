@@ -1142,13 +1142,13 @@ export async function getStudentSpeakingHistory(req: AuthRequest, res: Response)
         }
 
         // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.ieltsBatchInstructor.findMany({
+        const instructorBatches = await prisma.batchInstructor.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
         const batchIds = instructorBatches.map(b => b.batch_id);
 
-        const studentInBatch = await prisma.ieltsBatchStudent.findFirst({
+        const studentInBatch = await prisma.batchStudent.findFirst({
             where: { user_id: studentId, batch_id: { in: batchIds } }
         });
         if (!studentInBatch) {
@@ -1236,13 +1236,13 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
         }
 
         // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.ieltsBatchInstructor.findMany({
+        const instructorBatches = await prisma.batchInstructor.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
         const batchIds = instructorBatches.map(b => b.batch_id);
 
-        const studentInBatch = await prisma.ieltsBatchStudent.findFirst({
+        const studentInBatch = await prisma.batchStudent.findFirst({
             where: { user_id: studentId, batch_id: { in: batchIds } }
         });
         if (!studentInBatch) {
@@ -1296,13 +1296,13 @@ export async function getStudentWritingHistory(req: AuthRequest, res: Response) 
         }
 
         // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.ieltsBatchInstructor.findMany({
+        const instructorBatches = await prisma.batchInstructor.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
         const batchIds = instructorBatches.map(b => b.batch_id);
 
-        const studentInBatch = await prisma.ieltsBatchStudent.findFirst({
+        const studentInBatch = await prisma.batchStudent.findFirst({
             where: { user_id: studentId, batch_id: { in: batchIds } }
         });
         if (!studentInBatch) {
@@ -1371,7 +1371,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
 
         // Verify the instructor is assigned to this batch
-        const instructorAssignment = await prisma.ieltsBatchInstructor.findFirst({
+        const instructorAssignment = await prisma.batchInstructor.findFirst({
             where: { batch_id: batchId, user_id: appUserId }
         });
 
@@ -1379,10 +1379,10 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             return res.status(403).json({ error: 'You are not assigned to this batch.' });
         }
 
-        const batch = await prisma.ieltsBatch.findUnique({
+        const batch = await prisma.batch.findUnique({
             where: { id: batchId },
             include: {
-                ielts_batch_students: {
+                batch_students: {
                     include: {
                         User: {
                             select: { id: true, name: true, profileImage: true }
@@ -1396,7 +1396,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             return res.status(404).json({ error: 'Batch not found.' });
         }
 
-        const studentIds = batch.ielts_batch_students.map(bs => bs.User.id);
+        const studentIds = batch.batch_students.map(bs => bs.User.id);
         // Fetch SPEAKING assessments (from IeltsSpeakingAssessment) for batch trends
         const assessments = await prisma.ieltsSpeakingAssessment.findMany({
             where: { userId: { in: studentIds } },
@@ -1475,7 +1475,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
         }
 
         // Calculate student comparison
-        for (const bs of batch.ielts_batch_students) {
+        for (const bs of batch.batch_students) {
             const studentAssessments = assessments.filter(a => a.userId === bs.User.id);
             const studentWriting = writingAssessments.filter(a => a.userId === bs.User.id);
             
@@ -1563,7 +1563,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
                 speakingLeaderboard,
                 writingLeaderboard,
                 summary: {
-                    totalStudents: batch.ielts_batch_students.length,
+                    totalStudents: batch.batch_students.length,
                     avgSpeaking: studentComparison.reduce((sum, s) => sum + (s.speakingScore || 0), 0) / (studentComparison.filter(s => s.speakingScore !== null).length || 1),
                     avgReading: studentComparison.reduce((sum, s) => sum + (s.readingScore || 0), 0) / (studentComparison.filter(s => s.readingScore !== null).length || 1),
                     avgWriting: studentComparison.reduce((sum, s) => sum + (s.writingScore || 0), 0) / (studentComparison.filter(s => s.writingScore !== null).length || 1),

@@ -246,10 +246,10 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
         let batch: any = null;
 
         if (isUuid) {
-            batch = await prisma.ieltsBatch.findUnique({
+            batch = await prisma.batch.findUnique({
                 where: { id: batchId },
                 include: {
-                    ielts_batch_students: {
+                    batch_students: {
                         include: {
                             User: {
                                 select: { id: true, name: true, profileImage: true },
@@ -259,9 +259,9 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
                 },
             });
         } else {
-            const allBatches = await prisma.ieltsBatch.findMany({
+            const allBatches = await prisma.batch.findMany({
                 include: {
-                    ielts_batch_students: {
+                    batch_students: {
                         include: {
                             User: {
                                 select: { id: true, name: true, profileImage: true },
@@ -277,7 +277,7 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
             return res.status(404).json({ success: false, error: 'Batch not found' });
         }
 
-        const studentIds = batch.ieltsBatchStudent.map((bs: any) => bs.User.id);
+        const studentIds = batch.batch_students.map((bs: any) => bs.User.id);
 
         if (studentIds.length === 0) {
             return res.json({
@@ -318,7 +318,7 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
         });
 
         // Leaderboard sorted by avgWPM
-        const studentLeaderboard = batch.ielts_batch_students
+        const studentLeaderboard = batch.batch_students
             .map((bs: any) => {
                 const r = sm[bs.User.id];
                 if (!r || r.count === 0) return null;

@@ -416,9 +416,9 @@ model User {
   UserCourseEnrollment     UserCourseEnrollment[]
   UserModuleProgress       UserModuleProgress[]
   UserReadingProfile       UserReadingProfile?
-  ielts_batch_instructors  IeltsBatchInstructor[]
-  ielts_batch_students     IeltsBatchStudent[]
-  ielts_batches            IeltsBatch[]
+  batch_instructors        BatchInstructor[]
+  batch_students           BatchStudent[]
+  batches                  Batch[]
   institute_admins         InstituteAdmin?
   institute_instructors    InstituteInstructor?
   institute_owners         InstituteOwner?
@@ -559,53 +559,54 @@ model YouTubeTranscript {
   @@map("youtube_transcripts_legacy")
 }
 
-model IeltsBatchInstructor {
-  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id      String     @db.Uuid
-  user_id       String     @db.Uuid
-  assigned_at   DateTime   @default(now()) @db.Timestamptz(6)
-  ielts_batches IeltsBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User          User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model BatchInstructor {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id    String   @db.Uuid
+  user_id     String   @db.Uuid
+  assigned_at DateTime @default(now()) @db.Timestamptz(6)
+  batch       Batch    @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User        User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([batch_id, user_id])
-  @@index([batch_id], map: "idx_ielts_batch_instructors_batch")
-  @@index([user_id], map: "idx_ielts_batch_instructors_user")
-  @@map("ielts_batch_instructors")
+  @@index([batch_id], map: "idx_batch_instructors_batch")
+  @@index([user_id], map: "idx_batch_instructors_user")
+  @@map("batch_instructors")
 }
 
-model IeltsBatchStudent {
-  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id      String     @db.Uuid
-  user_id       String     @db.Uuid
-  enrolled_at   DateTime   @default(now()) @db.Timestamptz(6)
-  ielts_batches IeltsBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User          User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model BatchStudent {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id    String   @db.Uuid
+  user_id     String   @db.Uuid
+  enrolled_at DateTime @default(now()) @db.Timestamptz(6)
+  batch       Batch    @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User        User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([batch_id, user_id])
-  @@index([batch_id], map: "idx_ielts_batch_students_batch")
-  @@index([user_id], map: "idx_ielts_batch_students_user")
-  @@map("ielts_batch_students")
+  @@index([batch_id], map: "idx_batch_students_batch")
+  @@index([user_id], map: "idx_batch_students_user")
+  @@map("batch_students")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model IeltsBatch {
-  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  institute_id          String                 @db.Uuid
-  name                  String                 @db.VarChar(255)
-  description           String?
-  status                String                 @default("ACTIVE") @db.VarChar(20)
-  max_students          Int?
-  created_by            String?                @db.Uuid
-  created_at            DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime               @default(now()) @db.Timestamptz(6)
-  ielts_batch_instructors IeltsBatchInstructor[]
-  ielts_batch_students    IeltsBatchStudent[]
-  User                  User?                  @relation(fields: [created_by], references: [id], onUpdate: NoAction)
-  institutes            Institute              @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model Batch {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institute_id       String          @db.Uuid
+  name               String          @db.VarChar(255)
+  description        String?
+  status             String          @default("ACTIVE") @db.VarChar(20)
+  max_students       Int?
+  created_by         String?         @db.Uuid
+  created_at         DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime        @default(now()) @db.Timestamptz(6)
+  exam_type          ExamType        @default(IELTS)
+  batch_instructors  BatchInstructor[]
+  batch_students     BatchStudent[]
+  User               User?           @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  institutes         Institute       @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([institute_id], map: "idx_ielts_batches_institute")
-  @@index([status], map: "idx_ielts_batches_status")
-  @@map("ielts_batches")
+  @@index([institute_id], map: "idx_batches_institute")
+  @@index([status], map: "idx_batches_status")
+  @@map("batches")
 }
 
 model InstituteAdmin {
@@ -663,6 +664,7 @@ model InstituteStudent {
   last_streak_date        DateTime?                 @db.Date
   extra_drill_credits     Int                       @default(0)
   exam_date               DateTime?                 @db.Date
+  exam_type               ExamType                  @default(IELTS)
   AssessmentHistory       AssessmentHistory[]
   IASession               IASession[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
@@ -686,7 +688,7 @@ model Institute {
   created_by            String?               @db.Uuid
   created_at            DateTime              @default(now()) @db.Timestamptz(6)
   updated_at            DateTime              @default(now()) @db.Timestamptz(6)
-  ielts_batches         IeltsBatch[]
+  batches               Batch[]
   institute_admins      InstituteAdmin[]
   institute_instructors InstituteInstructor[]
   institute_owners      InstituteOwner[]
@@ -700,12 +702,13 @@ model Institute {
 model StudentCompetencyMatrix {
   id                 String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   student_id         String           @db.Uuid
-  skill              IeltsSkillType
+  skill              SkillType
   band_score         Decimal?         @db.Decimal(2, 1)
   level              String?          @db.Char(1)
   sub_scores         Json?
   assessments_count  Int              @default(0)
   last_updated       DateTime         @default(now()) @db.Timestamptz(6)
+  exam_type          ExamType         @default(IELTS)
   institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@unique([student_id, skill])
@@ -716,7 +719,7 @@ model StudentCompetencyMatrix {
 model AssessmentHistory {
   id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   student_id         String             @db.Uuid
-  skill              IeltsSkillType
+  skill              SkillType
   mode               AssessmentModeType
   band_score         Decimal            @db.Decimal(2, 1)
   sub_scores         Json?
@@ -724,6 +727,7 @@ model AssessmentHistory {
   transcript         String?
   raw_answers        Json?
   created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  exam_type          ExamType           @default(IELTS)
   institute_students InstituteStudent   @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@index([student_id])
@@ -741,12 +745,12 @@ model RecommendationItem {
   source        String?             @db.VarChar(150)
   duration_min  Int?
   type          RecommendationType
-  skill_type    IeltsSkillType
+  skill_type    SkillType
   level         RecommendationLevel
   is_active     Boolean             @default(true)
   createdAt     DateTime            @default(now()) @db.Timestamptz(6) @map("created_at")
   updatedAt     DateTime            @default(now()) @db.Timestamptz(6) @map("updated_at")
-  sub_skill     IeltsSubSkillType?
+  sub_skill     SubSkillType?
 
   @@index([skill_type, level, is_active])
   @@map("recommendation_items")
@@ -755,8 +759,8 @@ model RecommendationItem {
 model DrillSession {
   id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   student_id         String             @db.Uuid
-  skill              IeltsSkillType
-  sub_skill          IeltsSubSkillType
+  skill              SkillType
+  sub_skill          SubSkillType
   drill_type         String?
   prompts_completed  Int
   momentum_earned    Int
@@ -823,8 +827,8 @@ model LexiGridWord {
 
 model DrillQuestion {
   id             String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  skill          IeltsSkillType
-  sub_skill      IeltsSubSkillType
+  skill          SkillType
+  sub_skill      SubSkillType
   level          RecommendationLevel
   drill_type     String              @db.VarChar(50)
   prompt_text    String
@@ -834,6 +838,7 @@ model DrillQuestion {
   is_active      Boolean             @default(true)
   created_at     DateTime            @default(now()) @db.Timestamptz(6)
   updated_at     DateTime            @default(now()) @db.Timestamptz(6)
+  exam_type      ExamType            @default(IELTS)
   source_key     String?             @unique @db.VarChar(100)
 
   @@index([skill, sub_skill, level, is_active])
@@ -843,8 +848,8 @@ model DrillQuestion {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model IAQuestion {
   id             String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  skill          IeltsSkillType
-  sub_skill      IeltsSubSkillType
+  skill          SkillType
+  sub_skill      SubSkillType
   question_type  String            @db.VarChar(30)
   passage_id     String?           @db.VarChar(50)
   passage_text   String?
@@ -856,6 +861,7 @@ model IAQuestion {
   difficulty     DifficultyType
   is_active      Boolean           @default(true)
   created_at     DateTime          @default(now()) @db.Timestamptz(6)
+  exam_type      ExamType          @default(IELTS)
   source_key     String?           @unique @db.VarChar(100)
 
   @@index([is_active], map: "idx_iaquestion_active")
@@ -891,8 +897,8 @@ model IASession {
 
 model MockQuestion {
   id             String             @id(map: "pk_mock_questions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  skill          IeltsSkillType
-  sub_skill      IeltsSubSkillType?
+  skill          SkillType
+  sub_skill      SubSkillType?
   question_type  String             @db.VarChar(30)
   task_type      String?            @db.VarChar(20)
   passage_id     String?            @db.VarChar(50)
@@ -904,6 +910,7 @@ model MockQuestion {
   explanation    String?
   is_active      Boolean            @default(true)
   created_at     DateTime           @default(now()) @db.Timestamptz(6)
+  exam_type      ExamType           @default(IELTS)
   source_key     String?            @unique(map: "uq_mock_questions_source_key") @db.VarChar(100)
 
   @@index([skill, is_active], map: "idx_mock_questions_skill_active")
@@ -959,7 +966,7 @@ model MockSectionAttempt {
 model DiagnosticQuestion {
   id             String         @id(map: "pk_diagnostic_questions") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   level          String         @db.Char(1)
-  skill          IeltsSkillType
+  skill          SkillType
   question_type  String         @db.VarChar(30)
   set_id         String         @db.VarChar(60)
   passage_text   String?
@@ -971,6 +978,7 @@ model DiagnosticQuestion {
   sequence       Int            @default(1) @db.SmallInt
   is_active      Boolean        @default(true)
   created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  exam_type      ExamType       @default(IELTS)
 
   @@index([level, skill, is_active], map: "idx_dq_level_skill_active")
   @@index([set_id], map: "idx_dq_set_id")
@@ -978,7 +986,16 @@ model DiagnosticQuestion {
   @@map("diagnostic_questions")
 }
 
-enum IeltsSubSkillType {
+enum ExamType {
+  IELTS
+  SPOKEN
+  OET
+  GRE
+  TOEFL
+  PTE
+}
+
+enum SubSkillType {
   LISTENING
   READING
   GRAMMAR
@@ -1031,7 +1048,7 @@ enum UserRoleType {
   INSTITUTE_ADMIN
 }
 
-enum IeltsSkillType {
+enum SkillType {
   LISTENING
   READING
   WRITING
