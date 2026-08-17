@@ -51,18 +51,14 @@ ALTER TABLE IF EXISTS "YouTubeTranscript"        RENAME TO youtube_transcripts;
 -- 3. Column renames (camelCase → snake_case)
 --    These must be done BEFORE prisma db push, which would otherwise
 --    drop the old column and create a new empty one (data loss).
+--    NOTE: PostgreSQL RENAME COLUMN does not support IF EXISTS on the column
+--    name — only on the table name. These statements are safe to re-run only
+--    if the columns have not already been renamed; running twice will error.
 
-ALTER TABLE institute_students
-  RENAME COLUMN IF EXISTS "isDiagnosed" TO is_diagnosed;
-
-ALTER TABLE institute_students
-  RENAME COLUMN IF EXISTS "recommendationSeeded" TO recommendation_seeded;
-
-ALTER TABLE recommendation_items
-  RENAME COLUMN IF EXISTS "createdAt" TO created_at;
-
-ALTER TABLE recommendation_items
-  RENAME COLUMN IF EXISTS "updatedAt" TO updated_at;
+ALTER TABLE institute_students   RENAME COLUMN "isDiagnosed"          TO is_diagnosed;
+ALTER TABLE institute_students   RENAME COLUMN "recommendationSeeded"  TO recommendation_seeded;
+ALTER TABLE recommendation_items RENAME COLUMN "createdAt"             TO created_at;
+ALTER TABLE recommendation_items RENAME COLUMN "updatedAt"             TO updated_at;
 
 -- 4. Recreate the diagnostic_status VIEW against the renamed table.
 CREATE OR REPLACE VIEW diagnostic_status AS
