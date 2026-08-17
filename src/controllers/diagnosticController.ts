@@ -1,4 +1,5 @@
-﻿import { Response } from 'express';
+import { Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
@@ -32,18 +33,30 @@ async function pickRandomSetId(level: string, skill: string): Promise<string | n
     return rows[0]?.set_id ?? null;
 }
 
-/** Shared: write AssessmentHistory + upsert StudentCompetencyMatrix. */
+class DiagnosticAlreadyScoredError extends Error {}
+
+// Serializes concurrent submits for the same student+skill so the isSkillAlreadyScored
+// check and the save can't both pass for two requests racing each other — the advisory
+// lock makes the second request wait for the first's transaction to finish before it
+// re-checks. Released automatically when the transaction ends (xact-scoped).
+async function lockDiagnosticSkill(tx: Prisma.TransactionClient, studentId: string, skill: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${studentId} || ${skill}))`;
+}
+
+// Writes AssessmentHistory + StudentCompetencyMatrix. Takes a tx client —
+// caller must run this inside a $transaction, not call it with plain prisma.
 async function saveDiagnosticAssessment(
+    tx: Prisma.TransactionClient,
     studentId: string,
     skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING',
     bandScore: number,
     answers: any,
     subScores: any
 ) {
-    await prisma.assessmentHistory.create({
+    await tx.assessmentHistory.create({
         data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores }
     });
-    await prisma.studentCompetencyMatrix.upsert({
+    await tx.studentCompetencyMatrix.upsert({
         where:  { student_id_skill: { student_id: studentId, skill } },
         update: { band_score: bandScore, sub_scores: subScores, assessments_count: { increment: 1 }, last_updated: new Date() },
         create: { student_id: studentId, skill, band_score: bandScore, sub_scores: subScores, assessments_count: 1 }
@@ -87,12 +100,17 @@ export const getDiagnosticStatus = async (req: AuthRequest & { appUserId?: strin
         const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         if (!student) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false });
 
-        if (student.isDiagnosed) return res.json({ isDiagnosed: true, listening_scored: true, reading_scored: true, writing_scored: true, speaking_scored: true, overall_complete: true });
+        // Frontend compares this against what it cached locally — a mismatch means an
+        // admin reset happened server-side since the last time it saved progress, and
+        // it should discard its cached phase/answers/timer instead of resuming stale state.
+        const reset_marker = student.updated_at.toISOString();
+
+        if (student.isDiagnosed) return res.json({ isDiagnosed: true, listening_scored: true, reading_scored: true, writing_scored: true, speaking_scored: true, overall_complete: true, reset_marker });
 
         const status: any[] = await prisma.$queryRaw`SELECT * FROM "diagnostic_status" WHERE "student_id" = ${student.id}::uuid`;
-        if (status.length === 0) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false, overall_complete: false });
+        if (status.length === 0) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false, overall_complete: false, reset_marker });
 
-        res.json({ isDiagnosed: false, ...status[0] });
+        res.json({ isDiagnosed: false, ...status[0], reset_marker });
     } catch (err) {
         console.error('[getDiagnosticStatus]', err);
         res.status(500).json({ error: 'Failed to fetch diagnostic status' });
@@ -333,19 +351,22 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             });
 
             if (total === 0) {
-                return res.status(400).json({ error: 'Could not resolve the question set for grading.' });
+                // Nothing answered, so no set to grade against. Score the floor rather
+                // than 400 — a timed-out section must still be submittable.
+                bandScore = BAND_MIN;
+                subScores = { total_questions: 0, correct_answers: 0, accuracy_percentage: 0, by_question_type: {} };
+            } else {
+                // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
+                bandScore = fractionToBand(correct / total);
+                subScores = {
+                    total_questions:     total,
+                    correct_answers:     correct,
+                    accuracy_percentage: Math.round((correct / total) * 100),
+                    by_question_type:    byType
+                };
             }
 
-            // Mastery fraction â†’ [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
-            bandScore = fractionToBand(correct / total);
-            subScores = {
-                total_questions:     total,
-                correct_answers:     correct,
-                accuracy_percentage: Math.round((correct / total) * 100),
-                by_question_type:    byType
-            };
-
-        // â”€â”€ WRITING â€” fetch prompt by question_id, send to Gemini â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── WRITING — fetch prompt by question_id, send to Gemini ─────────────
         } else if (skillUpper === 'WRITING') {
             const wordCount = parsedAnswers.text
                 ? parsedAnswers.text.split(/\s+/).filter(Boolean).length
@@ -385,15 +406,20 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
                 }
 
-                bandScore = Number(analysis.bandScore) || BAND_MIN;
-
-                // Enforce anti-gaming caps server-side (the AI prompt asks for these, but
-                // relying on the model alone is unreliable â€” same reason speaking has hard caps).
+                // Enforce the anti-gaming cap server-side (the AI prompt asks for this, but
+                // relying on the model alone is unreliable — same reason speaking has hard caps).
+                // Cap only the Task Achievement/Response criterion, then re-derive the overall
+                // band from the (possibly capped) criteria — capping the already-averaged
+                // bandScore a second time double-penalizes essays that are strong elsewhere.
                 if (wordCount < minWords) {
-                    // Under the required length â†’ Task Achievement capped at 5.0, so the
-                    // averaged band cannot exceed 5.0 on length grounds.
-                    bandScore = Math.min(bandScore, 5.0);
+                    analysis.taskResponseScore = Math.min(Number(analysis.taskResponseScore) || BAND_MIN, 5.0);
                 }
+                bandScore = (
+                    Number(analysis.taskResponseScore) +
+                    Number(analysis.coherenceScore) +
+                    Number(analysis.vocabularyScore) +
+                    Number(analysis.grammarScore)
+                ) / 4;
 
                 subScores = {
                     word_count:        wordCount,
@@ -410,12 +436,19 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
 
         // Universal exit gate: round to 0.5 and clamp to [4,9] (adds the previously-missing floor).
         bandScore = toBand(bandScore);
-        await saveDiagnosticAssessment(student.id, skillUpper, bandScore, parsedAnswers, subScores);
+        await prisma.$transaction(async (tx) => {
+            await lockDiagnosticSkill(tx, student.id, skillUpper);
+            if (await isSkillAlreadyScored(student.id, skillUpper)) throw new DiagnosticAlreadyScoredError();
+            await saveDiagnosticAssessment(tx, student.id, skillUpper, bandScore, parsedAnswers, subScores);
+        });
         const overallComplete = await checkAndMarkDiagnosed(student.id);
 
         res.json({ message: `${skillUpper} diagnostic submitted successfully`, bandScore, overallComplete, sub_scores: subScores, feedback: subScores?.feedback });
 
     } catch (err) {
+        if (err instanceof DiagnosticAlreadyScoredError) {
+            return res.status(409).json({ error: `The ${paramStr(req.params.skill).toUpperCase()} section has already been submitted.` });
+        }
         console.error('[submitDiagnosticAssessment]', err);
         res.status(500).json({ error: 'Failed to submit assessment' });
     }
@@ -494,13 +527,20 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
             try { fs.unlinkSync(req.file.path); } catch { /* already removed */ }
         }
 
-        await saveDiagnosticAssessment(student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
+        await prisma.$transaction(async (tx) => {
+            await lockDiagnosticSkill(tx, student.id, 'SPEAKING');
+            if (await isSkillAlreadyScored(student.id, 'SPEAKING')) throw new DiagnosticAlreadyScoredError();
+            await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
+        });
         const overallComplete = await checkAndMarkDiagnosed(student.id);
 
         res.json({ message: 'SPEAKING diagnostic submitted successfully', bandScore, overallComplete, sub_scores: subScores, transcript, feedback: subScores?.feedback });
 
     } catch (err) {
         if (req.file) fs.unlink(req.file.path, () => {});
+        if (err instanceof DiagnosticAlreadyScoredError) {
+            return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' });
+        }
         console.error('[submitDiagnosticSpeaking]', err);
         res.status(500).json({ error: 'Failed to submit speaking assessment' });
     }

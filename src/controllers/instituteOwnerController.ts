@@ -1159,7 +1159,65 @@ export async function getOwnerStudentFullProgress(req: AuthRequest, res: Respons
     }
 }
 
-// â”€â”€â”€ GET /api/institute-owner/at-risk â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── POST /api/institute-owner/students/:studentId/diagnostic/reset ───────────
+// Body: { skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING' | 'ALL' }
+// Deletes the diagnostic AssessmentHistory row(s) + StudentCompetencyMatrix
+// row(s) for the given skill(s) and flips isDiagnosed back to false. Only
+// mode: 'DIAGNOSTIC' rows are touched — mock/IA history for the same skill
+// is untouched.
+
+const DIAGNOSTIC_SKILLS = ['LISTENING', 'READING', 'WRITING', 'SPEAKING'] as const;
+
+export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
+    try {
+        const appUserId  = (req as any).appUserId as string;
+        const studentId  = paramStr(req.params.studentId); // = User.id
+        const skillInput = req.body?.skill as string;
+
+        const skills = skillInput === 'ALL'
+            ? [...DIAGNOSTIC_SKILLS]
+            : DIAGNOSTIC_SKILLS.includes(skillInput as any) ? [skillInput] : null;
+        if (!skills) {
+            return res.status(400).json({ success: false, error: 'skill must be LISTENING, READING, WRITING, SPEAKING, or ALL.' });
+        }
+
+        const instituteId = await getCallerInstitute(appUserId);
+        if (!instituteId) {
+            return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
+        }
+
+        const instStudent = await prisma.instituteStudent.findFirst({
+            where:  { user_id: studentId, institute_id: instituteId },
+            select: { id: true },
+        });
+        if (!instStudent) {
+            return res.status(403).json({ success: false, error: 'Student is not enrolled in your institute.' });
+        }
+
+        await prisma.$transaction(async (tx) => {
+            await tx.assessmentHistory.deleteMany({
+                where: { student_id: instStudent.id, mode: 'DIAGNOSTIC', skill: { in: skills as any } },
+            });
+            await tx.studentCompetencyMatrix.deleteMany({
+                where: { student_id: instStudent.id, skill: { in: skills as any } },
+            });
+            await tx.instituteStudent.update({
+                where: { id: instStudent.id },
+                // updated_at is explicit, not @updatedAt-managed — the frontend reads it
+                // via /status to know a reset happened and clear its cached progress.
+                data:  { isDiagnosed: false, updated_at: new Date() },
+            });
+        });
+
+        console.log(`[DiagnosticReset] admin=${appUserId} student=${studentId} skill=${skillInput}`);
+        return res.json({ success: true, data: { reset: skills } });
+    } catch (err) {
+        console.error('[InstituteOwner] resetStudentDiagnostic error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+// ─── GET /api/institute-owner/at-risk ────────────────────────────────────────
 
 export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
     try {
