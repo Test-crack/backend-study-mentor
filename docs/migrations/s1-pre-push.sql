@@ -39,6 +39,8 @@ ALTER TABLE IF EXISTS "StudentCompetencyMatrix"  RENAME TO student_competency_ma
 ALTER TABLE IF EXISTS "AssessmentHistory"        RENAME TO assessment_history;
 ALTER TABLE IF EXISTS "IAQuestion"               RENAME TO ia_questions;
 ALTER TABLE IF EXISTS "IASession"                RENAME TO ia_sessions;
+ALTER TABLE IF EXISTS mockquestions              RENAME TO mock_questions;
+ALTER TABLE IF EXISTS mocksessions               RENAME TO mock_sessions;
 ALTER TABLE IF EXISTS "UserConcept"              RENAME TO user_concepts;
 ALTER TABLE IF EXISTS "UserContentProgress"      RENAME TO user_content_progress;
 ALTER TABLE IF EXISTS "UserCourseEnrollment"     RENAME TO user_course_enrollments;
