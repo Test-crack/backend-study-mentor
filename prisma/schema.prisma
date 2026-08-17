@@ -28,7 +28,7 @@ model Concept {
   @@index([conceptSlug])
   @@index([domain])
   @@index([keywords], type: Gin)
-  @@map("concepts")
+  @@map("concepts_legacy")
 }
 
 model Content {
@@ -44,7 +44,7 @@ model Content {
 
   @@index([conceptId])
   @@index([contentType])
-  @@map("content_items")
+  @@map("content_items_legacy")
 }
 
 model Course {
@@ -74,7 +74,7 @@ model Course {
   @@index([instructorId], map: "idx_course_instructor")
   @@index([is_published], map: "idx_course_published")
   @@index([slug], map: "idx_course_slug")
-  @@map("courses")
+  @@map("courses_legacy")
 }
 
 model CourseContentItem {
@@ -93,7 +93,7 @@ model CourseContentItem {
 
   @@index([concept_id], map: "idx_content_concept")
   @@index([content_kind], map: "idx_content_kind")
-  @@map("course_content_items")
+  @@map("course_content_items_legacy")
 }
 
 model CourseModule {
@@ -108,7 +108,7 @@ model CourseModule {
   @@unique([course_id, module_id], map: "unique_course_module")
   @@unique([course_id, order_index], map: "unique_course_module_position")
   @@index([course_id, order_index], map: "idx_course_module_composite")
-  @@map("course_modules")
+  @@map("course_modules_legacy")
 }
 
 /// LEGACY: No active code references found. Razorpay course purchase flow was never shipped.
@@ -141,7 +141,7 @@ model Domain {
   Course      Course[]
 
   @@index([slug], map: "idx_domain_slug")
-  @@map("domains")
+  @@map("domains_legacy")
 }
 
 model IeltsReadingAssessment {
@@ -311,7 +311,7 @@ model Instructor {
   User           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@map("instructors")
+  @@map("instructors_legacy")
 }
 
 model MCQ {
@@ -324,7 +324,7 @@ model MCQ {
   difficulty        String?           @default("medium") @db.VarChar(20)
   CourseContentItem CourseContentItem @relation(fields: [content_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_content_item")
 
-  @@map("mcqs")
+  @@map("mcqs_legacy")
 }
 
 model Module {
@@ -340,7 +340,7 @@ model Module {
   UserModuleProgress  UserModuleProgress[]
 
   @@index([domain], map: "idx_module_domain")
-  @@map("modules")
+  @@map("modules_legacy")
 }
 
 model ModuleConcept {
@@ -355,7 +355,7 @@ model ModuleConcept {
   @@unique([module_id, concept_id], map: "unique_module_concept")
   @@unique([module_id, order_index], map: "unique_module_concept_position")
   @@index([module_id, order_index], map: "idx_module_concept_composite")
-  @@map("module_concepts")
+  @@map("module_concepts_legacy")
 }
 
 model Note {
@@ -366,7 +366,7 @@ model Note {
   version           Int?              @default(1)
   CourseContentItem CourseContentItem @relation(fields: [content_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_content_item")
 
-  @@map("notes")
+  @@map("notes_legacy")
 }
 
 /// LEGACY: No active code references found. Superseded by IeltsReadingAssessment for speed-reading tracking.
@@ -482,7 +482,7 @@ model UserContentProgress {
   @@index([user_id, course_id, module_id], map: "idx_user_content_lookup")
   @@index([user_id, status], map: "idx_user_content_status")
   @@index([user_id, module_id, last_accessed_at(sort: Desc)], map: "idx_user_module_content")
-  @@map("user_content_progress")
+  @@map("user_content_progress_legacy")
 }
 
 model UserCourseEnrollment {
@@ -499,7 +499,7 @@ model UserCourseEnrollment {
 
   @@unique([user_id, course_id], map: "unique_user_course_enrollment")
   @@index([user_id, status], map: "idx_user_course_enrollment")
-  @@map("user_course_enrollments")
+  @@map("user_course_enrollments_legacy")
 }
 
 model UserModuleProgress {
@@ -516,7 +516,7 @@ model UserModuleProgress {
 
   @@unique([user_id, module_id, course_id], map: "unique_user_module_progress")
   @@index([user_id, course_id], map: "idx_user_progress_lookup")
-  @@map("user_module_progress")
+  @@map("user_module_progress_legacy")
 }
 
 model UserReadingProfile {
@@ -537,7 +537,7 @@ model UserReadingProfile {
   User                  User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([userId])
-  @@map("user_reading_profiles")
+  @@map("user_reading_profiles_legacy")
 }
 
 model YouTubeTranscript {
@@ -556,7 +556,7 @@ model YouTubeTranscript {
   @@index([accessCount])
   @@index([lastAccessed])
   @@index([videoId])
-  @@map("youtube_transcripts")
+  @@map("youtube_transcripts_legacy")
 }
 
 model IeltsBatchInstructor {
