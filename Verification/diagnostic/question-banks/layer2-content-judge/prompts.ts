@@ -42,7 +42,7 @@ tells us nothing useful, so difficulty is a real grading criterion here, not jus
 ${groundingBlock(view, skillLabel)}QUESTION:
 ${view.promptText}
 
-${isTfng ? 'Answer True, False, or Not Given based STRICTLY on what the text/transcript states — not outside knowledge.' : 'OPTIONS:\n' + renderOptions(view.options)}
+${isTfng ? 'Decide whether this statement is True, False, or Not Given, based STRICTLY on what the text/transcript states — not outside knowledge. In your JSON answer, use the single-letter code only: "T" for True, "F" for False, "NG" for Not Given — never the full word.' : 'OPTIONS:\n' + renderOptions(view.options)}
 
 ${isTfng ? '' : 'Choose the single best option, judged on its merits.\n'}
 Before answering, check two things:

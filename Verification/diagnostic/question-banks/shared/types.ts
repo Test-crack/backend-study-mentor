@@ -29,9 +29,19 @@ export type Level = (typeof LEVELS)[number];
 export const QUESTION_TYPES = ['MCQ', 'TFNG', 'WRITING_PROMPT', 'SPEAKING_PROMPT'] as const;
 export type QuestionType = (typeof QUESTION_TYPES)[number];
 
-/** Confirmed live: which question_type values actually occur under which skill. */
+/**
+ * Which question_type values are valid under which skill.
+ *
+ * Not a DB constraint — chk_dq_question_type allows any of the 4 types for any
+ * skill, and the scoring logic (diagnosticController.ts) compares answers as
+ * plain strings regardless of skill or type. LISTENING was MCQ-only in every
+ * live row as of 2026-08-15 simply because no one had authored a TFNG
+ * Listening question yet, not because the system can't handle one — Reading
+ * already mixes MCQ and TFNG live, so the frontend already renders both
+ * shapes conditionally. Confirmed safe to allow TFNG for LISTENING too.
+ */
 export const VALID_QUESTION_TYPES_BY_SKILL: Record<Skill, readonly QuestionType[]> = {
-  LISTENING: ['MCQ'],
+  LISTENING: ['MCQ', 'TFNG'],
   READING: ['MCQ', 'TFNG'],
   WRITING: ['WRITING_PROMPT'],
   SPEAKING: ['SPEAKING_PROMPT'],
