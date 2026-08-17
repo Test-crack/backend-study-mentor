@@ -34,8 +34,14 @@ Nothing stopped two submissions for the same section from being processed at the
 
 **Fix applied:** Postgres advisory lock closes the race so only one submission per skill per student can be processed.
 
-### 5. Writing and Speaking accept any question ID, unchecked — 🔧 In progress
-The server currently trusts the submitted question ID without checking it belongs to the student, matches her level, or is even a Writing/Speaking question. Being worked in a separate session.
+### 5. Writing and Speaking accept any question ID, unchecked — ⬜ Not started
+The server currently trusts the submitted question ID without checking it belongs to the student, matches her level, or is even a Writing/Speaking question.
+
+**Turns out to be two related gaps, not one:**
+- **Submission-side (the original finding):** the server never validates the submitted `question_id` against skill/level/active status, so a client could submit any real question's id — even one never served to this student — and dodge, e.g., a stricter word-count requirement.
+- **Fetch-side (found while scoping the fix, 2026-08-18):** the "which question was this student served" pin is client-side only (`localStorage`, from an earlier fix — "M-20" — that stops mid-section refresh from re-rolling). If a student clears `localStorage` (or switches browser/device) *before* submitting, her next fetch carries no pin and the server serves a fresh random question. Nothing blocks this pre-submission — `isSkillAlreadyScored` only gates re-fetching *after* a skill is already submitted — so a student can reroll for free by clearing state, no submission tampering needed at all.
+
+**Fix:** validating the submitted `question_id` alone (skill/level/active check) closes the first gap but NOT the second — a rerolled question is still a real, valid, active question at the right skill/level, so it'd pass that check cleanly. The fix that closes both at once: persist which question/set was actually served to a student server-side (a small table or column keyed by student+skill) the first time it's handed out, and validate submission against that persisted record instead of re-deriving validity from scratch. Client-side pinning stays as a nice-to-have for the refresh UX, but stops being the only thing standing between a student and a free reroll.
 
 ### 6. A server error can wrongly delete a student's recording — ✔ Fixed
 When AI grading failed on our end (a real server error), the frontend treated it identically to "no speech detected," deleting a perfectly good recording and blaming the student's microphone.
