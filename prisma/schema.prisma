@@ -684,6 +684,8 @@ model Institute {
   name                  String                @db.VarChar(255)
   address               String?
   logo_url              String?
+  contact_email         String?               @db.VarChar(255)
+  contact_phone         String?               @db.VarChar(20)
   is_active             Boolean               @default(true)
   created_by            String?               @db.Uuid
   created_at            DateTime              @default(now()) @db.Timestamptz(6)
@@ -693,10 +695,31 @@ model Institute {
   institute_instructors InstituteInstructor[]
   institute_owners      InstituteOwner[]
   institute_students    InstituteStudent[]
+  exam_subscriptions    InstituteExamSubscription[]
   User                  User?                 @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@index([is_active], map: "idx_institutes_is_active")
   @@map("institutes")
+}
+
+/// One row per institute × exam. The set of rows IS the set of exams an
+/// institute may offer. Deactivation is billing_status -> CANCELLED, never a
+/// delete (platform Hard Rule #5). Pricing/tier semantics deferred to a later
+/// billing phase — plan_tier and seat_cap enforcement are intentionally absent.
+model InstituteExamSubscription {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institute_id   String    @db.Uuid
+  exam_type      ExamType
+  billing_status String    @default("TRIAL") @db.VarChar(20) // TRIAL | ACTIVE | CANCELLED
+  trial_ends_at  DateTime? @db.Timestamptz(6)
+  seat_cap       Int? // reserved; not enforced this phase
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  institutes     Institute @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([institute_id, exam_type])
+  @@index([institute_id], map: "idx_institute_exam_subs_institute")
+  @@map("institute_exam_subscriptions")
 }
 
 model StudentCompetencyMatrix {
