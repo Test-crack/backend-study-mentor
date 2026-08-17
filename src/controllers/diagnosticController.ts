@@ -8,11 +8,11 @@ import { BAND_MIN, toBand, fractionToBand, bandToLevel } from '../lib/bandScale'
 import fs from 'fs';
 import { paramStr } from '../utils/httpParams';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 type DiagnosticLevel = 'A' | 'B' | 'C';
 
-// Even thirds of the [4,9] band domain (D3): A 4.0–5.5, B 5.5–7.0, C 7.0–9.0.
+// Even thirds of the [4,9] band domain (D3): A 4.0â€“5.5, B 5.5â€“7.0, C 7.0â€“9.0.
 function resolveLevel(targetBand: number): DiagnosticLevel {
     return bandToLevel(targetBand);
 }
@@ -84,20 +84,20 @@ async function checkAndMarkDiagnosed(studentId: string): Promise<boolean> {
         SELECT * FROM "diagnostic_status" WHERE "student_id" = ${studentId}::uuid
     `;
     if (statusResult[0]?.overall_complete) {
-        await prisma.institute_students.update({ where: { id: studentId }, data: { isDiagnosed: true } });
+        await prisma.instituteStudent.update({ where: { id: studentId }, data: { isDiagnosed: true } });
         return true;
     }
     return false;
 }
 
-// ─── GET /api/diagnostic/status ──────────────────────────────────────────────
+// â”€â”€â”€ GET /api/diagnostic/status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const getDiagnosticStatus = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
     try {
         const userId = req.appUserId;
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: userId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         if (!student) return res.json({ isDiagnosed: false, listening_scored: false, reading_scored: false, writing_scored: false, speaking_scored: false });
 
         // Frontend compares this against what it cached locally — a mismatch means an
@@ -117,7 +117,7 @@ export const getDiagnosticStatus = async (req: AuthRequest & { appUserId?: strin
     }
 };
 
-// ─── GET /api/diagnostic/questions/:skill ────────────────────────────────────
+// â”€â”€â”€ GET /api/diagnostic/questions/:skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
     try {
@@ -125,18 +125,18 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
         const skill = paramStr(req.params.skill);
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-        const student    = await prisma.institute_students.findUnique({ where: { user_id: userId } });
+        const student    = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         const level      = resolveLevel(student?.target_band ?? 7.0);
         const skillUpper = skill.toUpperCase();
 
         // M-20: a mid-section refresh used to re-roll a random set, silently swapping
         // the questions and wiping the student's saved answers. The client persists the
         // served set_id and passes it back; if it's still valid for this level+skill we
-        // re-serve the SAME set. Invalid/absent → fresh random pick as before.
+        // re-serve the SAME set. Invalid/absent â†’ fresh random pick as before.
         const requestedSetId = typeof req.query.set_id === 'string' ? req.query.set_id : null;
         const resolveSetId = async (sk: string): Promise<string | null> => {
             if (requestedSetId) {
-                const valid = await prisma.diagnostic_questions.findFirst({
+                const valid = await prisma.diagnosticQuestion.findFirst({
                     where:  { set_id: requestedSetId, level, skill: sk as any, is_active: true },
                     select: { set_id: true },
                 });
@@ -145,12 +145,12 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
             return pickRandomSetId(level, sk);
         };
 
-        // ── LISTENING ──────────────────────────────────────────────────────────
+        // â”€â”€ LISTENING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'LISTENING') {
             const setId = await resolveSetId('LISTENING');
             if (!setId) return res.status(404).json({ error: 'No listening questions found for this level.' });
 
-            const rows = await prisma.diagnostic_questions.findMany({
+            const rows = await prisma.diagnosticQuestion.findMany({
                 where:   { set_id: setId, is_active: true },
                 orderBy: { sequence: 'asc' }
             });
@@ -164,12 +164,12 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
             });
         }
 
-        // ── READING ────────────────────────────────────────────────────────────
+        // â”€â”€ READING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'READING') {
             const setId = await resolveSetId('READING');
             if (!setId) return res.status(404).json({ error: 'No reading questions found for this level.' });
 
-            const rows = await prisma.diagnostic_questions.findMany({
+            const rows = await prisma.diagnosticQuestion.findMany({
                 where:   { set_id: setId, is_active: true },
                 orderBy: { sequence: 'asc' }
             });
@@ -187,7 +187,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
         // refresh when the client passes back the question_id it was originally given.
         const requestedQuestionId = typeof req.query.question_id === 'string' ? req.query.question_id : null;
 
-        // ── WRITING ────────────────────────────────────────────────────────────
+        // â”€â”€ WRITING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'WRITING') {
             let rows: any[] = [];
             if (requestedQuestionId) {
@@ -225,7 +225,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
             });
         }
 
-        // ── SPEAKING ───────────────────────────────────────────────────────────
+        // â”€â”€ SPEAKING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'SPEAKING') {
             let rows: any[] = [];
             if (requestedQuestionId) {
@@ -270,7 +270,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
     }
 };
 
-// ─── POST /api/diagnostic/submit/:skill ──────────────────────────────────────
+// â”€â”€â”€ POST /api/diagnostic/submit/:skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
     try {
@@ -279,13 +279,13 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
         const { answers, taskType } = req.body;
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: userId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         if (!student) return res.status(404).json({ error: 'Student record not found.' });
 
         const skillUpper = skill.toUpperCase() as 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
 
         // Speaking has its own multipart route (submitDiagnosticSpeaking). This JSON
-        // endpoint must never grade speaking — a stub here previously assigned a fake
+        // endpoint must never grade speaking â€” a stub here previously assigned a fake
         // band 6.0 with no audio, reachable via encoded paths (%73peaking / U+017F).
         if (skillUpper === 'SPEAKING') {
             return res.status(400).json({ error: 'Speaking must be submitted with audio via /api/diagnostic/submit/speaking.' });
@@ -308,28 +308,28 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
         let bandScore = 0;
         let subScores: any = {};
 
-        // ── LISTENING / READING — grade against the FULL question set ──────────
+        // â”€â”€ LISTENING / READING â€” grade against the FULL question set â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'LISTENING' || skillUpper === 'READING') {
             const answeredIds = Object.keys(parsedAnswers).filter(k => k.length === 36); // UUID length guard
 
             // Resolve the fixed set the student was served from the answered question IDs,
             // then grade against EVERY question in that set. The denominator must be the
-            // real set size (6 / 4), NOT the number of answers the client chose to send —
+            // real set size (6 / 4), NOT the number of answers the client chose to send â€”
             // otherwise submitting a single correct answer yields band 9.0.
             const answeredRows = answeredIds.length > 0
-                ? await prisma.diagnostic_questions.findMany({
+                ? await prisma.diagnosticQuestion.findMany({
                     where:  { id: { in: answeredIds }, skill: skillUpper, is_active: true },
                     select: { set_id: true },
                 })
                 : [];
-            // Derive the set STRICTLY from the questions the student actually answered —
+            // Derive the set STRICTLY from the questions the student actually answered â€”
             // do NOT trust a client-supplied set_id here. Honouring req.body.set_id would
             // let a crafted request point the denominator at a tiny set and answer one
             // question for band 9.0 (a narrower re-open of the very hole this closes).
             const setId = answeredRows[0]?.set_id ?? null;
 
             const questions = setId
-                ? await prisma.diagnostic_questions.findMany({ where: { set_id: setId, skill: skillUpper, is_active: true } })
+                ? await prisma.diagnosticQuestion.findMany({ where: { set_id: setId, skill: skillUpper, is_active: true } })
                 : [];
 
             let correct = 0;
@@ -380,7 +380,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 const questionId = parsedAnswers.question_id ?? req.body.question_id;
                 let topic = 'Describe the information provided.';
                 if (questionId) {
-                    const row = await prisma.diagnostic_questions.findUnique({ where: { id: questionId } });
+                    const row = await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } });
                     if (row) topic = row.prompt_text;
                 }
                 // Resolve the served prompt to get its min_words + task type so caps
@@ -388,7 +388,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 let minWords = 150;
                 let resolvedTaskType = taskType ?? 'Task 1';
                 if (questionId) {
-                    const promptRow = await prisma.diagnostic_questions.findUnique({ where: { id: questionId } });
+                    const promptRow = await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } });
                     if (promptRow) {
                         topic    = promptRow.prompt_text;
                         minWords = (promptRow as any).min_words ?? 150;
@@ -401,7 +401,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 try {
                     analysis = await analyzeWriting(topic, parsedAnswers.text, resolvedTaskType);
                 } catch (aiErr) {
-                    // Infra failure — do not save a fabricated band; let the student retry.
+                    // Infra failure â€” do not save a fabricated band; let the student retry.
                     console.error('[analyzeWriting] Failure:', aiErr);
                     return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
                 }
@@ -454,14 +454,14 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
     }
 };
 
-// ─── POST /api/diagnostic/submit/speaking (multipart audio) ──────────────────
+// â”€â”€â”€ POST /api/diagnostic/submit/speaking (multipart audio) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
     try {
         const userId = req.appUserId;
         if (!userId) { if (req.file) fs.unlink(req.file.path, () => {}); return res.status(401).json({ error: 'Unauthorized' }); }
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: userId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         if (!student) { if (req.file) fs.unlink(req.file.path, () => {}); return res.status(404).json({ error: 'Student not found.' }); }
         if (!req.file) return res.status(400).json({ error: 'Audio file required.' });
 
@@ -479,7 +479,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         const questionId = req.body.question_id;
         let topic = 'Introduce yourself and describe your hometown.';
         if (questionId) {
-            const row = await prisma.diagnostic_questions.findUnique({ where: { id: questionId } });
+            const row = await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } });
             if (row) topic = row.prompt_text;
         }
 
@@ -490,7 +490,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         try {
             const analysis = await analyzeSpeaking(topic, req.file.path, req.file.mimetype || 'audio/webm');
 
-            // ── Edge case: empty audio / pure noise — ask student to retry ──
+            // â”€â”€ Edge case: empty audio / pure noise â€” ask student to retry â”€â”€
             if (analysis.needs_retry) {
                 fs.unlink(req.file.path, () => {});
                 return res.status(422).json({
@@ -501,7 +501,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
                 });
             }
 
-            // Universal exit gate — round 0.5, clamp [4,9]. D2: even weak/invalid
+            // Universal exit gate â€” round 0.5, clamp [4,9]. D2: even weak/invalid
             // graded audio lands on the 4.0 IELTS-standard floor.
             bandScore  = toBand(Number(analysis.bandScore) || BAND_MIN);
             transcript = analysis.transcript ?? '';
@@ -515,7 +515,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
             };
         } catch (aiErr) {
             console.error('[analyzeSpeaking] Failure:', aiErr);
-            // Real failure (API error, network, etc.) — do NOT save a fake 6.0
+            // Real failure (API error, network, etc.) â€” do NOT save a fake 6.0
             fs.unlink(req.file.path, () => {});
             return res.status(502).json({
                 error:     'ai_grading_failed',
@@ -523,7 +523,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
                 message:   'AI evaluation failed. Please try submitting again.',
             });
         } finally {
-            // Clean up — safe to call even if already unlinked
+            // Clean up â€” safe to call even if already unlinked
             try { fs.unlinkSync(req.file.path); } catch { /* already removed */ }
         }
 

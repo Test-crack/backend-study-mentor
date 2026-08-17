@@ -1,4 +1,4 @@
-// src/controllers/instituteAdminController.ts
+﻿// src/controllers/instituteAdminController.ts
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
@@ -6,27 +6,27 @@ import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 import { paramStr } from '../utils/httpParams';
 
-// ─── Helper: resolve the institute the caller is admin/owner of ──────────────
+// â”€â”€â”€ Helper: resolve the institute the caller is admin/owner of â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function getInstituteId(appUserId: string): Promise<string | null> {
     // Check if admin
-    const adminRow = await prisma.institute_admins.findUnique({
+    const adminRow = await prisma.instituteAdmin.findUnique({
         where: { user_id: appUserId },
         select: { institute_id: true },
     });
     if (adminRow) return adminRow.institute_id;
 
     // Check if owner
-    const ownerRow = await prisma.institute_owners.findUnique({
+    const ownerRow = await prisma.instituteOwner.findUnique({
         where: { user_id: appUserId },
         select: { institute_id: true },
     });
     return ownerRow?.institute_id ?? null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // STUDENTS
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // GET /api/institute-admin/students
 export async function getStudents(req: AuthRequest, res: Response) {
@@ -37,7 +37,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
 
         const { search } = req.query as Record<string, string>;
 
-        const students = await prisma.institute_students.findMany({
+        const students = await prisma.instituteStudent.findMany({
             where: {
                 institute_id: instituteId,
                 ...(search?.trim()
@@ -103,7 +103,7 @@ export async function addStudent(req: AuthRequest, res: Response) {
             }
 
             // Check enrollment across ALL institutes (user_id is unique in institute_students)
-            const existingEnrollment = await prisma.institute_students.findUnique({
+            const existingEnrollment = await prisma.instituteStudent.findUnique({
                 where: { user_id: dbUser.id },
             });
             if (existingEnrollment) {
@@ -141,7 +141,7 @@ export async function addStudent(req: AuthRequest, res: Response) {
                 });
             }
 
-            await tx.institute_students.create({
+            await tx.instituteStudent.create({
                 data: { user_id: user.id, institute_id: instituteId, is_active: true },
             });
 
@@ -157,14 +157,14 @@ export async function addStudent(req: AuthRequest, res: Response) {
             },
         });
     } catch (err: any) {
-        // Race condition: two concurrent requests both passed the duplicate check —
+        // Race condition: two concurrent requests both passed the duplicate check â€”
         // the second hits the unique constraint. Return 409 instead of a raw 500.
         if (err.code === 'P2002') {
             return res.status(409).json({ error: 'This student is already enrolled in your institute.' });
         }
         console.error('[InstituteAdmin] addStudent error:', err);
         return res.status(500).json({
-            error: 'Enrollment failed. If an invite email was already sent, please retry — the student record was not saved.',
+            error: 'Enrollment failed. If an invite email was already sent, please retry â€” the student record was not saved.',
         });
     }
 }
@@ -178,12 +178,12 @@ export async function removeStudent(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const row = await prisma.institute_students.findFirst({
+        const row = await prisma.instituteStudent.findFirst({
             where: { user_id: userId, institute_id: instituteId },
         });
         if (!row) return res.status(404).json({ error: 'Student not found in your institute.' });
 
-        await prisma.institute_students.delete({ where: { id: row.id } });
+        await prisma.instituteStudent.delete({ where: { id: row.id } });
 
         return res.json({ data: { removed: true, userId } });
     } catch (err: any) {
@@ -207,12 +207,12 @@ export async function updateStudentStatus(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const row = await prisma.institute_students.findFirst({
+        const row = await prisma.instituteStudent.findFirst({
             where: { user_id: userId, institute_id: instituteId },
         });
         if (!row) return res.status(404).json({ error: 'Student not found in your institute.' });
 
-        await prisma.institute_students.update({
+        await prisma.instituteStudent.update({
             where: { id: row.id },
             data: { is_active: isActive },
         });
@@ -224,9 +224,9 @@ export async function updateStudentStatus(req: AuthRequest, res: Response) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // TUTORS (INSTRUCTORS)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // GET /api/institute-admin/tutors
 export async function getTutors(req: AuthRequest, res: Response) {
@@ -237,7 +237,7 @@ export async function getTutors(req: AuthRequest, res: Response) {
 
         const { search } = req.query as Record<string, string>;
 
-        const tutors = await prisma.institute_instructors.findMany({
+        const tutors = await prisma.instituteInstructor.findMany({
             where: {
                 institute_id: instituteId,
                 ...(search?.trim()
@@ -304,10 +304,10 @@ export async function addTutor(req: AuthRequest, res: Response) {
             if (dbUser.role !== UserRoleType.INSTRUCTOR) {
                 return res.status(409).json({ error: 'Email already linked with existing user. Contact - blinkgrid@gmail.com' });
             }
-            // institute_instructors.user_id is globally unique — a tutor belongs to ONE
+            // institute_instructors.user_id is globally unique â€” a tutor belongs to ONE
             // institute. Check across ALL institutes (not just this one) so we can't
             // silently re-point another institute's tutor into ours via the upsert.
-            const existing = await prisma.institute_instructors.findUnique({
+            const existing = await prisma.instituteInstructor.findUnique({
                 where: { user_id: dbUser.id },
             });
             if (existing) {
@@ -343,7 +343,7 @@ export async function addTutor(req: AuthRequest, res: Response) {
                 });
             }
 
-            await tx.institute_instructors.upsert({
+            await tx.instituteInstructor.upsert({
                 where: { user_id: user!.id },
                 update: { institute_id: instituteId, specialization: specialization ?? null },
                 create: {
@@ -370,7 +370,7 @@ export async function addTutor(req: AuthRequest, res: Response) {
         }
         console.error('[InstituteAdmin] addTutor error:', err);
         return res.status(500).json({
-            error: 'Onboarding failed. If an invite email was already sent, please retry — the tutor record was not saved.',
+            error: 'Onboarding failed. If an invite email was already sent, please retry â€” the tutor record was not saved.',
         });
     }
 }
@@ -384,16 +384,16 @@ export async function removeTutor(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const row = await prisma.institute_instructors.findFirst({
+        const row = await prisma.instituteInstructor.findFirst({
             where: { user_id: userId, institute_id: instituteId },
         });
         if (!row) return res.status(404).json({ error: 'Tutor not found in your institute.' });
 
-        // Remove only the institute link. Do NOT touch User.role — unconditionally
+        // Remove only the institute link. Do NOT touch User.role â€” unconditionally
         // downgrading to STUDENT stripped the person's platform role (and, with the
         // former cross-institute poach, let one institute strip a rival's tutor role).
         // Institute membership and platform role are separate concerns (mirrors removeStudent).
-        await prisma.institute_instructors.delete({ where: { id: row.id } });
+        await prisma.instituteInstructor.delete({ where: { id: row.id } });
 
         return res.json({ data: { removed: true, userId } });
     } catch (err: any) {
@@ -402,9 +402,9 @@ export async function removeTutor(req: AuthRequest, res: Response) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // INSTITUTE PROFILE (Settings page)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // GET /api/institute-admin/institute
 export async function getInstituteProfile(req: AuthRequest, res: Response) {
@@ -413,7 +413,7 @@ export async function getInstituteProfile(req: AuthRequest, res: Response) {
         const instituteId = await getInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const institute = await prisma.institutes.findUnique({
+        const institute = await prisma.institute.findUnique({
             where:  { id: instituteId },
             select: { id: true, name: true, address: true, logo_url: true, is_active: true, created_at: true },
         });
@@ -435,7 +435,7 @@ export async function getInstituteProfile(req: AuthRequest, res: Response) {
     }
 }
 
-// PATCH /api/institute-admin/institute — name / address / logoUrl only.
+// PATCH /api/institute-admin/institute â€” name / address / logoUrl only.
 // is_active is deliberately NOT editable here (that is a platform-level switch).
 export async function updateInstituteProfile(req: AuthRequest, res: Response) {
     try {
@@ -453,7 +453,7 @@ export async function updateInstituteProfile(req: AuthRequest, res: Response) {
             return res.status(400).json({ error: 'Nothing to update.' });
         }
 
-        const updated = await prisma.institutes.update({
+        const updated = await prisma.institute.update({
             where: { id: instituteId },
             data: {
                 ...(trimmedName !== undefined ? { name: trimmedName } : {}),
@@ -473,12 +473,12 @@ export async function updateInstituteProfile(req: AuthRequest, res: Response) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ONBOARDING STATUS ("Needs attention" — the honest replacement for the old
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ONBOARDING STATUS ("Needs attention" â€” the honest replacement for the old
 // mock approve/reject queue: invites activate immediately, so what an admin
 // actually needs to see is who was invited but never started, and which tutors
 // have no batch yet.)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // GET /api/institute-admin/onboarding-status
 export async function getOnboardingStatus(req: AuthRequest, res: Response) {
@@ -488,14 +488,14 @@ export async function getOnboardingStatus(req: AuthRequest, res: Response) {
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
         const [pendingStudents, tutors, batches] = await Promise.all([
-            // Students who never completed the diagnostic — invited but not started.
-            prisma.institute_students.findMany({
+            // Students who never completed the diagnostic â€” invited but not started.
+            prisma.instituteStudent.findMany({
                 where:   { institute_id: instituteId, isDiagnosed: false, is_active: true },
                 orderBy: { created_at: 'desc' },
                 take:    50,
                 include: { User: { select: { id: true, name: true, email: true, profileImage: true } } },
             }),
-            prisma.institute_instructors.findMany({
+            prisma.instituteInstructor.findMany({
                 where:   { institute_id: instituteId },
                 include: {
                     User: {
@@ -506,7 +506,7 @@ export async function getOnboardingStatus(req: AuthRequest, res: Response) {
                     },
                 },
             }),
-            (prisma as any).ielts_batches.findMany({
+            (prisma as any).ieltsBatch.findMany({
                 where:  { institute_id: instituteId },
                 select: { id: true },
             }),
@@ -550,7 +550,7 @@ export async function resendStudentInvite(req: AuthRequest, res: Response) {
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
         const userId = paramStr(req.params.userId);
-        const row = await prisma.institute_students.findFirst({
+        const row = await prisma.instituteStudent.findFirst({
             where:   { user_id: userId, institute_id: instituteId },
             include: { User: { select: { name: true, email: true } }, institutes: { select: { name: true } } },
         });

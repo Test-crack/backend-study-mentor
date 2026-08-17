@@ -1,11 +1,11 @@
-// src/lib/studentNotify.ts
+﻿// src/lib/studentNotify.ts
 // Single producer entry point for ALL persisted event notifications, backed by
 // the ONE recipient-generic user_notifications table (keyed by User.id).
 //
 // Only EVENTS go through here (IA_MISSED, STUDENT_IA_MISSED, future
-// MOCK_GRADED / announcements…). Live CTAs (IA_PENDING / IN_PROGRESS /
-// MOCK_PENDING…) are derived from session state at read time and never
-// stored — see getStudentNotifications.
+// MOCK_GRADED / announcementsâ€¦). Live CTAs (IA_PENDING / IN_PROGRESS /
+// MOCK_PENDINGâ€¦) are derived from session state at read time and never
+// stored â€” see getStudentNotifications.
 //
 // Idempotent by design: callers pass a dedupe_key (e.g. "IA_MISSED:2026-07-16")
 // and repeated calls upsert onto the same row. This matters because the miss-
@@ -18,8 +18,8 @@ export type UserNotificationType    = 'STUDENT_IA_MISSED';   // instructor/admin
 /**
  * Convenience wrapper for student-facing events: resolves the student's
  * User.id and records into the same user_notifications table as every other
- * recipient. Best-effort: failures are logged and swallowed — a notification
- * must never break the flow that produced it (penalty transactions, grading…).
+ * recipient. Best-effort: failures are logged and swallowed â€” a notification
+ * must never break the flow that produced it (penalty transactions, gradingâ€¦).
  */
 export async function notifyStudent(
     studentId: string,
@@ -28,7 +28,7 @@ export async function notifyStudent(
     dedupeKey: string,
 ): Promise<void> {
     try {
-        const student = await prisma.institute_students.findUnique({
+        const student = await prisma.instituteStudent.findUnique({
             where:  { id: studentId },
             select: { user_id: true },
         });
@@ -40,8 +40,8 @@ export async function notifyStudent(
 }
 
 /**
- * Recipient-generic variant — one event notification for any User (instructor,
- * admin, owner…), persisted in user_notifications. Same idempotency + same
+ * Recipient-generic variant â€” one event notification for any User (instructor,
+ * admin, ownerâ€¦), persisted in user_notifications. Same idempotency + same
  * best-effort contract as notifyStudent.
  */
 export async function notifyUser(
@@ -75,13 +75,13 @@ export async function notifyInstructorsOfMissedIA(
     momentumDeducted: number,
 ): Promise<void> {
     try {
-        const student = await prisma.institute_students.findUnique({
+        const student = await prisma.instituteStudent.findUnique({
             where:  { id: studentId },
             select: { user_id: true, User: { select: { name: true, email: true } } },
         });
         if (!student) return;
 
-        const memberships = await prisma.ielts_batch_students.findMany({
+        const memberships = await prisma.ieltsBatchStudent.findMany({
             where:  { user_id: student.user_id },
             select: { batch_id: true, ielts_batches: { select: { ielts_batch_instructors: { select: { user_id: true } } } } },
         });

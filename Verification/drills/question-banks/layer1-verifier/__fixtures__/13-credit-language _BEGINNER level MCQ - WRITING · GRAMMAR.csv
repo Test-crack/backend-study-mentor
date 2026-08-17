@@ -1,7 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-WRITING,GRAMMAR,BEGINNER,"MUST FIRE: the explanation credits a different letter.","{""A"":""has"",""B"":""have"",""C"":""had"",""D"":""having""}","""B""","The correct answer is A because the auxiliary must agree with the subject."
-WRITING,GRAMMAR,BEGINNER,"MUST NOT FIRE: naming a wrong option to explain why it is wrong.","{""A"":""He he goes"",""B"":""He goes"",""C"":""He go"",""D"":""He going""}","""B""","Option A doubles the subject, which is a common error in spoken English."
-WRITING,GRAMMAR,BEGINNER,"MUST NOT FIRE: explicitly calling another option incorrect.","{""A"":""was"",""B"":""were"",""C"":""is"",""D"":""be""}","""B""","Option C is incorrect because the subject is plural."
-WRITING,GRAMMAR,BEGINNER,"MUST NOT FIRE: a hedged conditional about another option.","{""A"":""finished"",""B"":""finishes"",""C"":""finish"",""D"":""finishing""}","""B""","Option A would be correct if the sentence described yesterday."
-WRITING,GRAMMAR,BEGINNER,"MUST NOT FIRE: several options named together.","{""A"":""go"",""B"":""goes"",""C"":""gone"",""D"":""going""}","""B""","Options A and C both fail the subject-verb agreement test."
-WRITING,GRAMMAR,BEGINNER,"MUST NOT FIRE: the explanation credits the stored answer.","{""A"":""child"",""B"":""children"",""C"":""childs"",""D"":""childes""}","""B""","Only option B uses the irregular plural correctly."

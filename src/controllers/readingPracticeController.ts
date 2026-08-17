@@ -1,15 +1,15 @@
-   /**
+﻿   /**
  * readingPracticeController.ts
  *
  * Handles all endpoints related to the IELTS Reading Practice feature.
- * Data is stored in the "IeltsReadingAssessment" table (new — freed up
+ * Data is stored in the "IeltsReadingAssessment" table (new â€” freed up
  * after the old reading assessment table was renamed to IeltsSpeakingAssessment).
  *
  * Routes:
- *   POST /api/reading-practice/submit             → student submits a session
- *   GET  /api/reading-practice/history            → student's own history
- *   GET  /api/instructor/batches/:id/reading-analytics    → instructor batch analytics
- *   GET  /api/institute-owner/batches/:id/reading-analytics → owner batch analytics
+ *   POST /api/reading-practice/submit             â†’ student submits a session
+ *   GET  /api/reading-practice/history            â†’ student's own history
+ *   GET  /api/instructor/batches/:id/reading-analytics    â†’ instructor batch analytics
+ *   GET  /api/institute-owner/batches/:id/reading-analytics â†’ owner batch analytics
  */
 
 import { Response } from 'express';
@@ -17,7 +17,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { paramStr } from '../utils/httpParams';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function computeGrade(accuracy: number): string {
     if (accuracy >= 90) return 'A+';
@@ -37,16 +37,16 @@ function computeSpeedCategory(wpm: number): string {
 
 function generateFeedbackTips(accuracy: number, wpm: number, grade: string): string[] {
     const tips: string[] = [];
-    if (accuracy < 60) tips.push('Focus on reading more carefully — comprehension matters more than speed.');
+    if (accuracy < 60) tips.push('Focus on reading more carefully â€” comprehension matters more than speed.');
     if (accuracy >= 80 && wpm < 250) tips.push('Great accuracy! Try increasing your reading speed gradually.');
-    if (wpm > 500 && accuracy < 70) tips.push('Reading fast but losing comprehension — slow down slightly.');
+    if (wpm > 500 && accuracy < 70) tips.push('Reading fast but losing comprehension â€” slow down slightly.');
     if (grade === 'A+') tips.push('Outstanding! Keep practising to maintain this level.');
-    if (grade === 'D' || grade === 'F') tips.push("Don't worry — regular practice improves both speed and retention.");
+    if (grade === 'D' || grade === 'F') tips.push("Don't worry â€” regular practice improves both speed and retention.");
     if (tips.length === 0) tips.push('Good effort! Consistent practice is the key to improvement.');
     return tips;
 }
 
-// ─── Endpoint 1: POST /api/reading-practice/submit ───────────────────────────
+// â”€â”€â”€ Endpoint 1: POST /api/reading-practice/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Score a Reading Practice session and save to IeltsReadingAssessment.
@@ -181,7 +181,7 @@ export async function submitReadingPractice(
     }
 }
 
-// ─── Endpoint 2: GET /api/reading-practice/history ───────────────────────────
+// â”€â”€â”€ Endpoint 2: GET /api/reading-practice/history â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Fetch the authenticated student's own reading practice session history.
@@ -230,10 +230,10 @@ export async function getMyReadingHistory(
     }
 }
 
-// ─── Endpoint 3 & 4: Batch Reading Analytics (Instructor + Owner) ─────────────
+// â”€â”€â”€ Endpoint 3 & 4: Batch Reading Analytics (Instructor + Owner) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
- * Shared handler — batch-level reading analytics aggregated from IeltsReadingAssessment.
+ * Shared handler â€” batch-level reading analytics aggregated from IeltsReadingAssessment.
  * Used by both:
  *   GET /api/instructor/batches/:batchId/reading-analytics
  *   GET /api/institute-owner/batches/:batchId/reading-analytics
@@ -246,7 +246,7 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
         let batch: any = null;
 
         if (isUuid) {
-            batch = await prisma.ielts_batches.findUnique({
+            batch = await prisma.ieltsBatch.findUnique({
                 where: { id: batchId },
                 include: {
                     ielts_batch_students: {
@@ -259,7 +259,7 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
                 },
             });
         } else {
-            const allBatches = await prisma.ielts_batches.findMany({
+            const allBatches = await prisma.ieltsBatch.findMany({
                 include: {
                     ielts_batch_students: {
                         include: {
@@ -277,7 +277,7 @@ export async function getBatchReadingAnalytics(req: AuthRequest, res: Response) 
             return res.status(404).json({ success: false, error: 'Batch not found' });
         }
 
-        const studentIds = batch.ielts_batch_students.map((bs: any) => bs.User.id);
+        const studentIds = batch.ieltsBatchStudent.map((bs: any) => bs.User.id);
 
         if (studentIds.length === 0) {
             return res.json({

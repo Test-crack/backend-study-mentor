@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth';
 import { slugify } from '../helper/stringUtils';
@@ -1134,7 +1134,7 @@ export async function getStudentSpeakingHistory(req: AuthRequest, res: Response)
         const studentId = paramStr(req.params.studentId);
 
         // 1. Verify instructor belongs to an institute
-        const instructor = await prisma.institute_instructors.findUnique({
+        const instructor = await prisma.instituteInstructor.findUnique({
             where: { user_id: appUserId }
         });
         if (!instructor) {
@@ -1142,13 +1142,13 @@ export async function getStudentSpeakingHistory(req: AuthRequest, res: Response)
         }
 
         // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.ielts_batch_instructors.findMany({
+        const instructorBatches = await prisma.ieltsBatchInstructor.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
         const batchIds = instructorBatches.map(b => b.batch_id);
 
-        const studentInBatch = await prisma.ielts_batch_students.findFirst({
+        const studentInBatch = await prisma.ieltsBatchStudent.findFirst({
             where: { user_id: studentId, batch_id: { in: batchIds } }
         });
         if (!studentInBatch) {
@@ -1228,7 +1228,7 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
         const studentId = paramStr(req.params.studentId);
 
         // 1. Verify instructor
-        const instructor = await prisma.institute_instructors.findUnique({
+        const instructor = await prisma.instituteInstructor.findUnique({
             where: { user_id: appUserId }
         });
         if (!instructor) {
@@ -1236,13 +1236,13 @@ export async function getStudentReadingHistory(req: AuthRequest, res: Response) 
         }
 
         // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.ielts_batch_instructors.findMany({
+        const instructorBatches = await prisma.ieltsBatchInstructor.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
         const batchIds = instructorBatches.map(b => b.batch_id);
 
-        const studentInBatch = await prisma.ielts_batch_students.findFirst({
+        const studentInBatch = await prisma.ieltsBatchStudent.findFirst({
             where: { user_id: studentId, batch_id: { in: batchIds } }
         });
         if (!studentInBatch) {
@@ -1288,7 +1288,7 @@ export async function getStudentWritingHistory(req: AuthRequest, res: Response) 
         const studentId = paramStr(req.params.studentId);
 
         // 1. Verify instructor
-        const instructor = await prisma.institute_instructors.findUnique({
+        const instructor = await prisma.instituteInstructor.findUnique({
             where: { user_id: appUserId }
         });
         if (!instructor) {
@@ -1296,13 +1296,13 @@ export async function getStudentWritingHistory(req: AuthRequest, res: Response) 
         }
 
         // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.ielts_batch_instructors.findMany({
+        const instructorBatches = await prisma.ieltsBatchInstructor.findMany({
             where: { user_id: appUserId },
             select: { batch_id: true }
         });
         const batchIds = instructorBatches.map(b => b.batch_id);
 
-        const studentInBatch = await prisma.ielts_batch_students.findFirst({
+        const studentInBatch = await prisma.ieltsBatchStudent.findFirst({
             where: { user_id: studentId, batch_id: { in: batchIds } }
         });
         if (!studentInBatch) {
@@ -1371,7 +1371,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
 
         // Verify the instructor is assigned to this batch
-        const instructorAssignment = await prisma.ielts_batch_instructors.findFirst({
+        const instructorAssignment = await prisma.ieltsBatchInstructor.findFirst({
             where: { batch_id: batchId, user_id: appUserId }
         });
 
@@ -1379,7 +1379,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             return res.status(403).json({ error: 'You are not assigned to this batch.' });
         }
 
-        const batch = await prisma.ielts_batches.findUnique({
+        const batch = await prisma.ieltsBatch.findUnique({
             where: { id: batchId },
             include: {
                 ielts_batch_students: {

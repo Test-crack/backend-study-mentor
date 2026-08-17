@@ -1,6 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation,source_key
-WRITING,GRAMMAR,BEGINNER,"She ___ to work by bus every morning.","{""A"":""go"",""B"":""goes"",""C"":""going"",""D"":""gone""}","""B""","Third-person singular in the present simple takes an -s ending.",
-WRITING,GRAMMAR,BEGINNER,"They ___ football on Sundays.","{""A"":""plays"",""B"":""playing"",""C"":""play"",""D"":""played""}","""C""","A plural subject takes the base form of the verb.",drill_writingg_grammar_beginner_002
-WRITING,GRAMMAR,BEGINNER,"I ___ never been to Paris.","{""A"":""has"",""B"":""have"",""C"":""had"",""D"":""having""}","""B""","The first person uses have in the present perfect.",drill_speaking_pronunciation_intermediate_003
-WRITING,GRAMMAR,BEGINNER,"He ___ his homework yesterday.","{""A"":""finish"",""B"":""finishes"",""C"":""finished"",""D"":""finishing""}","""C""","Yesterday signals the simple past tense.",drill_writing_grammar_beginner_009
-WRITING,GRAMMAR,BEGINNER,"We ___ dinner at eight last night.","{""A"":""eat"",""B"":""eats"",""C"":""ate"",""D"":""eaten""}","""C""","Last night signals the simple past tense.",drill_writing_grammar_beginner_009

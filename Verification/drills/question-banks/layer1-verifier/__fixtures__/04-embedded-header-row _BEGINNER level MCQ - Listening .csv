@@ -1,5 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-LISTENING,LISTENING,BEGINNER,"What time does the museum close?","{""A"":""4 pm"",""B"":""5 pm"",""C"":""6 pm"",""D"":""7 pm""}","""B""","The speaker says the doors shut at five."
-LISTENING,LISTENING,BEGINNER,"Where should the students meet?","{""A"":""Library"",""B"":""Main gate"",""C"":""Cafeteria"",""D"":""Car park""}","""D""","The guide asks everyone to gather at the car park."
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-LISTENING,LISTENING,BEGINNER,"How much is the student ticket?","{""A"":""two pounds"",""B"":""four pounds"",""C"":""six pounds"",""D"":""eight pounds""}","""A""","The clerk quotes two pounds for students."

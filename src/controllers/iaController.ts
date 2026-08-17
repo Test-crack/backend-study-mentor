@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { computeAverageDCS } from '../lib/dcs';
@@ -8,16 +8,16 @@ import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
 import { processIASession, AlreadyCompletedError, applySmoothing, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
 import { bandToDifficulty } from '../lib/bandScale';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
 const IA_MIN_DAYS = 2;   // calendar days since first drill required
 const IA_DCS_THRESHOLD = 40;  // avg DCS % required to start the test
-const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 …
-const IA_MIN_WINDOW_MS = 40 * 60 * 1000;  // block new session if <40 min remain in today's window (2 sections × 20 min)
+const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 â€¦
+const IA_MIN_WINDOW_MS = 40 * 60 * 1000;  // block new session if <40 min remain in today's window (2 sections Ã— 20 min)
 const MISS_PENALTY = 20;  // momentum deducted for a missed IA (must match iaMissDetector)
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
-// ─── IST date helpers ─────────────────────────────────────────────────────────
+// â”€â”€â”€ IST date helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Returns YYYY-MM-DD for any Date value, evaluated in IST. */
 function toISTDateString(d: Date): string {
@@ -40,7 +40,7 @@ function addCalendarDays(dateStr: string, days: number): string {
     ].join('-');
 }
 
-/** Integer calendar-day difference: toStr − fromStr (positive = future). */
+/** Integer calendar-day difference: toStr âˆ’ fromStr (positive = future). */
 function daysBetween(fromStr: string, toStr: string): number {
     const parse = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); };
     return Math.round((parse(toStr) - parse(fromStr)) / 86_400_000);
@@ -54,50 +54,50 @@ function formatIADate(dateStr: string): string {
     });
 }
 
-// ─── GET /api/ia/eligibility  (kept for backward compat) ─────────────────────
-// Thin wrapper — delegates to the new status logic and surfaces only what the
+// â”€â”€â”€ GET /api/ia/eligibility  (kept for backward compat) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Thin wrapper â€” delegates to the new status logic and surfaces only what the
 // old Assessment.tsx eligibility gate expected.
 export async function getIAEligibility(req: AuthRequest, res: Response) {
     return getIAStatus(req, res);
 }
 
-// ─── GET /api/ia/status ───────────────────────────────────────────────────────
+// â”€â”€â”€ GET /api/ia/status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Single source of truth for everything /student/internal and the dashboard
 // IA widget need.
 //
 // Response shape:
-//   has_schedule       — student has done ≥ 1 drill (schedule exists)
-//   prerequisites_met  — 6 drills + 2 days (DCS is NOT a prerequisite gate here)
-//   avg_dcs            — per-sub-skill weighted average DCS, integer 0-100
-//   dcs_eligible       — avg_dcs ≥ 40 (gates the start-test button on IA day)
-//   is_ia_day          — today (IST) is a scheduled IA date
-//   current_ia_number  — 1-based index of today's IA slot (null if not IA day)
-//   can_start_test     — is_ia_day && prerequisites_met && dcs_eligible
-//   next_ia            — next future IA slot { number, date, date_formatted, days_away }
-//   upcoming_ias       — next 2 future slots (for dashboard widget)
-//   progress           — raw numbers for the not-eligible detail screen
+//   has_schedule       â€” student has done â‰¥ 1 drill (schedule exists)
+//   prerequisites_met  â€” 6 drills + 2 days (DCS is NOT a prerequisite gate here)
+//   avg_dcs            â€” per-sub-skill weighted average DCS, integer 0-100
+//   dcs_eligible       â€” avg_dcs â‰¥ 40 (gates the start-test button on IA day)
+//   is_ia_day          â€” today (IST) is a scheduled IA date
+//   current_ia_number  â€” 1-based index of today's IA slot (null if not IA day)
+//   can_start_test     â€” is_ia_day && prerequisites_met && dcs_eligible
+//   next_ia            â€” next future IA slot { number, date, date_formatted, days_away }
+//   upcoming_ias       â€” next 2 future slots (for dashboard widget)
+//   progress           â€” raw numbers for the not-eligible detail screen
 export async function getIAStatus(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        // ── All drill sessions (cheapest single query) ────────────────────────
+        // â”€â”€ All drill sessions (cheapest single query) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const allSessions = await prisma.drillSession.findMany({
             where: { student_id: student.id },
             orderBy: { created_at: 'asc' },
             select: { id: true, created_at: true, status: true }
         });
 
-        // Prerequisite gate counts COMPLETED drills only — a STARTED-but-abandoned
+        // Prerequisite gate counts COMPLETED drills only â€” a STARTED-but-abandoned
         // session must not make the IA look startable (getIAQuestions would then 403).
         const drills_completed = allSessions.filter(
             s => s.status === 'DRILL_DONE' || s.status === 'APPLY_DONE'
         ).length;
 
-        // ── No drill sessions at all → nothing to schedule (need an anchor date) ─
+        // â”€â”€ No drill sessions at all â†’ nothing to schedule (need an anchor date) â”€
         if (allSessions.length === 0) {
             return res.json({
                 success: true,
@@ -125,35 +125,35 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
             });
         }
 
-        // ── Schedule anchor: IST calendar date of the very first drill ────────
+        // â”€â”€ Schedule anchor: IST calendar date of the very first drill â”€â”€â”€â”€â”€â”€â”€â”€
         const firstDrillDateStr = toISTDateString(allSessions[0].created_at);
         const todayStr = toISTDateString(new Date());
 
-        // ── Miss detection (shared with getPendingNotifications) ─────────────
+        // â”€â”€ Miss detection (shared with getPendingNotifications) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const penaltiesApplied = await detectAndMarkMissedIAs(student.id);
 
-        // ── Prerequisites (non-DCS gates) ─────────────────────────────────────
+        // â”€â”€ Prerequisites (non-DCS gates) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const days_since_first_drill = daysBetween(firstDrillDateStr, todayStr);
         const cond_drills = drills_completed >= IA_DRILL_THRESHOLD;
         const cond_days = days_since_first_drill >= IA_MIN_DAYS;
         const prerequisites_met = cond_drills && cond_days;
 
-        // ── DCS ───────────────────────────────────────────────────────────────
+        // â”€â”€ DCS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const avg_dcs = await computeAverageDCS(student.id);
         const cond_dcs = avg_dcs >= IA_DCS_THRESHOLD;
 
-        // ── IA schedule: first_drill + 3, +6, +9 … computed DYNAMICALLY ───────
+        // â”€â”€ IA schedule: first_drill + 3, +6, +9 â€¦ computed DYNAMICALLY â”€â”€â”€â”€â”€â”€â”€
         // Any day that is a positive multiple of the interval since the first drill is
         // an IA day. Computing this (rather than a fixed N-slot array) means IAs remain
-        // available indefinitely — a previous 30-slot / 90-day ceiling made is_ia_day
+        // available indefinitely â€” a previous 30-slot / 90-day ceiling made is_ia_day
         // false past day 90 while the miss detector kept penalizing, so long-term
-        // students bled −20 every 3 days with no way to comply.
+        // students bled âˆ’20 every 3 days with no way to comply.
         const daysSinceForSchedule = daysBetween(firstDrillDateStr, todayStr);
         const is_ia_day = daysSinceForSchedule > 0 && daysSinceForSchedule % IA_INTERVAL_DAYS === 0;
         const current_ia_number = is_ia_day ? daysSinceForSchedule / IA_INTERVAL_DAYS : null;
         const can_start_test = is_ia_day && prerequisites_met && cond_dcs;
 
-        // ── Upcoming slots (next two strictly-future IA dates) ────────────────
+        // â”€â”€ Upcoming slots (next two strictly-future IA dates) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const nextN = Math.floor(daysSinceForSchedule / IA_INTERVAL_DAYS) + 1;
         const futureSlots = [nextN, nextN + 1].map(n => {
             const date = addCalendarDays(firstDrillDateStr, n * IA_INTERVAL_DAYS);
@@ -167,7 +167,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
 
         const next_ia = futureSlots[0] ?? null;
 
-        // ── Reasons array (for not-eligible detail screen) ────────────────────
+        // â”€â”€ Reasons array (for not-eligible detail screen) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const reasons: { key: string; message: string }[] = [];
         if (!cond_drills) {
             const rem = IA_DRILL_THRESHOLD - drills_completed;
@@ -178,7 +178,7 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
             reasons.push({ key: 'days', message: `Wait ${rem} more day${rem !== 1 ? 's' : ''} since your first drill (${days_since_first_drill} / ${IA_MIN_DAYS} days)` });
         }
         if (!cond_dcs) {
-            reasons.push({ key: 'dcs', message: `Raise your average drill accuracy to ${IA_DCS_THRESHOLD}% — currently ${avg_dcs}%` });
+            reasons.push({ key: 'dcs', message: `Raise your average drill accuracy to ${IA_DCS_THRESHOLD}% â€” currently ${avg_dcs}%` });
         }
 
         // When student can start today, preview which sub-skills will be targeted
@@ -187,10 +187,10 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
             try {
                 const sel = await selectPrioritySubSkills(student.id);
                 suggested_subskills = [sel.primary, sel.secondary];
-            } catch { /* non-fatal — gate still opens without preview */ }
+            } catch { /* non-fatal â€” gate still opens without preview */ }
         }
 
-        // Active in-progress session today → gate shows "Continue Assessment" instead of "Start"
+        // Active in-progress session today â†’ gate shows "Continue Assessment" instead of "Start"
         // Also check for completed session to show scores
         const todayActiveSession = is_ia_day
             ? await prisma.iASession.findFirst({
@@ -244,10 +244,10 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SECTION_IA_MS = 20 * 60 * 1000;  // 20 min per section; 2 sections = 40 min total
-// SUB_SCORE_KEY_MAP imported from iaProcessor — single source of truth
+// SUB_SCORE_KEY_MAP imported from iaProcessor â€” single source of truth
 
 /** UTC instant at IST midnight of today. */
 function todayStartISTLocal(): Date {
@@ -255,7 +255,7 @@ function todayStartISTLocal(): Date {
     return new Date(Date.UTC(nowIST.getUTCFullYear(), nowIST.getUTCMonth(), nowIST.getUTCDate()) - IST_OFFSET_MS);
 }
 
-/** UTC instant at IST midnight of tomorrow — i.e. end of today. */
+/** UTC instant at IST midnight of tomorrow â€” i.e. end of today. */
 function todayEndIST(): Date {
     return new Date(todayStartISTLocal().getTime() + 24 * 60 * 60 * 1000);
 }
@@ -280,7 +280,7 @@ function getBandForSubSkill(
     return parseFloat(String(row.band_score ?? '5.0')) || 5.0;
 }
 
-/** Strip answer key and explanation — never send to frontend during active session. */
+/** Strip answer key and explanation â€” never send to frontend during active session. */
 function sanitizeQuestions(qs: any[]): any[] {
     return qs.map(q => {
         const { correct_answer: _ca, explanation: _ex, ...safe } = q;
@@ -300,9 +300,9 @@ function shuffle<T>(arr: T[]): T[] {
 /**
  * Fetch 10 questions for a given (skill, sub_skill) pair.
  * Smart grouping:
- *   LISTENING → pick one random audio_url group (all questions share the same audio)
- *   READING   → pick one random passage_id group (all questions share the same passage)
- *   Others    → 8 MCQ + 2 WRITING_PROMPT|SPEAKING_PROMPT; falls back gracefully when seeding is partial
+ *   LISTENING â†’ pick one random audio_url group (all questions share the same audio)
+ *   READING   â†’ pick one random passage_id group (all questions share the same passage)
+ *   Others    â†’ 8 MCQ + 2 WRITING_PROMPT|SPEAKING_PROMPT; falls back gracefully when seeding is partial
  */
 async function fetchSectionQuestions(
     skill: string,
@@ -312,7 +312,7 @@ async function fetchSectionQuestions(
 
     const base = { skill, sub_skill: subSkill, difficulty, is_active: true } as any;
 
-    // ── LISTENING ─────────────────────────────────────────────────────────────
+    // â”€â”€ LISTENING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (subSkill === 'LISTENING') {
         const pool = await prisma.iAQuestion.findMany({
             where: { ...base, audio_url: { not: null } },
@@ -336,7 +336,7 @@ async function fetchSectionQuestions(
         return { section_type: 'AUDIO', audio_url: chosen, passage_text: null, passage_id: null, questions: qs };
     }
 
-    // ── READING ───────────────────────────────────────────────────────────────
+    // â”€â”€ READING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (subSkill === 'READING') {
         const pool = await prisma.iAQuestion.findMany({
             where: { ...base, passage_id: { not: null } },
@@ -357,7 +357,7 @@ async function fetchSectionQuestions(
         return buildPassageSection(pool, chosen);
     }
 
-    // ── WRITING / SPEAKING sub-skills ─────────────────────────────────────────
+    // â”€â”€ WRITING / SPEAKING sub-skills â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // 8 MCQ + 2 WRITING_PROMPT | SPEAKING_PROMPT
     const promptType = skill === 'WRITING' ? 'WRITING_PROMPT' : 'SPEAKING_PROMPT';
 
@@ -421,18 +421,18 @@ function buildPassageSection(
     };
 }
 
-// ─── GET /api/ia/questions ────────────────────────────────────────────────────
+// â”€â”€â”€ GET /api/ia/questions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function getIAQuestions(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const todayStr = toISTDateString(new Date());
 
-        // ── 1. Validate this is an IA day for this student ────────────────────
+        // â”€â”€ 1. Validate this is an IA day for this student â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const allDrills = await prisma.drillSession.findMany({
             where: { student_id: student.id }, orderBy: { created_at: 'asc' }, select: { created_at: true }
         });
@@ -449,7 +449,7 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
         const ia_number = daysSinceFirst / IA_INTERVAL_DAYS;
         const windowClosesAt = todayEndIST();
 
-        // ── 2. Check existing session ─────────────────────────────────────────
+        // â”€â”€ 2. Check existing session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const existing = await prisma.iASession.findUnique({
             where: { student_id_ia_date: { student_id: student.id, ia_date: new Date(todayStr) } }
         });
@@ -514,7 +514,7 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             }
         }
 
-        // ── 3. Guard: block new session if too little time remains in window ────
+        // â”€â”€ 3. Guard: block new session if too little time remains in window â”€â”€â”€â”€
         // Prevents the edge case where a student opens the test at 11:58 PM IST
         // (2 minutes left), can't possibly finish, and gets MISSED + -20 momentum.
         const timeRemainingInWindow = windowClosesAt.getTime() - Date.now();
@@ -523,11 +523,11 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             return res.status(400).json({
                 success: false,
                 error:   'window_closing_soon',
-                message: `Only ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''} remain in today's IA window — not enough time to start. Your next IA slot opens in a few days.`,
+                message: `Only ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''} remain in today's IA window â€” not enough time to start. Your next IA slot opens in a few days.`,
             });
         }
 
-        // ── 3b. Prerequisites + DCS gate (new sessions only — resume always allowed) ──────
+        // â”€â”€ 3b. Prerequisites + DCS gate (new sessions only â€” resume always allowed) â”€â”€â”€â”€â”€â”€
         const [completedDrillCount, avgDcsForGate] = await Promise.all([
             prisma.drillSession.count({
                 where: { student_id: student.id, status: { in: ['DRILL_DONE', 'APPLY_DONE'] as any } }
@@ -553,9 +553,9 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             });
         }
 
-        // ── 4. New session: carry-forward + 2-week uniqueness + select ──────────
+        // â”€â”€ 4. New session: carry-forward + 2-week uniqueness + select â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        // 4a. Sub-skills from COMPLETED sessions in the last 14 IST calendar days — don't repeat
+        // 4a. Sub-skills from COMPLETED sessions in the last 14 IST calendar days â€” don't repeat
         const cutoff14 = new Date(addCalendarDays(toISTDateString(new Date()), -14));
         const recentCompleted = await prisma.iASession.findMany({
             where: { student_id: student.id, status: 'COMPLETED' as any, ia_date: { gte: cutoff14 } },
@@ -592,7 +592,7 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             ];
         }
 
-        // Dedup guard — if both resolve to same sub_skill (edge case), force a fresh pick
+        // Dedup guard â€” if both resolve to same sub_skill (edge case), force a fresh pick
         if (selectedSubskills[0].sub_skill === selectedSubskills[1].sub_skill) {
             const exclude = new Set([...recentlyTestedSet, selectedSubskills[0].sub_skill]);
             const fallback = await selectPrioritySubSkills(student.id, exclude);
@@ -621,7 +621,7 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
             { skill: secondary.skill, sub_skill: secondary.sub_skill, ids: rawSection2.questions.map((q: any) => q.id) }
         ];
 
-        // ── 5. Create session row ─────────────────────────────────────────────
+        // â”€â”€ 5. Create session row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const session = await prisma.iASession.create({
             data: {
                 student_id: student.id,
@@ -661,14 +661,14 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
         // client refetches and picks up the winner's session via the resume path,
         // instead of a confusing 500.
         if (err?.code === 'P2002') {
-            return res.status(409).json({ success: false, error: 'IA session already started — please refresh.' });
+            return res.status(409).json({ success: false, error: 'IA session already started â€” please refresh.' });
         }
         console.error('[IAQuestions] error:', err);
         return res.status(500).json({ success: false, error: 'Internal server error.' });
     }
 }
 
-// ─── POST /api/ia/submit ──────────────────────────────────────────────────────
+// â”€â”€â”€ POST /api/ia/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // SectionScore is now imported from lib/iaProcessor
 
@@ -691,13 +691,13 @@ export async function submitIA(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { session_id } = req.body;
         if (!session_id) return res.status(400).json({ success: false, error: 'session_id is required.' });
 
-        // ── 1. Validate session ───────────────────────────────────────────────
+        // â”€â”€ 1. Validate session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const session = await prisma.iASession.findUnique({ where: { id: session_id } });
         if (!session) return res.status(404).json({ success: false, error: 'Session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
@@ -715,26 +715,26 @@ export async function submitIA(req: AuthRequest, res: Response) {
                 return t !== '' && t !== '[no transcript]';
             });
             if (!hasRealAnswers) {
-                // Empty attempt → MISSED with the standard penalty (clamped at 0), matching the miss detector.
+                // Empty attempt â†’ MISSED with the standard penalty (clamped at 0), matching the miss detector.
                 await prisma.$transaction(async (tx) => {
                     const marked = await tx.iASession.updateMany({
                         where: { id: session_id, status: { notIn: ['COMPLETED', 'MISSED'] as any } },
                         data:  { status: 'MISSED' as any, momentum_awarded: -MISS_PENALTY, carry_forward_subskills: session.selected_subskills as any },
                     });
                     if (marked.count === 0) return;
-                    const s = await tx.institute_students.findUnique({ where: { id: student.id }, select: { momentum_score: true } });
+                    const s = await tx.instituteStudent.findUnique({ where: { id: student.id }, select: { momentum_score: true } });
                     const deduction = Math.min(MISS_PENALTY, s?.momentum_score ?? 0);
                     if (deduction > 0) {
-                        await tx.institute_students.update({ where: { id: student.id }, data: { momentum_score: { decrement: deduction } } });
+                        await tx.instituteStudent.update({ where: { id: student.id }, data: { momentum_score: { decrement: deduction } } });
                     }
                 });
                 return res.status(400).json({ success: false, error: 'IA window has closed. Session marked as missed.' });
             }
-            // else: real answers exist → fall through to processIASession, which grades
+            // else: real answers exist â†’ fall through to processIASession, which grades
             // and marks COMPLETED with no penalty even though the window is technically closed.
         }
 
-        // ── 2–7. Grade, save, update competency matrix & momentum ─────────────
+        // â”€â”€ 2â€“7. Grade, save, update competency matrix & momentum â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const {
             sectionScores,
             previousBands,
@@ -744,7 +744,7 @@ export async function submitIA(req: AuthRequest, res: Response) {
             isFirstIA,
         } = await processIASession(session_id, student.id);
 
-        // ── 8. Build response ─────────────────────────────────────────────────
+        // â”€â”€ 8. Build response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const sectionScoresResponse = sectionScores.map(s => {
             const prevBand      = previousBands.get(s.sub_skill) ?? null;
             const delta         = prevBand !== null ? Math.round((s.band - prevBand) * 10) / 10 : null;
@@ -780,11 +780,11 @@ export async function submitIA(req: AuthRequest, res: Response) {
         if (err instanceof AIGradingError) {
             // Infra failure during grading. processIASession throws before its COMPLETED
             // transaction, so the session is still IN_PROGRESS and remains submittable
-            // within today's window. Tell the client to retry — never penalize or fabricate.
+            // within today's window. Tell the client to retry â€” never penalize or fabricate.
             return res.status(502).json({
                 success:   false,
                 can_retry: true,
-                error:     'AI grading is temporarily unavailable. Your answers are saved — please submit again in a moment.',
+                error:     'AI grading is temporarily unavailable. Your answers are saved â€” please submit again in a moment.',
             });
         }
         console.error('[IASubmit] error:', err);
@@ -792,13 +792,13 @@ export async function submitIA(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/ia/answer ──────────────────────────────────────────────────────
+// â”€â”€â”€ POST /api/ia/answer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function saveIAAnswer(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { session_id, question_id, answer, section_advance } = req.body;
@@ -820,7 +820,7 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         const sectionConfig = (session.question_ids as any[]) ?? [];
         const SECTION_GRACE_MS = 5 * 1000; // small clock-skew allowance
 
-        // Section-advance: student moved to the next section — stamp new section start time.
+        // Section-advance: student moved to the next section â€” stamp new section start time.
         // Must be strictly forward: re-stamping the same or an earlier section would reset
         // the 20-minute timer and grant unlimited time. Reject non-monotonic / NaN values.
         if (section_advance !== undefined) {
@@ -829,11 +829,11 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             if (!Number.isInteger(nextSection) || nextSection < 0 || nextSection >= Math.max(sectionConfig.length, 1) || nextSection <= prevSection) {
                 return res.status(400).json({ success: false, error: 'Invalid section advance.' });
             }
-            // Atomic JSONB merge of just the __meta key — a full read-modify-write of the
+            // Atomic JSONB merge of just the __meta key â€” a full read-modify-write of the
             // answers object would let a concurrent answer save clobber the timer stamp.
             const metaObj = JSON.stringify({ current_section: nextSection, section_started_at: Date.now() });
             await prisma.$executeRaw`
-                UPDATE "IASession"
+                UPDATE "ia_sessions"
                 SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object('__meta', ${metaObj}::jsonb)
                 WHERE id = ${session_id}::uuid
             `;
@@ -845,7 +845,7 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
         }
 
-        // Reject question ids that aren't part of this session — stops unbounded JSON
+        // Reject question ids that aren't part of this session â€” stops unbounded JSON
         // growth and keeps realAnswerCount honest for the miss detector.
         const sectionIdx = sectionConfig.findIndex((c: any) => Array.isArray(c?.ids) && c.ids.includes(question_id));
         if (sectionIdx === -1) {
@@ -853,7 +853,7 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         }
 
         // Enforce the 20-minute per-section timer server-side. If the question belongs
-        // to the currently-active section and that section's 20 min have elapsed, reject —
+        // to the currently-active section and that section's 20 min have elapsed, reject â€”
         // the client timer alone can be paused/bypassed.
         if (sectionIdx === Number(meta.current_section) && meta.section_started_at) {
             const elapsed = Date.now() - Number(meta.section_started_at);
@@ -862,14 +862,14 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
             }
         }
 
-        // Atomic single-key JSONB merge — two overlapping saves each preserve the
+        // Atomic single-key JSONB merge â€” two overlapping saves each preserve the
         // other's answer instead of last-writer-wins clobbering the whole object.
         await prisma.$executeRaw`
-            UPDATE "IASession"
+            UPDATE "ia_sessions"
             SET answers = COALESCE(answers, '{}'::jsonb) || jsonb_build_object(${String(question_id)}::text, ${String(answer)}::text)
             WHERE id = ${session_id}::uuid
         `;
-        // Flip PENDING → IN_PROGRESS once (touches status only; never the answers blob).
+        // Flip PENDING â†’ IN_PROGRESS once (touches status only; never the answers blob).
         await prisma.iASession.updateMany({
             where: { id: session_id, status: 'PENDING' as any },
             data:  { status: 'IN_PROGRESS' as any },

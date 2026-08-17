@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { signLexiGridSession } from '../lib/lexiGridSession';
@@ -21,7 +21,7 @@ export async function getLexiGridWords(req: AuthRequest, res: Response) {
             return res.status(401).json({ success: false, error: 'Unauthorized.' });
         }
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId }, select: { id: true } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId }, select: { id: true } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const rawDifficulty = ((req.query.difficulty as string) ?? '').toUpperCase();

@@ -1,5 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-SPEAKING,PRONUNCIATION,BEGINNER,"correct_answer is a valid JSON string but not an option key.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""E""","This row exists to prove a letter outside A-D is rejected."
-SPEAKING,PRONUNCIATION,BEGINNER,"correct_answer is a JSON number.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}",1,"This row exists to prove a non-string JSON value is rejected."
-SPEAKING,PRONUNCIATION,BEGINNER,"correct_answer is empty.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}",,"This row exists to prove an empty answer is rejected."
-SPEAKING,PRONUNCIATION,BEGINNER,"correct_answer is correctly encoded.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""D""","This row is the control and must pass."

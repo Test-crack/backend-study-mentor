@@ -1,18 +1,18 @@
-/**
+﻿/**
  * Instructor Progress Controller
  *
  * Three read-only endpoints that aggregate the NEW system data
  * (IASession, mocksessions, DrillSession, StudentCompetencyMatrix, etc.)
  * for the instructor dashboard.
  *
- * All "today" / date boundaries use todayStartIST() from lib/timezone —
- * never new Date() or UTC midnight — because the platform is India-only.
+ * All "today" / date boundaries use todayStartIST() from lib/timezone â€”
+ * never new Date() or UTC midnight â€” because the platform is India-only.
  *
  * Authorization pattern for every endpoint:
  *   1. Verify instructor is assigned to the batch (ielts_batch_instructors)
  *   2. For student-scoped endpoints: also verify student is in the batch
  *
- * Zero N+1 queries — all per-student aggregation is done with a single
+ * Zero N+1 queries â€” all per-student aggregation is done with a single
  * IN-clause query followed by in-memory grouping.
  */
 
@@ -24,16 +24,16 @@ import { computeBatchDashboard } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
 import { paramStr } from '../utils/httpParams';
 
-// ─── Shared auth helper ───────────────────────────────────────────────────────
+// â”€â”€â”€ Shared auth helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
- * Resolves the batch → students data needed by all three endpoints.
+ * Resolves the batch â†’ students data needed by all three endpoints.
  * Returns null and sends a 403 if the instructor is not in the batch.
  *
  * Returned:
- *   instStudents  — institute_students rows (with user_id for joining User data)
- *   instStudentIds — the PKs used in IASession, DrillSession, etc.
- *   userIds        — User.id list for the batch students
+ *   instStudents  â€” institute_students rows (with user_id for joining User data)
+ *   instStudentIds â€” the PKs used in IASession, DrillSession, etc.
+ *   userIds        â€” User.id list for the batch students
  */
 async function resolveBatchStudents(
     res: Response,
@@ -53,17 +53,17 @@ async function resolveBatchStudents(
     userIds: string[];
 } | null> {
     // 1. Verify instructor membership
-    const membership = await (prisma as any).ielts_batch_instructors.findFirst({
+    const membership = await (prisma as any).ieltsBatchInstructor.findFirst({
         where: { batch_id: batchId, user_id: appUserId },
     });
     if (!membership) {
-        res.status(403).json({ success: false, error: 'Forbidden — not assigned to this batch.' });
+        res.status(403).json({ success: false, error: 'Forbidden â€” not assigned to this batch.' });
         return null;
     }
 
     // 2. Get all students enrolled in the batch
     const batchStudentLinks: Array<{ user_id: string }> =
-        await (prisma as any).ielts_batch_students.findMany({
+        await (prisma as any).ieltsBatchStudent.findMany({
             where: { batch_id: batchId },
             select: { user_id: true },
         });
@@ -74,7 +74,7 @@ async function resolveBatchStudents(
     }
 
     // 3. Resolve institute_students PKs (the FK used in all learning tables)
-    const instStudents = await prisma.institute_students.findMany({
+    const instStudents = await prisma.instituteStudent.findMany({
         where: { user_id: { in: userIds } },
         select: {
             id: true,
@@ -94,7 +94,7 @@ async function resolveBatchStudents(
     };
 }
 
-// ─── GET /api/instructor/batches/:batchId/dashboard-summary ──────────────────
+// â”€â”€â”€ GET /api/instructor/batches/:batchId/dashboard-summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getBatchDashboardSummary(req: AuthRequest, res: Response) {
     try {
@@ -121,7 +121,7 @@ export async function getBatchDashboardSummary(req: AuthRequest, res: Response) 
     }
 }
 
-// ─── GET /api/instructor/batches/:batchId/students/:studentId/full-progress ───
+// â”€â”€â”€ GET /api/instructor/batches/:batchId/students/:studentId/full-progress â”€â”€â”€
 
 export async function getStudentFullProgress(req: AuthRequest, res: Response) {
     try {
@@ -130,23 +130,23 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         const studentId = paramStr(req.params.studentId);  // studentId = User.id
 
         // Auth step 1: instructor in batch
-        const instructorMembership = await (prisma as any).ielts_batch_instructors.findFirst({
+        const instructorMembership = await (prisma as any).ieltsBatchInstructor.findFirst({
             where: { batch_id: batchId, user_id: appUserId },
         });
         if (!instructorMembership) {
-            return res.status(403).json({ success: false, error: 'Forbidden — not assigned to this batch.' });
+            return res.status(403).json({ success: false, error: 'Forbidden â€” not assigned to this batch.' });
         }
 
         // Auth step 2: student in batch
-        const studentMembership = await (prisma as any).ielts_batch_students.findFirst({
+        const studentMembership = await (prisma as any).ieltsBatchStudent.findFirst({
             where: { batch_id: batchId, user_id: studentId },
         });
         if (!studentMembership) {
-            return res.status(403).json({ success: false, error: 'Forbidden — student not in this batch.' });
+            return res.status(403).json({ success: false, error: 'Forbidden â€” student not in this batch.' });
         }
 
         // Resolve institute_students record
-        const instStudent = await prisma.institute_students.findUnique({
+        const instStudent = await prisma.instituteStudent.findUnique({
             where:  { user_id: studentId },
             select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
         });
@@ -168,7 +168,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/instructor/batches/:batchId/assessment-overview ─────────────────
+// â”€â”€â”€ GET /api/instructor/batches/:batchId/assessment-overview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getBatchAssessmentOverview(req: AuthRequest, res: Response) {
     try {
@@ -199,13 +199,13 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             });
         }
 
-        // ── Parallel fetch ────────────────────────────────────────────────────
+        // â”€â”€ Parallel fetch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const [allIASessions, allMockSessions, diagnosticHistory, drillAggregates] = await Promise.all([
             prisma.iASession.findMany({
                 where:  { student_id: { in: instStudentIds } },
                 select: { student_id: true, status: true, ia_date: true, scores: true, time_submitted_at: true },
             }),
-            prisma.mocksessions.findMany({
+            prisma.mockSession.findMany({
                 where:  { student_id: { in: instStudentIds } },
                 select: { student_id: true, status: true, real_band_score: true, time_submitted_at: true },
                 orderBy: { created_at: 'desc' },
@@ -216,7 +216,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
                 orderBy: { created_at: 'asc' },
                 select:  { student_id: true, skill: true, band_score: true, created_at: true },
             }),
-            // Drill aggregates per student — for ia_eligible computation
+            // Drill aggregates per student â€” for ia_eligible computation
             prisma.drillSession.groupBy({
                 by:    ['student_id'],
                 where: { student_id: { in: instStudentIds } },
@@ -226,7 +226,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             }),
         ]);
 
-        // ── IA per-student aggregation ────────────────────────────────────────
+        // â”€â”€ IA per-student aggregation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type IARow = { completed: number; missed: number; allBands: number[]; lastDate: string | null; lastBand: number | null };
         const iaMap = new Map<string, IARow>();
 
@@ -260,7 +260,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             }
         }
 
-        // ── Mock per-student aggregation ──────────────────────────────────────
+        // â”€â”€ Mock per-student aggregation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type MockRow = { count: number; latestBand: number | null; bestBand: number | null };
         const mockMap = new Map<string, MockRow>();
         for (const sid of instStudentIds) mockMap.set(sid, { count: 0, latestBand: null, bestBand: null });
@@ -277,7 +277,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             }
         }
 
-        // ── Diagnostic per-student: first entry per skill ─────────────────────
+        // â”€â”€ Diagnostic per-student: first entry per skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null };
         const diagMap = new Map<string, DiagRow>();
         for (const s of instStudents) {
@@ -304,7 +304,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             }
         }
 
-        // ── Build drill eligibility lookup ────────────────────────────────────
+        // â”€â”€ Build drill eligibility lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const nowMs = Date.now();
         const drillEligibleById = new Map<string, boolean>();
         for (const agg of drillAggregates) {
@@ -322,7 +322,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             );
         }
 
-        // ── Build output arrays ───────────────────────────────────────────────
+        // â”€â”€ Build output arrays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const iaOverview = instStudents.map(s => {
             const user = userByInstId.get(s.id);
             const row  = iaMap.get(s.id)!;
@@ -376,7 +376,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
 
         diagnosticOverview.sort((a, b) => Number(a.is_diagnosed) - Number(b.is_diagnosed));
 
-        // ── Batch-level summaries ─────────────────────────────────────────────
+        // â”€â”€ Batch-level summaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const allAvgBands   = iaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
         const batchIAAvg    = allAvgBands.length > 0
             ? Math.round(allAvgBands.reduce((a, b) => a + b, 0) / allAvgBands.length * 10) / 10

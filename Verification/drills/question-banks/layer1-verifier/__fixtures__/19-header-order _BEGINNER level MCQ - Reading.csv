@@ -1,4 +1,0 @@
-skill,sub_skill,level,prompt_text,correct_answer,options,explanation
-READING,READING,BEGINNER,"The options and correct_answer columns are swapped.","""A""","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","All 7 names are present, so the columns can be remapped by name."
-READING,READING,BEGINNER,"This row is also valid once remapped.","""B""","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","The data itself is fine; only the column order is wrong."
-READING,READING,BEGINNER,"And so is this one.","""C""","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","The file should still be re-exported in the canonical order."

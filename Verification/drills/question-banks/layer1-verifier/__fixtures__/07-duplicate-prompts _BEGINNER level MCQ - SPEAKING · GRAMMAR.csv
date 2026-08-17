@@ -1,5 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-SPEAKING,GRAMMAR,BEGINNER,"Which sentence is grammatically correct?","{""A"":""He don't know"",""B"":""He doesn't know"",""C"":""He not know"",""D"":""He no know""}","""B""","Doesn't is the third-person singular negative."
-SPEAKING,GRAMMAR,BEGINNER,"Which tense describes a finished action?","{""A"":""present simple"",""B"":""future"",""C"":""past simple"",""D"":""present continuous""}","""C""","The past simple describes completed actions."
-SPEAKING,GRAMMAR,BEGINNER,"which sentence is   grammatically correct?","{""A"":""He don't know"",""B"":""He doesn't know"",""C"":""He not know"",""D"":""He no know""}","""B""","Doesn't is the third-person singular negative."
-SPEAKING,GRAMMAR,BEGINNER,"Which sentence is grammatically correct?","{""A"":""They was late"",""B"":""They were late"",""C"":""They is late"",""D"":""They be late""}","""B""","Were agrees with a plural subject."

@@ -1,4 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-SPEAKING,PRONUNCIATION,INTERMEDIATE,"Which word has the stress on the second syllable?","{""A"":""RECord"",""B"":""reCORD"",""C"":""REcord"",""D"":""recORD""}","""B""","As a verb, record is stressed on the second syllable."
-SPEAKING,PRONUNCIATION,INTERMEDIATE,"Which word rhymes with though?","{""A"":""through"",""B"":""rough"",""C"":""dough"",""D"":""cough""}","""C""","Dough shares the long -o sound with though."
-SPEAKING,PRONUNCIATION,INTERMEDIATE,"How many syllables are in comfortable in natural speech?","{""A"":""two"",""B"":""three"",""C"":""four"",""D"":""five""}","""B""","In connected speech comfortable reduces to three syllables."

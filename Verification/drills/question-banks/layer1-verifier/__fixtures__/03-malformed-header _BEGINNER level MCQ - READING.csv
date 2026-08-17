@@ -1,4 +1,0 @@
-1,sub_skill,level,prompt_text,options,correct_answer,explanation
-READING,READING,BEGINNER,"What is the main idea of the passage?","{""A"":""Travel costs"",""B"":""City planning"",""C"":""Bird migration"",""D"":""Local food""}","""C""","The passage tracks seasonal bird movement throughout."
-READING,READING,BEGINNER,"What does the word vast mean in line 4?","{""A"":""tiny"",""B"":""enormous"",""C"":""hidden"",""D"":""noisy""}","""B""","Vast means very large in extent."
-READING,READING,BEGINNER,"Which statement does the author agree with?","{""A"":""Cities should expand"",""B"":""Wetlands need protection"",""C"":""Tourism is harmless"",""D"":""Data is unreliable""}","""B""","The author repeatedly argues for wetland conservation."

@@ -1,9 +1,9 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { DrillSessionStatus, IeltsSkillType, IeltsSubSkillType, RecommendationLevel } from '@prisma/client';
 
-// Derived from Prisma enums — stays in sync automatically when schema changes
+// Derived from Prisma enums â€” stays in sync automatically when schema changes
 const VALID_SKILLS     = Object.values(IeltsSkillType) as string[];
 const VALID_SUB_SKILLS = Object.values(IeltsSubSkillType) as string[];
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
@@ -27,7 +27,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             return res.status(401).json({ success: false, error: 'Unauthorized user.' });
         }
 
-        const student = await prisma.institute_students.findUnique({
+        const student = await prisma.instituteStudent.findUnique({
             where: { user_id: appUserId }
         });
 
@@ -49,7 +49,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             prisma.drillSession.count({
                 where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: todayStartIST() } }
             }),
-            // Per-sub-skill drill accuracy — feeds the weakness score below.
+            // Per-sub-skill drill accuracy â€” feeds the weakness score below.
             prisma.drillSession.groupBy({
                 by:   ['skill', 'sub_skill'],
                 where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] } },
@@ -57,7 +57,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             }),
         ]);
 
-        // accuracy per skill::sub_skill (0..1). Undrilled pairs have no entry → treated as
+        // accuracy per skill::sub_skill (0..1). Undrilled pairs have no entry â†’ treated as
         // accuracy 0 (max practice-gap weight) so they surface as high-priority.
         const accuracyByKey = new Map<string, number>();
         for (const g of drillAgg as any[]) {
@@ -66,7 +66,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             accuracyByKey.set(`${g.skill}::${g.sub_skill}`, acc);
         }
         // Weakness per spec: 60% recent drill accuracy gap + 40% band gap (D4: gap
-        // normalized on the [4,9] domain — band 4 = fully weak). Higher = weaker.
+        // normalized on the [4,9] domain â€” band 4 = fully weak). Higher = weaker.
         const weaknessOf = (skill: string, sub: string, band: number) => {
             const acc = accuracyByKey.get(`${skill}::${sub}`) ?? 0;
             return 0.6 * (1 - acc) + 0.4 * bandGap(band);
@@ -75,7 +75,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         const items: DrillItem[] = [];
 
         for (const matrix of matrices) {
-            // Missing band defaults to the 4.0 floor (max gap) — ?? 0 would sit
+            // Missing band defaults to the 4.0 floor (max gap) â€” ?? 0 would sit
             // below the valid domain and distort the weakness ranking.
             const skillBandScore = Number(matrix.band_score || BAND_MIN);
             const subScores = (matrix.sub_scores as Record<string, any>) || {};
@@ -147,7 +147,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         }
 
         // Round-robin cursor: slice the ordered array starting at (totalCompleted % N).
-        // This persists across days — each completion advances the cursor by 1 globally,
+        // This persists across days â€” each completion advances the cursor by 1 globally,
         // so students never repeat the same rotation position two days in a row.
         const N = interleaved.length;
         const MAX_DRILLS_PER_DAY = 4; // 3 free + 1 purchasable extra
@@ -239,7 +239,7 @@ export async function saveReflection(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { session_id, reflection_text } = req.body;
@@ -252,7 +252,7 @@ export async function saveReflection(req: AuthRequest, res: Response) {
         if (!session) return res.status(404).json({ success: false, error: 'Drill session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
 
-        // Idempotent: already saved — skip momentum award
+        // Idempotent: already saved â€” skip momentum award
         if (session.reflection_text) {
             return res.json({
                 success: true,
@@ -271,7 +271,7 @@ export async function saveReflection(req: AuthRequest, res: Response) {
                 data:  { reflection_text: reflection_text.trim() },
             });
             if (marked.count === 0) return { awarded: false, momentumScore: student.momentum_score };
-            const updated = await t.institute_students.update({
+            const updated = await t.instituteStudent.update({
                 where:  { id: student.id },
                 data:   { momentum_score: { increment: REFLECTION_BONUS } },
                 select: { momentum_score: true },
@@ -295,14 +295,14 @@ export async function saveReflection(req: AuthRequest, res: Response) {
  * PATCH /api/drills/session/:id/progress
  * Body: { answers: Record<string, string> }
  * Persists current answers mid-session (fire-and-forget from client).
- * Only updates STARTED sessions — silently skips anything already DRILL_DONE/APPLY_DONE.
+ * Only updates STARTED sessions â€” silently skips anything already DRILL_DONE/APPLY_DONE.
  */
 export async function saveDrillProgress(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const id = paramStr(req.params.id);
@@ -310,7 +310,7 @@ export async function saveDrillProgress(req: AuthRequest, res: Response) {
         if (!session)                          return res.status(404).json({ success: false, error: 'Drill session not found.' });
         if (session.student_id !== student.id) return res.status(403).json({ success: false, error: 'Forbidden.' });
 
-        // Silently skip if session is already past STARTED — idempotent
+        // Silently skip if session is already past STARTED â€” idempotent
         if (session.status !== DrillSessionStatus.STARTED) {
             return res.json({ success: true, skipped: true });
         }
@@ -332,7 +332,7 @@ export async function saveDrillProgress(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── Task 3: Stateful Drill Session Endpoints ────────────────────────────────
+// â”€â”€â”€ Task 3: Stateful Drill Session Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * POST /api/drills/start
@@ -344,7 +344,7 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { skill, sub_skill, level, is_extra_session } = req.body;
@@ -462,7 +462,7 @@ export async function getActiveDrillSession(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { skill, sub_skill } = req.query;
@@ -511,14 +511,14 @@ export async function getActiveDrillSession(req: AuthRequest, res: Response) {
 /**
  * POST /api/drills/session/:id/complete
  * Body: { answers, correct_answers, is_extra_session? }
- * Transitions STARTED → DRILL_DONE and awards momentum. Idempotent if already DRILL_DONE.
+ * Transitions STARTED â†’ DRILL_DONE and awards momentum. Idempotent if already DRILL_DONE.
  */
 export async function completeDrillSession(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const id = paramStr(req.params.id);
@@ -541,7 +541,7 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
         const { answers } = req.body;
         const answerMap = (answers ?? {}) as Record<string, string>;
 
-        // ── Server-side grading — never trust a client-supplied correct count ──
+        // â”€â”€ Server-side grading â€” never trust a client-supplied correct count â”€â”€
         // (Previously momentum = 15 + client_correct*10 with no clamp; a forged
         // correct_answers awarded unbounded momentum and inflated DCS past 100%.)
         const questionIds    = (session.question_ids as string[]) ?? [];
@@ -564,7 +564,7 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
         const DRILL_PER_CORRECT = 10;
         const momentum_earned   = DRILL_BASE_PTS + correctCount * DRILL_PER_CORRECT;
 
-        // ── Enforce the daily sequence + cap server-side (UI is not trusted) ───
+        // â”€â”€ Enforce the daily sequence + cap server-side (UI is not trusted) â”€â”€â”€
         const FREE_DAILY_DRILLS = 3;
         const HARD_DAILY_CAP    = 4;
         const isExtra = session.is_extra_session === true; // trust DB flag only
@@ -609,7 +609,7 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
             }
             const consumeCredit = isExtra && student.extra_drill_credits > 0;
 
-            // Guard STARTED→DRILL_DONE so a concurrent retry of the SAME session can't double-award.
+            // Guard STARTEDâ†’DRILL_DONE so a concurrent retry of the SAME session can't double-award.
             const marked = await t.drillSession.updateMany({
                 where: { id, status: DrillSessionStatus.STARTED },
                 data: {
@@ -624,13 +624,13 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
             });
             if (marked.count === 0) return { raced: true, momentumScore: student.momentum_score };
 
-            const updated = await t.institute_students.update({
+            const updated = await t.instituteStudent.update({
                 where:  { id: student.id },
                 data:   { momentum_score: { increment: momentum_earned } },
                 select: { momentum_score: true },
             });
             if (consumeCredit) {
-                await t.institute_students.updateMany({
+                await t.instituteStudent.updateMany({
                     where: { id: student.id, extra_drill_credits: { gt: 0 } },
                     data:  { extra_drill_credits: { decrement: 1 } },
                 });
@@ -669,7 +669,7 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
             const todayIST     = currentISTDate();
             const yesterdayIST = yesterdayISTDate();
 
-            const fresh = await prisma.institute_students.findUnique({
+            const fresh = await prisma.instituteStudent.findUnique({
                 where:  { id: student.id },
                 select: { daily_streak: true, last_streak_date: true }
             });
@@ -678,19 +678,19 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
 
             if (!lastDate || lastDate.getTime() < todayIST.getTime()) {
                 // Not yet counted today. Continue the run if the last credited day was
-                // yesterday-or-later (spec: "≥ yesterday"); otherwise restart at 1.
+                // yesterday-or-later (spec: "â‰¥ yesterday"); otherwise restart at 1.
                 const computed = (lastDate && lastDate.getTime() >= yesterdayIST.getTime()) ? prevStreak + 1 : 1;
                 // Once-per-day guard: only the first request to cross 2 today flips the
                 // streak. A concurrent completion finds last_streak_date already == today
                 // (count 0) and reads the value instead of clobbering it back to 1.
-                const guard = await prisma.institute_students.updateMany({
+                const guard = await prisma.instituteStudent.updateMany({
                     where: { id: student.id, OR: [{ last_streak_date: null }, { last_streak_date: { lt: todayIST } }] },
                     data:  { daily_streak: computed, last_streak_date: todayIST },
                 });
                 if (guard.count > 0) {
                     newDailyStreak = computed;
                 } else {
-                    const after = await prisma.institute_students.findUnique({ where: { id: student.id }, select: { daily_streak: true } });
+                    const after = await prisma.instituteStudent.findUnique({ where: { id: student.id }, select: { daily_streak: true } });
                     newDailyStreak = after?.daily_streak ?? prevStreak;
                 }
             } else {
@@ -714,14 +714,14 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
 
 /**
  * POST /api/drills/session/:id/apply-done
- * Transitions DRILL_DONE → APPLY_DONE and awards +30 momentum. Idempotent if already APPLY_DONE.
+ * Transitions DRILL_DONE â†’ APPLY_DONE and awards +30 momentum. Idempotent if already APPLY_DONE.
  */
 export async function completeApplyDrillSession(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const id = paramStr(req.params.id);
@@ -738,7 +738,7 @@ export async function completeApplyDrillSession(req: AuthRequest, res: Response)
         }
 
         const APPLY_DRILL_BONUS = 30;
-        // Guard the DRILL_DONE→APPLY_DONE transition so a concurrent retry can't
+        // Guard the DRILL_DONEâ†’APPLY_DONE transition so a concurrent retry can't
         // award +30 twice: only increment momentum when this call is the one that
         // actually flips the status.
         const result = await prisma.$transaction(async (t) => {
@@ -747,7 +747,7 @@ export async function completeApplyDrillSession(req: AuthRequest, res: Response)
                 data:  { status: DrillSessionStatus.APPLY_DONE, apply_completed_at: new Date() }
             });
             if (marked.count === 0) return { awarded: false, momentumScore: student.momentum_score };
-            const updated = await t.institute_students.update({
+            const updated = await t.instituteStudent.update({
                 where:  { id: student.id },
                 data:   { momentum_score: { increment: APPLY_DRILL_BONUS } },
                 select: { momentum_score: true },

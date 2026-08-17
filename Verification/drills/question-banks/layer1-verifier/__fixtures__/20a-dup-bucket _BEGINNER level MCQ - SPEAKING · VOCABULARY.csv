@@ -1,3 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-SPEAKING,VOCABULARY,BEGINNER,"Which word describes a busy street?","{""A"":""deserted"",""B"":""crowded"",""C"":""silent"",""D"":""empty""}","""B""","Crowded describes a street full of people."
-SPEAKING,VOCABULARY,BEGINNER,"Which word means very old?","{""A"":""ancient"",""B"":""modern"",""C"":""recent"",""D"":""new""}","""A""","Ancient means belonging to the distant past."

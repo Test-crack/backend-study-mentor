@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { getValidatedStreak } from '../lib/streak';
@@ -93,7 +93,7 @@ export async function getCompetencyScores(req: AuthRequest, res: Response) {
             return res.status(401).json({ success: false, error: 'Unauthorized user.' });
         }
 
-        const student = await prisma.institute_students.findUnique({
+        const student = await prisma.instituteStudent.findUnique({
             where: { user_id: appUserId }
         });
 
@@ -140,7 +140,7 @@ export async function getAssessmentHistory(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const entries = await prisma.assessmentHistory.findMany({
@@ -172,14 +172,14 @@ export async function getAssessmentHistory(req: AuthRequest, res: Response) {
 
 /**
  * GET /api/student/diagnostic-report
- * Returns the first DIAGNOSTIC entry per skill — the student's baseline scores.
+ * Returns the first DIAGNOSTIC entry per skill â€” the student's baseline scores.
  */
 export async function getDiagnosticReport(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const entries = await prisma.assessmentHistory.findMany({
@@ -195,7 +195,7 @@ export async function getDiagnosticReport(req: AuthRequest, res: Response) {
             },
         });
 
-        // Keep only the first (oldest) entry per skill — that is the initial diagnostic baseline
+        // Keep only the first (oldest) entry per skill â€” that is the initial diagnostic baseline
         const seenSkills = new Set<string>();
         const report = entries
             .filter(e => { if (seenSkills.has(e.skill)) return false; seenSkills.add(e.skill); return true; })
@@ -218,10 +218,10 @@ export async function getMockHistory(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        const sessions = await prisma.mocksessions.findMany({
+        const sessions = await prisma.mockSession.findMany({
             where: { student_id: student.id, status: MockSessionStatus.COMPLETED },
             orderBy: { created_at: 'desc' },
             select: {
@@ -259,7 +259,7 @@ export async function getIAHistory(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const sessions = await prisma.iASession.findMany({
@@ -297,7 +297,7 @@ export async function getIAHistory(req: AuthRequest, res: Response) {
 
 /**
  * Derive the LIVE call-to-action notifications (today's IA + this month's Mock)
- * straight from session state. These are intentionally never persisted — they
+ * straight from session state. These are intentionally never persisted â€” they
  * appear and vanish with the underlying session, so storing them would only
  * invite sync bugs. Shared by getPendingNotifications (legacy) and
  * getStudentNotifications (bell + dashboard feed).
@@ -309,7 +309,7 @@ async function deriveCtaNotifications(studentId: string): Promise<Record<string,
 
     const cta: Record<string, any>[] = [];
 
-    // ── IA — look up today's session via the unique (student_id, ia_date) key ──
+    // â”€â”€ IA â€” look up today's session via the unique (student_id, ia_date) key â”€â”€
     const iaSession = await prisma.iASession.findUnique({
         where: { student_id_ia_date: { student_id: studentId, ia_date: todayDate } },
         select: { id: true, ia_number: true, ia_date: true, status: true, answers: true, window_closes_at: true },
@@ -334,8 +334,8 @@ async function deriveCtaNotifications(studentId: string): Promise<Record<string,
         });
     }
 
-    // ── Mock — look up this month's PENDING or IN_PROGRESS session ──
-    const mockSession = await prisma.mocksessions.findFirst({
+    // â”€â”€ Mock â€” look up this month's PENDING or IN_PROGRESS session â”€â”€
+    const mockSession = await prisma.mockSession.findFirst({
         where: {
             student_id: studentId,
             month_year: monthYear,
@@ -367,7 +367,7 @@ async function deriveCtaNotifications(studentId: string): Promise<Record<string,
 }
 
 /**
- * GET /api/student/pending-notifications  (LEGACY — retire once the frontend
+ * GET /api/student/pending-notifications  (LEGACY â€” retire once the frontend
  * has migrated to GET /api/student/notifications)
  * Returns today's pending/in-progress IA + recent misses + this month's Mock.
  */
@@ -376,16 +376,16 @@ export async function getPendingNotifications(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
-        // Always sweep for stale sessions first — this is the primary trigger
+        // Always sweep for stale sessions first â€” this is the primary trigger
         // for miss detection when the student only visits the dashboard (never the IA page).
         await detectAndMarkMissedIAs(student.id);
 
         const notifications = await deriveCtaNotifications(student.id);
 
-        // ── Recently missed IAs (last 7 days, newest first, max 3) ─────────────
+        // â”€â”€ Recently missed IAs (last 7 days, newest first, max 3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const recentMissed = await prisma.iASession.findMany({
             where: {
@@ -433,7 +433,7 @@ export async function getStudentNotifications(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.institute_students.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         // Sweep first so freshly missed IAs materialize as events before we read.
@@ -444,7 +444,7 @@ export async function getStudentNotifications(req: AuthRequest, res: Response) {
         const cursor = cursorRaw && !isNaN(cursorRaw.getTime()) ? cursorRaw : null;
 
         // Events live in the recipient-generic user_notifications table,
-        // keyed by User.id (= appUserId) — same store the instructor bell uses.
+        // keyed by User.id (= appUserId) â€” same store the instructor bell uses.
         const [cta, rows, unreadCount] = await Promise.all([
             deriveCtaNotifications(student.id),
             prisma.userNotification.findMany({
@@ -478,5 +478,5 @@ export async function getStudentNotifications(req: AuthRequest, res: Response) {
 }
 
 // Read / dismiss for student notifications are served by the recipient-generic
-// handlers in userNotificationController.ts (mounted in studentRoutes.ts) —
+// handlers in userNotificationController.ts (mounted in studentRoutes.ts) â€”
 // same table, same semantics, zero duplication.

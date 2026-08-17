@@ -1,4 +1,4 @@
-// src/controllers/instituteOwnerController.ts
+﻿// src/controllers/instituteOwnerController.ts
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
@@ -17,32 +17,32 @@ import {
 } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
 
-// ─── Helper: get institute for owner OR admin ─────────────────────────────────
+// â”€â”€â”€ Helper: get institute for owner OR admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function getCallerInstitute(appUserId: string): Promise<string | null> {
-    const ownerRow = await prisma.institute_owners.findUnique({
+    const ownerRow = await prisma.instituteOwner.findUnique({
         where: { user_id: appUserId },
         select: { institute_id: true },
     });
     if (ownerRow) return ownerRow.institute_id;
-    const adminRow = await prisma.institute_admins.findUnique({
+    const adminRow = await prisma.instituteAdmin.findUnique({
         where: { user_id: appUserId },
         select: { institute_id: true },
     });
     return adminRow?.institute_id ?? null;
 }
 
-// ─── Helper: get institute owned exclusively by this user ─────────────────────
+// â”€â”€â”€ Helper: get institute owned exclusively by this user â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function getOwnedInstitute(appUserId: string): Promise<string | null> {
-    const ownerRow = await prisma.institute_owners.findUnique({
+    const ownerRow = await prisma.instituteOwner.findUnique({
         where: { user_id: appUserId },
         select: { institute_id: true },
     });
     return ownerRow?.institute_id ?? null;
 }
 
-// ─── Helper: resolve all institute_students for an institute ──────────────────
+// â”€â”€â”€ Helper: resolve all institute_students for an institute â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function resolveInstituteStudents(instituteId: string): Promise<{
     instStudents: Array<{
@@ -56,7 +56,7 @@ async function resolveInstituteStudents(instituteId: string): Promise<{
     }>;
     instStudentIds: string[];
 }> {
-    const instStudents = await prisma.institute_students.findMany({
+    const instStudents = await prisma.instituteStudent.findMany({
         where: { institute_id: instituteId, is_active: true },
         select: {
             id: true,
@@ -71,7 +71,7 @@ async function resolveInstituteStudents(instituteId: string): Promise<{
     return { instStudents, instStudentIds: instStudents.map(s => s.id) };
 }
 
-// ─── Helper: compute at-risk flags for a set of students ─────────────────────
+// â”€â”€â”€ Helper: compute at-risk flags for a set of students â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface AtRiskFlag {
     student_id: string;
@@ -148,7 +148,7 @@ async function computeAtRiskFlags(
     return result;
 }
 
-// ─── GET /api/institute-owner/admins ─────────────────────────────────────────
+// â”€â”€â”€ GET /api/institute-owner/admins â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAdmins(req: AuthRequest, res: Response) {
     try {
@@ -159,7 +159,7 @@ export async function getAdmins(req: AuthRequest, res: Response) {
             return res.status(403).json({ error: 'You do not own any institute.' });
         }
 
-        const admins = await prisma.institute_admins.findMany({
+        const admins = await prisma.instituteAdmin.findMany({
             where: { institute_id: instituteId },
             orderBy: { created_at: 'desc' },
             include: {
@@ -185,7 +185,7 @@ export async function getAdmins(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── POST /api/institute-owner/admins ─────────────────────────────────────────
+// â”€â”€â”€ POST /api/institute-owner/admins â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function addAdmin(req: AuthRequest, res: Response) {
     const { adminName, adminEmail } = req.body as { adminName: string; adminEmail: string };
@@ -233,7 +233,7 @@ export async function addAdmin(req: AuthRequest, res: Response) {
             });
         }
 
-        await prisma.institute_admins.upsert({
+        await prisma.instituteAdmin.upsert({
             where: { user_id: dbUser.id },
             update: { institute_id: instituteId },
             create: { user_id: dbUser.id, institute_id: instituteId },
@@ -253,7 +253,7 @@ export async function addAdmin(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── DELETE /api/institute-owner/admins/:userId ───────────────────────────────
+// â”€â”€â”€ DELETE /api/institute-owner/admins/:userId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function removeAdmin(req: AuthRequest, res: Response) {
     const userId = paramStr(req.params.userId);
@@ -266,7 +266,7 @@ export async function removeAdmin(req: AuthRequest, res: Response) {
             return res.status(403).json({ error: 'You do not own any institute.' });
         }
 
-        const adminRow = await prisma.institute_admins.findFirst({
+        const adminRow = await prisma.instituteAdmin.findFirst({
             where: { user_id: userId, institute_id: instituteId },
         });
 
@@ -274,7 +274,7 @@ export async function removeAdmin(req: AuthRequest, res: Response) {
             return res.status(404).json({ error: 'Admin not found in your institute.' });
         }
 
-        await prisma.institute_admins.delete({ where: { id: adminRow.id } });
+        await prisma.instituteAdmin.delete({ where: { id: adminRow.id } });
 
         await prisma.user.update({
             where: { id: userId },
@@ -288,7 +288,7 @@ export async function removeAdmin(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/batches/:batchId/analytics ──────────────────────
+// â”€â”€â”€ GET /api/institute-owner/batches/:batchId/analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getBatchAnalytics(req: AuthRequest, res: Response) {
     const batchId = paramStr(req.params.batchId);
@@ -298,7 +298,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
         let batch: any = null;
 
         if (isUuid) {
-            batch = await prisma.ielts_batches.findFirst({
+            batch = await prisma.ieltsBatch.findFirst({
                 where: { id: batchId },
                 include: {
                     ielts_batch_students: {
@@ -311,7 +311,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
                 }
             });
         } else {
-            const allBatches = await prisma.ielts_batches.findMany({
+            const allBatches = await prisma.ieltsBatch.findMany({
                 include: {
                     ielts_batch_students: {
                         include: {
@@ -585,7 +585,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
                 speakingLeaderboard,
                 writingLeaderboard,
                 summary: {
-                    totalStudents: batch.ielts_batch_students.length,
+                    totalStudents: batch.ieltsBatchStudent.length,
                     avgSpeaking: (() => {
                         const valid = studentComparison.filter(s => s.speakingScore !== null && s.speakingScore !== undefined);
                         return valid.length ? valid.reduce((sum, s) => sum + s.speakingScore, 0) / valid.length : null;
@@ -611,7 +611,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/summary ────────────────────────────────────────
+// â”€â”€â”€ GET /api/institute-owner/summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getSummary(req: AuthRequest, res: Response) {
     try {
@@ -622,21 +622,21 @@ export async function getSummary(req: AuthRequest, res: Response) {
         }
 
         const [institute, batches, allStudents, adminsCount, instructorRows, invitedNotStarted] = await Promise.all([
-            prisma.institutes.findUnique({ where: { id: instituteId }, select: { name: true } }),
-            (prisma as any).ielts_batches.findMany({
+            prisma.institute.findUnique({ where: { id: instituteId }, select: { name: true } }),
+            (prisma as any).ieltsBatch.findMany({
                 where: { institute_id: instituteId },
                 select: { id: true, name: true, status: true },
             }),
             resolveInstituteStudents(instituteId),
-            prisma.institute_admins.count({ where: { institute_id: instituteId } }),
+            prisma.instituteAdmin.count({ where: { institute_id: instituteId } }),
             // Tutors of this institute + their batch assignments (for unassigned count)
-            prisma.institute_instructors.findMany({
+            prisma.instituteInstructor.findMany({
                 where:  { institute_id: instituteId },
                 select: { user_id: true, User: { select: { ielts_batch_instructors: { select: { batch_id: true } } } } },
             }),
-            // Students invited but who never started (no diagnostic yet) — the honest
+            // Students invited but who never started (no diagnostic yet) â€” the honest
             // "needs attention" number that replaced the fictional approve/reject queue.
-            prisma.institute_students.count({
+            prisma.instituteStudent.count({
                 where: { institute_id: instituteId, isDiagnosed: false, is_active: true },
             }),
         ]);
@@ -687,7 +687,7 @@ export async function getSummary(req: AuthRequest, res: Response) {
                 })
                 : Promise.resolve(0),
             instStudentIds.length > 0
-                ? prisma.mocksessions.count({
+                ? prisma.mockSession.count({
                     where: { student_id: { in: instStudentIds }, status: 'COMPLETED' as any, month_year: currentMonthYear },
                 })
                 : Promise.resolve(0),
@@ -735,7 +735,7 @@ export async function getSummary(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/batches ─────────────────────────────────────────
+// â”€â”€â”€ GET /api/institute-owner/batches â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getInstituteBatches(req: AuthRequest, res: Response) {
     try {
@@ -745,7 +745,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: {
                 institute_id: instituteId,
             },
@@ -759,18 +759,18 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
         });
 
         // Collect all user_ids across all batches
-        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ielts_batch_students.map((s: any) => s.user_id)))];
+        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ieltsBatchStudent.map((s: any) => s.user_id)))];
 
         const [instStudentsAll, todayDrillsAll, competencyAll, iaLast7All, atRiskFlagsAll] = await Promise.all([
             allUserIds.length > 0
-                ? prisma.institute_students.findMany({
+                ? prisma.instituteStudent.findMany({
                     where: { user_id: { in: allUserIds } },
                     select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
                 })
                 : Promise.resolve([]),
             allUserIds.length > 0
                 ? (async () => {
-                    const instIds = (await prisma.institute_students.findMany({
+                    const instIds = (await prisma.instituteStudent.findMany({
                         where: { user_id: { in: allUserIds } },
                         select: { id: true, user_id: true },
                     })).map(s => s.id);
@@ -784,7 +784,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
                 : Promise.resolve([]),
             allUserIds.length > 0
                 ? (async () => {
-                    const instIds = (await prisma.institute_students.findMany({
+                    const instIds = (await prisma.instituteStudent.findMany({
                         where: { user_id: { in: allUserIds } },
                         select: { id: true },
                     })).map(s => s.id);
@@ -797,7 +797,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
                 : Promise.resolve([]),
             allUserIds.length > 0
                 ? (async () => {
-                    const instIds = (await prisma.institute_students.findMany({
+                    const instIds = (await prisma.instituteStudent.findMany({
                         where: { user_id: { in: allUserIds } },
                         select: { id: true },
                     })).map(s => s.id);
@@ -815,7 +815,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
                 : Promise.resolve([]),
             (async () => {
                 const instIds = allUserIds.length > 0
-                    ? (await prisma.institute_students.findMany({
+                    ? (await prisma.instituteStudent.findMany({
                         where: { user_id: { in: allUserIds } },
                         select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true },
                     }))
@@ -840,7 +840,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
         const atRiskSet = new Set((atRiskFlagsAll as AtRiskFlag[]).map(r => r.student_id));
 
         const batchRows = batches.map((b: any) => {
-            const batchUserIds: string[] = b.ielts_batch_students.map((s: any) => s.user_id);
+            const batchUserIds: string[] = b.ieltsBatchStudent.map((s: any) => s.user_id);
             const batchInstIds = batchUserIds
                 .map(uid => instByUserId.get(uid))
                 .filter(Boolean)
@@ -866,7 +866,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
                 ? Math.round(iaCompleted / studentCount * 100)
                 : 0;
 
-            const instructors = b.ielts_batch_instructors.map((bi: any) => ({
+            const instructors = b.ieltsBatchInstructor.map((bi: any) => ({
                 userId: bi.User.id,
                 name:   bi.User.name,
                 profileImage: bi.User.profileImage,
@@ -894,7 +894,7 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/batches/:batchId/dashboard-summary ──────────────
+// â”€â”€â”€ GET /api/institute-owner/batches/:batchId/dashboard-summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Response) {
     try {
@@ -907,7 +907,7 @@ export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Respo
         }
 
         // Verify batch belongs to this institute
-        const batch = await (prisma as any).ielts_batches.findFirst({
+        const batch = await (prisma as any).ieltsBatch.findFirst({
             where: { id: batchId, institute_id: instituteId },
             select: { id: true },
         });
@@ -917,7 +917,7 @@ export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Respo
 
         // Get batch students
         const batchStudentLinks: Array<{ user_id: string }> =
-            await (prisma as any).ielts_batch_students.findMany({
+            await (prisma as any).ieltsBatchStudent.findMany({
                 where: { batch_id: batchId },
                 select: { user_id: true },
             });
@@ -925,7 +925,7 @@ export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Respo
 
         const [instStudents, users] = await Promise.all([
             userIds.length > 0
-                ? prisma.institute_students.findMany({
+                ? prisma.instituteStudent.findMany({
                     where: { user_id: { in: userIds } },
                     select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true },
                 })
@@ -950,7 +950,7 @@ export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Respo
     }
 }
 
-// ─── GET /api/institute-owner/students ───────────────────────────────────────
+// â”€â”€â”€ GET /api/institute-owner/students â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getInstituteStudents(req: AuthRequest, res: Response) {
     try {
@@ -964,7 +964,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         const atRiskFilter   = req.query.at_risk === 'true';
 
         // Determine which batches to scope to
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: {
                 institute_id: instituteId,
                 ...(batchIdFilter ? { id: batchIdFilter } : {}),
@@ -975,7 +975,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         const batchById = new Map(batches.map((b: any) => [b.id, b]));
 
         const batchStudentLinks: Array<{ batch_id: string; user_id: string }> =
-            await (prisma as any).ielts_batch_students.findMany({
+            await (prisma as any).ieltsBatchStudent.findMany({
                 where: { batch_id: { in: batches.map((b: any) => b.id) } },
                 select: { batch_id: true, user_id: true },
             });
@@ -986,7 +986,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         }
 
         const [instStudents, users, competencyRows, recentIAs, lastDrills] = await Promise.all([
-            prisma.institute_students.findMany({
+            prisma.instituteStudent.findMany({
                 where: { user_id: { in: userIds } },
                 select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true },
             }),
@@ -995,7 +995,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 select: { id: true, name: true, profileImage: true, email: true },
             }),
             (async () => {
-                const instIds = (await prisma.institute_students.findMany({
+                const instIds = (await prisma.instituteStudent.findMany({
                     where: { user_id: { in: userIds } },
                     select: { id: true },
                 })).map(s => s.id);
@@ -1007,7 +1007,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                     : [];
             })(),
             (async () => {
-                const instIds = (await prisma.institute_students.findMany({
+                const instIds = (await prisma.instituteStudent.findMany({
                     where: { user_id: { in: userIds } },
                     select: { id: true },
                 })).map(s => s.id);
@@ -1020,7 +1020,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                     : [];
             })(),
             (async () => {
-                const instIds = (await prisma.institute_students.findMany({
+                const instIds = (await prisma.instituteStudent.findMany({
                     where: { user_id: { in: userIds } },
                     select: { id: true },
                 })).map(s => s.id);
@@ -1050,7 +1050,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         }
         const lastDrillByInstId = new Map(lastDrills.map(r => [r.student_id, (r._max as any).created_at as Date | null]));
 
-        // Map userId → batch info (use first batch if student in multiple)
+        // Map userId â†’ batch info (use first batch if student in multiple)
         const batchByUserId = new Map<string, { batch_name: string }>();
         for (const link of batchStudentLinks) {
             if (!batchByUserId.has(link.user_id)) {
@@ -1124,7 +1124,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/students/:studentId/full-progress ───────────────
+// â”€â”€â”€ GET /api/institute-owner/students/:studentId/full-progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getOwnerStudentFullProgress(req: AuthRequest, res: Response) {
     try {
@@ -1137,7 +1137,7 @@ export async function getOwnerStudentFullProgress(req: AuthRequest, res: Respons
         }
 
         // Verify student belongs to the institute via any batch
-        const instStudent = await prisma.institute_students.findFirst({
+        const instStudent = await prisma.instituteStudent.findFirst({
             where: { user_id: studentId, institute_id: instituteId },
             select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
         });
@@ -1186,7 +1186,7 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const instStudent = await prisma.institute_students.findFirst({
+        const instStudent = await prisma.instituteStudent.findFirst({
             where:  { user_id: studentId, institute_id: instituteId },
             select: { id: true },
         });
@@ -1201,7 +1201,7 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
             await tx.studentCompetencyMatrix.deleteMany({
                 where: { student_id: instStudent.id, skill: { in: skills as any } },
             });
-            await tx.institute_students.update({
+            await tx.instituteStudent.update({
                 where: { id: instStudent.id },
                 // updated_at is explicit, not @updatedAt-managed — the frontend reads it
                 // via /status to know a reset happened and clear its cached progress.
@@ -1227,13 +1227,13 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: { institute_id: instituteId },
             select: { id: true, name: true },
         });
 
         const batchStudentLinks: Array<{ batch_id: string; user_id: string }> =
-            await (prisma as any).ielts_batch_students.findMany({
+            await (prisma as any).ieltsBatchStudent.findMany({
                 where: { batch_id: { in: batches.map((b: any) => b.id) } },
                 select: { batch_id: true, user_id: true },
             });
@@ -1244,7 +1244,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
         }
 
         const [instStudents, users] = await Promise.all([
-            prisma.institute_students.findMany({
+            prisma.instituteStudent.findMany({
                 where: { user_id: { in: userIds } },
                 select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
             }),
@@ -1296,7 +1296,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
             competencyByInstId.set(row.student_id, arr);
         }
 
-        // Build batch lookup: instStudentId → { batch_id, batch_name }
+        // Build batch lookup: instStudentId â†’ { batch_id, batch_name }
         const instByUserId = new Map(instStudents.map(s => [s.user_id, s]));
         const batchById = new Map(batches.map((b: any) => [b.id, b]));
         const batchByInstId = new Map<string, { batch_id: string; batch_name: string }>();
@@ -1346,7 +1346,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/instructors ────────────────────────────────────
+// â”€â”€â”€ GET /api/institute-owner/instructors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getInstituteInstructors(req: AuthRequest, res: Response) {
     try {
@@ -1356,7 +1356,7 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: { institute_id: instituteId },
             include: {
                 ielts_batch_instructors: {
@@ -1390,7 +1390,7 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
                     });
                 }
                 const entry = instructorMap.get(uid)!;
-                const studentCount = b.ielts_batch_students.length;
+                const studentCount = b.ieltsBatchStudent.length;
                 entry.batches.push({
                     batch_id:      b.id,
                     batch_name:    b.name,
@@ -1416,7 +1416,7 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
     }
 }
 
-// ─── GET /api/institute-owner/assessment-overview ────────────────────────────
+// â”€â”€â”€ GET /api/institute-owner/assessment-overview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getInstituteAssessmentOverview(req: AuthRequest, res: Response) {
     try {
@@ -1428,7 +1428,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
 
         const batchIdFilter  = req.query.batch_id as string | undefined;
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: {
                 institute_id: instituteId,
                 ...(batchIdFilter ? { id: batchIdFilter } : {}),
@@ -1439,7 +1439,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
         const batchById = new Map(batches.map((b: any) => [b.id, b]));
 
         const batchStudentLinks: Array<{ batch_id: string; user_id: string }> =
-            await (prisma as any).ielts_batch_students.findMany({
+            await (prisma as any).ieltsBatchStudent.findMany({
                 where: { batch_id: { in: batches.map((b: any) => b.id) } },
                 select: { batch_id: true, user_id: true },
             });
@@ -1458,7 +1458,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             });
         }
 
-        const instStudents = await prisma.institute_students.findMany({
+        const instStudents = await prisma.instituteStudent.findMany({
             where: { user_id: { in: userIds } },
             select: { id: true, user_id: true, target_band: true, isDiagnosed: true },
         });
@@ -1477,7 +1477,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             instStudents.map(s => [s.id, userByUserId.get(s.user_id)])
         );
 
-        // Build batch lookup: instStudentId → batch_name
+        // Build batch lookup: instStudentId â†’ batch_name
         const batchByInstId = new Map<string, { batch_name: string }>();
         for (const link of batchStudentLinks) {
             const inst = instByUserId.get(link.user_id);
@@ -1492,7 +1492,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 where:  { student_id: { in: instStudentIds } },
                 select: { student_id: true, status: true, ia_date: true, scores: true, time_submitted_at: true },
             }),
-            prisma.mocksessions.findMany({
+            prisma.mockSession.findMany({
                 where:  { student_id: { in: instStudentIds } },
                 select: { student_id: true, status: true, real_band_score: true, time_submitted_at: true },
                 orderBy: { created_at: 'desc' },
@@ -1511,7 +1511,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             }),
         ]);
 
-        // ── IA per-student aggregation ────────────────────────────────────────
+        // â”€â”€ IA per-student aggregation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type IARow = { completed: number; missed: number; allBands: number[]; lastDate: string | null; lastBand: number | null };
         const iaMap = new Map<string, IARow>();
         for (const sid of instStudentIds) {
@@ -1535,7 +1535,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             }
         }
 
-        // ── Mock per-student aggregation ──────────────────────────────────────
+        // â”€â”€ Mock per-student aggregation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type MockRow = { count: number; latestBand: number | null; bestBand: number | null };
         const mockMap = new Map<string, MockRow>();
         for (const sid of instStudentIds) mockMap.set(sid, { count: 0, latestBand: null, bestBand: null });
@@ -1551,7 +1551,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             }
         }
 
-        // ── Diagnostic per-student ────────────────────────────────────────────
+        // â”€â”€ Diagnostic per-student â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null };
         const diagMap = new Map<string, DiagRow>();
         for (const s of instStudents) {
@@ -1574,7 +1574,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             }
         }
 
-        // ── Drill eligibility ─────────────────────────────────────────────────
+        // â”€â”€ Drill eligibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const nowMs = Date.now();
         const drillEligibleById = new Map<string, boolean>();
         for (const agg of drillAggregates) {
@@ -1587,7 +1587,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             drillEligibleById.set(agg.student_id, drillCount >= 6 && daysSince >= 2 && avgDcs >= 40);
         }
 
-        // ── Output arrays ─────────────────────────────────────────────────────
+        // â”€â”€ Output arrays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const iaOverview = instStudents.map(s => {
             const user = userByInstId.get(s.id);
             const row  = iaMap.get(s.id)!;
@@ -1676,7 +1676,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
     }
 }
 
-// ─── GET /api/institute-owner/analytics/cohort-progress ──────────────────────
+// â”€â”€â”€ GET /api/institute-owner/analytics/cohort-progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response) {
     try {
@@ -1698,7 +1698,7 @@ export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response
                 where: { student_id: { in: instStudentIds }, status: 'COMPLETED' as any, ia_date: { gte: sixMonthsAgo } },
                 select: { ia_date: true, scores: true },
             }),
-            prisma.mocksessions.findMany({
+            prisma.mockSession.findMany({
                 where: { student_id: { in: instStudentIds }, status: 'COMPLETED' as any, created_at: { gte: sixMonthsAgo } },
                 select: { month_year: true, real_band_score: true },
             }),
@@ -1760,7 +1760,7 @@ export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response
     }
 }
 
-// ─── GET /api/institute-owner/analytics/batch-comparison ─────────────────────
+// â”€â”€â”€ GET /api/institute-owner/analytics/batch-comparison â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAnalyticsBatchComparison(req: AuthRequest, res: Response) {
     try {
@@ -1770,19 +1770,19 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: { institute_id: instituteId },
             include: {
                 ielts_batch_students: { select: { user_id: true } },
             },
         });
 
-        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ielts_batch_students.map((s: any) => s.user_id)))];
+        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ieltsBatchStudent.map((s: any) => s.user_id)))];
         if (allUserIds.length === 0) {
             return res.json({ success: true, data: [] });
         }
 
-        const instStudents = await prisma.institute_students.findMany({
+        const instStudents = await prisma.instituteStudent.findMany({
             where: { user_id: { in: allUserIds } },
             select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true },
         });
@@ -1839,7 +1839,7 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
         const atRiskSet         = new Set((atRiskFlagsAll as AtRiskFlag[]).map(r => r.student_id));
 
         const result = batches.map((b: any) => {
-            const batchUserIds: string[] = b.ielts_batch_students.map((s: any) => s.user_id);
+            const batchUserIds: string[] = b.ieltsBatchStudent.map((s: any) => s.user_id);
             const batchInstIds = batchUserIds.map(uid => instByUserId.get(uid)).filter(Boolean).map((s: any) => s.id);
 
             const studentCount = batchUserIds.length;
@@ -1882,7 +1882,7 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
     }
 }
 
-// ─── GET /api/institute-owner/analytics/instructor-effectiveness ──────────────
+// â”€â”€â”€ GET /api/institute-owner/analytics/instructor-effectiveness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res: Response) {
     try {
@@ -1892,7 +1892,7 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: { institute_id: instituteId },
             include: {
                 ielts_batch_instructors: {
@@ -1902,12 +1902,12 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
             },
         });
 
-        // Build instructor → instStudentIds mapping
+        // Build instructor â†’ instStudentIds mapping
         const instructorStudents = new Map<string, { user: any; instIds: string[] }>();
 
-        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ielts_batch_students.map((s: any) => s.user_id)))];
+        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ieltsBatchStudent.map((s: any) => s.user_id)))];
         const instStudents = allUserIds.length > 0
-            ? await prisma.institute_students.findMany({
+            ? await prisma.instituteStudent.findMany({
                 where: { user_id: { in: allUserIds } },
                 select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true },
             })
@@ -2005,7 +2005,7 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
     }
 }
 
-// ─── GET /api/institute-owner/analytics/engagement-trends ────────────────────
+// â”€â”€â”€ GET /api/institute-owner/analytics/engagement-trends â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAnalyticsEngagementTrends(req: AuthRequest, res: Response) {
     try {
@@ -2047,7 +2047,7 @@ export async function getAnalyticsEngagementTrends(req: AuthRequest, res: Respon
             weekMap.set(week, entry);
         }
 
-        // Build 8 weekly points newest→oldest
+        // Build 8 weekly points newestâ†’oldest
         const todayStart = todayStartIST();
         const weeklyPoints: Array<{
             week_start: string;
@@ -2078,7 +2078,7 @@ export async function getAnalyticsEngagementTrends(req: AuthRequest, res: Respon
     }
 }
 
-// ─── GET /api/institute-owner/analytics/goal-achievement ─────────────────────
+// â”€â”€â”€ GET /api/institute-owner/analytics/goal-achievement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Response) {
     try {
@@ -2088,17 +2088,17 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const batches: any[] = await (prisma as any).ielts_batches.findMany({
+        const batches: any[] = await (prisma as any).ieltsBatch.findMany({
             where: { institute_id: instituteId },
             include: { ielts_batch_students: { select: { user_id: true } } },
         });
 
-        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ielts_batch_students.map((s: any) => s.user_id)))];
+        const allUserIds = [...new Set(batches.flatMap((b: any) => b.ieltsBatchStudent.map((s: any) => s.user_id)))];
         if (allUserIds.length === 0) {
             return res.json({ success: true, data: { below: 0, near: 0, at_or_above: 0, exam_ready: 0, by_batch: [] } });
         }
 
-        const instStudents = await prisma.institute_students.findMany({
+        const instStudents = await prisma.instituteStudent.findMany({
             where: { user_id: { in: allUserIds } },
             select: { id: true, user_id: true, target_band: true },
         });
@@ -2111,7 +2111,7 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
                 where: { student_id: { in: instStudentIds } },
                 select: { student_id: true, band_score: true },
             }),
-            prisma.mocksessions.groupBy({
+            prisma.mockSession.groupBy({
                 by: ['student_id'],
                 where: { student_id: { in: instStudentIds }, status: 'COMPLETED' as any },
                 _count: { id: true },
@@ -2130,7 +2130,7 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
         let below = 0, near = 0, atOrAbove = 0, examReady = 0;
 
         const byBatch = batches.map((b: any) => {
-            const batchUserIds: string[] = b.ielts_batch_students.map((s: any) => s.user_id);
+            const batchUserIds: string[] = b.ieltsBatchStudent.map((s: any) => s.user_id);
             let bBelow = 0, bNear = 0, bAtOrAbove = 0, bExamReady = 0;
 
             for (const uid of batchUserIds) {
@@ -2173,7 +2173,7 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
     }
 }
 
-// ─── GET /api/institute-owner/analytics/subskill-heatmap ─────────────────────
+// â”€â”€â”€ GET /api/institute-owner/analytics/subskill-heatmap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAnalyticsSubskillHeatmap(req: AuthRequest, res: Response) {
     try {

@@ -1,5 +1,5 @@
-/**
- * IA Grading Core — shared by POST /api/ia/submit (HTTP path) and the
+﻿/**
+ * IA Grading Core â€” shared by POST /api/ia/submit (HTTP path) and the
  * auto-submit sweep in iaMissDetector (for IN_PROGRESS sessions that expired
  * with answers saved but never explicitly submitted).
  *
@@ -19,10 +19,10 @@ export class AlreadyCompletedError extends Error {
 
 /**
  * Single implementation of the competency-matrix smoothing rule:
- *   smoothed = 0.4 × oldBand + 0.6 × newBand, deviation capped at ±2, rounded to 0.5.
+ *   smoothed = 0.4 Ã— oldBand + 0.6 Ã— newBand, deviation capped at Â±2, rounded to 0.5.
  *
  * Used for W/S sub-skill scores, R/L skill bands, and the response preview in iaController.
- * Having one copy means the ±2 cap and weights are always in sync.
+ * Having one copy means the Â±2 cap and weights are always in sync.
  */
 export function applySmoothing(oldBand: number | null, newBand: number): number {
     if (oldBand === null || isNaN(oldBand)) {
@@ -35,7 +35,7 @@ export function applySmoothing(oldBand: number | null, newBand: number): number 
     return toBand(w);
 }
 
-// ── Shared types (also imported by iaController for the HTTP response) ─────────
+// â”€â”€ Shared types (also imported by iaController for the HTTP response) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type SectionScore = {
     skill:             string;
@@ -48,7 +48,7 @@ export type SectionScore = {
     ai_feedback?:      { rationale: string; key_observations: string[] };
 };
 
-// ── Internal constants ────────────────────────────────────────────────────────
+// â”€â”€ Internal constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const SUB_SCORE_KEY_MAP: Record<string, string> = {
     GRAMMAR:       'grammarScore',
@@ -65,7 +65,7 @@ const SUB_SKILL_LABEL: Record<string, string> = {
     READING: 'Reading', LISTENING: 'Listening',
 };
 
-// ── Public result type ────────────────────────────────────────────────────────
+// â”€â”€ Public result type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IAProcessResult {
     sectionScores:       SectionScore[];
@@ -76,7 +76,7 @@ export interface IAProcessResult {
     isFirstIA:           boolean;
 }
 
-// ── Core processor ────────────────────────────────────────────────────────────
+// â”€â”€ Core processor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Grades a session, writes results to DB (COMPLETED), and returns scoring data.
@@ -91,7 +91,7 @@ export async function processIASession(
     // Fast-path: if already COMPLETED, don't re-run AI grading or momentum writes.
     if (session.status === 'COMPLETED') throw new AlreadyCompletedError();
 
-    // ── 1. Load questions + strip __meta from saved answers ───────────────────
+    // â”€â”€ 1. Load questions + strip __meta from saved answers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const questionIdsConfig = session.question_ids as Array<{ skill: string; sub_skill: string; ids: string[] }>;
     const allIds = questionIdsConfig.flatMap(c => c.ids);
 
@@ -105,7 +105,7 @@ export async function processIASession(
             .filter(([k]) => k !== '__meta')
     ) as Record<string, string>;
 
-    // ── 2. Launch AI grading jobs in parallel ─────────────────────────────────
+    // â”€â”€ 2. Launch AI grading jobs in parallel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     type AIJob = { sectionIdx: number; band: number; rationale: string; key_observations: string[] };
     const aiJobPromises: Promise<AIJob>[] = [];
 
@@ -141,7 +141,7 @@ export async function processIASession(
         aiFeedbackBySectionIdx.set(j.sectionIdx, fb);
     }
 
-    // ── 3. Score each sub-skill (MCQ + AI weighted) ───────────────────────────
+    // â”€â”€ 3. Score each sub-skill (MCQ + AI weighted) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const sectionScores: SectionScore[] = [];
 
     for (let i = 0; i < questionIdsConfig.length; i++) {
@@ -164,10 +164,10 @@ export async function processIASession(
             }
             if (sa && ca && sa === ca) correct++;
         }
-        // Map MCQ to the same 1–10 scale Gemini uses: 0 correct → 1 (IELTS 0), all correct → 10 (IELTS 9).
-        // Using N/T * 10 would put 0 correct at score 0, out of the 1–10 scale and mismatched against
+        // Map MCQ to the same 1â€“10 scale Gemini uses: 0 correct â†’ 1 (IELTS 0), all correct â†’ 10 (IELTS 9).
+        // Using N/T * 10 would put 0 correct at score 0, out of the 1â€“10 scale and mismatched against
         // AI sub-scores when combined in a weighted average.  Math.max(1, N/T*10) fixes the floor but
-        // collapses 0% and any score below 10% to score 1 — a different form of inflation.
+        // collapses 0% and any score below 10% to score 1 â€” a different form of inflation.
         // 1 + (N/T)*9 is proportional within [1,10] with the correct anchors at both ends.
         const mcqScore = mcqQs.length > 0 ? Math.min(10, 1 + (correct / mcqQs.length) * 9) : null;
 
@@ -180,15 +180,15 @@ export async function processIASession(
         else if (mcqScore === null)        combinedScore = aiAvgScore!;
         else if (aiAvgScore === null)      combinedScore = mcqScore;
         else {
-            // Spec: AI grade weighted 2×, MCQ grade weighted 1× — weight the two
+            // Spec: AI grade weighted 2Ã—, MCQ grade weighted 1Ã— â€” weight the two
             // aggregate grades, NOT the question counts. (Previously used
             // mcqQs.length vs aiQs.length*2, which with 8 MCQ + 2 prompts made
-            // MCQ ~67% — the exact inverse of the intended blend.)
+            // MCQ ~67% â€” the exact inverse of the intended blend.)
             combinedScore = (mcqScore * 1 + aiAvgScore * 2) / 3;
         }
 
-        // Internal 1–10 → platform band [4,9]: internal 1 anchors to the 4.0 floor,
-        // internal 10 to 9.0. (Previously `combined − 1` anchored 1 → band 0.)
+        // Internal 1â€“10 â†’ platform band [4,9]: internal 1 anchors to the 4.0 floor,
+        // internal 10 to 9.0. (Previously `combined âˆ’ 1` anchored 1 â†’ band 0.)
         const band = internalToBand(combinedScore);
 
         const aiFeedback = aiFeedbacks.length > 0 ? {
@@ -199,7 +199,7 @@ export async function processIASession(
         sectionScores.push({ skill: cfg.skill, sub_skill: cfg.sub_skill, band, correct, total: mcqQs.length, ai_question_count: aiQs.length, ai_graded: aiQs.length > 0, ai_feedback: aiFeedback });
     }
 
-    // ── 4. Pre-fetch competency matrix (for delta display in HTTP response) ────
+    // â”€â”€ 4. Pre-fetch competency matrix (for delta display in HTTP response) â”€â”€â”€â”€
     const uniqueSkills   = [...new Set(sectionScores.map(s => s.skill))];
     const competencyPre  = await prisma.studentCompetencyMatrix.findMany({
         where:  { student_id: studentId, skill: { in: uniqueSkills as any } },
@@ -219,8 +219,8 @@ export async function processIASession(
         }
     }
 
-    // ── 5. Momentum calculation ────────────────────────────────────────────────
-    // Ordered newest→oldest so we can take the most recent band PER SUB-SKILL.
+    // â”€â”€ 5. Momentum calculation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ordered newestâ†’oldest so we can take the most recent band PER SUB-SKILL.
     // (A single "last session" is not enough: the 14-day exclusion guarantees
     // today's sub-skills were not in the immediately preceding IA, so an
     // improvement bonus keyed on that one session would never fire.)
@@ -246,22 +246,22 @@ export async function processIASession(
     for (const s of sectionScores) {
         const label      = SUB_SKILL_LABEL[s.sub_skill] ?? s.sub_skill;
         const lastBand   = lastBands.get(s.sub_skill) ?? null;
-        // Baseline at the 4.0 floor — with ?? 0 a student's first-ever band (always ≥4)
+        // Baseline at the 4.0 floor â€” with ?? 0 a student's first-ever band (always â‰¥4)
         // would trivially "beat" 0 and fire the personal-best bonus every time.
         const allTimeBest = allTimeBests.get(s.sub_skill) ?? BAND_MIN;
         if (lastBand !== null && s.band > lastBand) {
             momentumAwarded += 25;
-            momentumBreakdown.push({ reason: `Improved — ${label}`, points: 25 });
+            momentumBreakdown.push({ reason: `Improved â€” ${label}`, points: 25 });
         }
         if (s.band > allTimeBest) {
             momentumAwarded += 50;
-            momentumBreakdown.push({ reason: `Personal Best — ${label}`, points: 50 });
+            momentumBreakdown.push({ reason: `Personal Best â€” ${label}`, points: 50 });
         }
     }
 
-    // ── 6. DB transaction ─────────────────────────────────────────────────────
+    // â”€â”€ 6. DB transaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const updatedMomentum = await prisma.$transaction(async (tx) => {
-        // Atomic idempotency guard — if a concurrent call already marked this session
+        // Atomic idempotency guard â€” if a concurrent call already marked this session
         // COMPLETED, updateMany returns count=0 and we throw to roll back every side effect
         // (assessment history rows, matrix updates, momentum increment) completely.
         const markResult = await tx.iASession.updateMany({
@@ -318,7 +318,7 @@ export async function processIASession(
             });
         }
 
-        const updated = await tx.institute_students.update({
+        const updated = await tx.instituteStudent.update({
             where:  { id: studentId },
             data:   { momentum_score: { increment: momentumAwarded } },
             select: { momentum_score: true },

@@ -1,4 +1,0 @@
-skill,sub_skill,level,prompt_text,options,correct_answer,explanation
-WRITING,GRAMMAR,BEGINNER,"Which article completes: ___ hour later?","{""A"":""a"",""B"":""an"",""C"":""the"",""D"":""no article""}","""B""","Hour begins with a vowel sound, so it takes an."
-WRITING,GRAMMAR,BEGINNER,"Which preposition completes: interested ___ music?","{""A"":""on"",""B"":""at"",""C"":""in"",""D"":""for""}","""C""","Interested collocates with in."
-WRITING,GRAMMAR,BEGINNER,"Which form completes: I look forward to ___ you?","{""A"":""meet"",""B"":""meeting"",""C"":""met"",""D"":""meets""}","""B""","Look forward to takes a gerund."
