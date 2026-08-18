@@ -501,12 +501,12 @@ export async function getOnboardingStatus(req: AuthRequest, res: Response) {
                     User: {
                         select: {
                             id: true, name: true, email: true, profileImage: true,
-                            ielts_batch_instructors: { select: { batch_id: true } },
+                            batch_instructors: { select: { batch_id: true } },
                         },
                     },
                 },
             }),
-            (prisma as any).ieltsBatch.findMany({
+            prisma.batch.findMany({
                 where:  { institute_id: instituteId },
                 select: { id: true },
             }),
@@ -514,7 +514,7 @@ export async function getOnboardingStatus(req: AuthRequest, res: Response) {
 
         const batchIdSet = new Set((batches as any[]).map(b => b.id));
         const unassignedTutors = tutors
-            .filter(t => !t.User.ielts_batch_instructors.some(a => batchIdSet.has(a.batch_id)))
+            .filter(t => !t.User.batch_instructors.some(a => batchIdSet.has(a.batch_id)))
             .map(t => ({
                 userId:       t.User.id,
                 name:         t.User.name,

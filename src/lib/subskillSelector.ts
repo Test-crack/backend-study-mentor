@@ -41,7 +41,7 @@ const ALL_IA_PAIRS: Array<{ skill: string; sub_skill: string }> = [
 ];
 
 /**
- * Maps IeltsSubSkillType → the key name inside StudentCompetencyMatrix.sub_scores.
+ * Maps SubSkillType → the key name inside StudentCompetencyMatrix.sub_scores.
  * READING and LISTENING have no sub-score keys — they use the skill-level band_score.
  */
 const SUB_SCORE_KEY: Readonly<Record<string, string>> = {

@@ -9,7 +9,7 @@
  * never new Date() or UTC midnight â€” because the platform is India-only.
  *
  * Authorization pattern for every endpoint:
- *   1. Verify instructor is assigned to the batch (ielts_batch_instructors)
+ *   1. Verify instructor is assigned to the batch (batch_instructors)
  *   2. For student-scoped endpoints: also verify student is in the batch
  *
  * Zero N+1 queries â€” all per-student aggregation is done with a single
@@ -53,7 +53,7 @@ async function resolveBatchStudents(
     userIds: string[];
 } | null> {
     // 1. Verify instructor membership
-    const membership = await (prisma as any).ieltsBatchInstructor.findFirst({
+    const membership = await prisma.batchInstructor.findFirst({
         where: { batch_id: batchId, user_id: appUserId },
     });
     if (!membership) {
@@ -63,7 +63,7 @@ async function resolveBatchStudents(
 
     // 2. Get all students enrolled in the batch
     const batchStudentLinks: Array<{ user_id: string }> =
-        await (prisma as any).ieltsBatchStudent.findMany({
+        await prisma.batchStudent.findMany({
             where: { batch_id: batchId },
             select: { user_id: true },
         });
@@ -130,7 +130,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         const studentId = paramStr(req.params.studentId);  // studentId = User.id
 
         // Auth step 1: instructor in batch
-        const instructorMembership = await (prisma as any).ieltsBatchInstructor.findFirst({
+        const instructorMembership = await prisma.batchInstructor.findFirst({
             where: { batch_id: batchId, user_id: appUserId },
         });
         if (!instructorMembership) {
@@ -138,7 +138,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         }
 
         // Auth step 2: student in batch
-        const studentMembership = await (prisma as any).ieltsBatchStudent.findFirst({
+        const studentMembership = await prisma.batchStudent.findFirst({
             where: { batch_id: batchId, user_id: studentId },
         });
         if (!studentMembership) {

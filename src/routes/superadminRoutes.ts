@@ -19,11 +19,22 @@ router.get('/users', superadminController.getAllUsers);
 
 // Institutes
 // GET   /api/superadmin/institutes?search=ace
-// POST  /api/superadmin/institutes         { instituteName, address?, ownerName, ownerEmail }
+// POST  /api/superadmin/institutes            { instituteName, address?, ownerName, ownerEmail, ownerPhone?, examTypes[] }
 // PATCH /api/superadmin/institutes/:id/status { isActive: boolean }
+// PATCH /api/superadmin/institutes/:id        { name?, address?, logoUrl?, contactEmail?, contactPhone? }
 router.get('/institutes', superadminController.getInstitutes);
 router.post('/institutes', superadminController.createInstitute);
 router.patch('/institutes/:id/status', superadminController.toggleInstituteStatus);
 router.patch('/institutes/:id', superadminController.updateInstitute);
+
+// Institute exam subscriptions
+// PUT   /api/superadmin/institutes/:id/exams              { examTypes: ExamType[] }
+// PATCH /api/superadmin/institutes/:id/exams/:examType    { billingStatus }
+router.put('/institutes/:id/exams', superadminController.setInstituteExams);
+router.patch('/institutes/:id/exams/:examType', superadminController.setExamStatus);
+
+// Subscriptions (flat view across all institutes)
+// GET /api/superadmin/subscriptions?status=TRIAL&search=ace
+router.get('/subscriptions', superadminController.getSubscriptions);
 
 export default router;

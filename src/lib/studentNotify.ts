@@ -81,9 +81,9 @@ export async function notifyInstructorsOfMissedIA(
         });
         if (!student) return;
 
-        const memberships = await prisma.ieltsBatchStudent.findMany({
+        const memberships = await prisma.batchStudent.findMany({
             where:  { user_id: student.user_id },
-            select: { batch_id: true, ielts_batches: { select: { ielts_batch_instructors: { select: { user_id: true } } } } },
+            select: { batch_id: true, batch: { select: { batch_instructors: { select: { user_id: true } } } } },
         });
 
         const dedupeKey   = `STUDENT_IA_MISSED:${student.user_id}:${iaDateStr}`;
@@ -91,7 +91,7 @@ export async function notifyInstructorsOfMissedIA(
         const seen = new Set<string>();
 
         for (const m of memberships) {
-            for (const inst of m.ielts_batches.ielts_batch_instructors) {
+            for (const inst of m.batch.batch_instructors) {
                 if (seen.has(inst.user_id)) continue;
                 seen.add(inst.user_id);
                 await notifyUser(inst.user_id, 'STUDENT_IA_MISSED', {

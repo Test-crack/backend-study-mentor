@@ -24,7 +24,7 @@ async function pickRandomSetId(level: string, skill: string): Promise<string | n
         SELECT   set_id
         FROM     diagnostic_questions
         WHERE    level     = ${level}
-        AND      skill     = ${skill}::"IeltsSkillType"
+        AND      skill     = ${skill}::"SkillType"
         AND      is_active = TRUE
         GROUP BY set_id
         ORDER BY RANDOM()
@@ -196,7 +196,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     FROM   diagnostic_questions
                     WHERE  id            = ${requestedQuestionId}::uuid
                     AND    level         = ${level}
-                    AND    skill         = 'WRITING'::"IeltsSkillType"
+                    AND    skill         = 'WRITING'::"SkillType"
                     AND    question_type = 'WRITING_PROMPT'
                     AND    is_active     = TRUE
                     LIMIT  1
@@ -207,7 +207,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     SELECT id, prompt_text, min_words
                     FROM   diagnostic_questions
                     WHERE  level         = ${level}
-                    AND    skill         = 'WRITING'::"IeltsSkillType"
+                    AND    skill         = 'WRITING'::"SkillType"
                     AND    question_type = 'WRITING_PROMPT'
                     AND    is_active     = TRUE
                     ORDER  BY RANDOM()
@@ -234,7 +234,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     FROM   diagnostic_questions
                     WHERE  id            = ${requestedQuestionId}::uuid
                     AND    level         = ${level}
-                    AND    skill         = 'SPEAKING'::"IeltsSkillType"
+                    AND    skill         = 'SPEAKING'::"SkillType"
                     AND    question_type = 'SPEAKING_PROMPT'
                     AND    is_active     = TRUE
                     LIMIT  1
@@ -245,7 +245,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     SELECT id, prompt_text
                     FROM   diagnostic_questions
                     WHERE  level         = ${level}
-                    AND    skill         = 'SPEAKING'::"IeltsSkillType"
+                    AND    skill         = 'SPEAKING'::"SkillType"
                     AND    question_type = 'SPEAKING_PROMPT'
                     AND    is_active     = TRUE
                     ORDER  BY RANDOM()

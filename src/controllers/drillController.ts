@@ -1,11 +1,11 @@
 ﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { DrillSessionStatus, IeltsSkillType, IeltsSubSkillType, RecommendationLevel } from '@prisma/client';
+import { DrillSessionStatus, SkillType, SubSkillType, RecommendationLevel } from '@prisma/client';
 
 // Derived from Prisma enums â€” stays in sync automatically when schema changes
-const VALID_SKILLS     = Object.values(IeltsSkillType) as string[];
-const VALID_SUB_SKILLS = Object.values(IeltsSubSkillType) as string[];
+const VALID_SKILLS     = Object.values(SkillType) as string[];
+const VALID_SUB_SKILLS = Object.values(SubSkillType) as string[];
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 import { paramStr } from '../utils/httpParams';
@@ -201,8 +201,8 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
         const questions = await prisma.$queryRaw`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
-            WHERE skill = ${skill}::"IeltsSkillType"
-              AND sub_skill = ${subskill}::"IeltsSubSkillType"
+            WHERE skill = ${skill}::"SkillType"
+              AND sub_skill = ${subskill}::"SubSkillType"
               AND level = ${level}::"RecommendationLevel"
               AND is_active = true
               AND drill_type = 'MCQ'
@@ -402,8 +402,8 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
         const questions: any[] = await prisma.$queryRaw`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
-            WHERE skill     = ${skillUp}::"IeltsSkillType"
-              AND sub_skill = ${subSkillUp}::"IeltsSubSkillType"
+            WHERE skill     = ${skillUp}::"SkillType"
+              AND sub_skill = ${subSkillUp}::"SubSkillType"
               AND level     = ${levelUp}::"RecommendationLevel"
               AND is_active = true
               AND drill_type = 'MCQ'

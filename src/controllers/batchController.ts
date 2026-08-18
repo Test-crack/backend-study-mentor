@@ -18,7 +18,7 @@ async function resolveInstituteId(appUserId: string): Promise<string | null> {
 }
 
 // â”€â”€â”€ Types expected after prisma db pull (snake_case models) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ielts_batches, ielts_batch_instructors, ielts_batch_students
+// batch, batch_instructors, batch_students
 
 // â”€â”€â”€ GET /api/institute-admin/batches â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function getBatches(req: AuthRequest, res: Response) {
@@ -27,17 +27,17 @@ export async function getBatches(req: AuthRequest, res: Response) {
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const batches = await (prisma as any).ieltsBatch.findMany({
+        const batches = await prisma.batch.findMany({
             where: { institute_id: instituteId },
             orderBy: { created_at: 'desc' },
             include: {
                 _count: {
                     select: {
-                        ielts_batch_instructors: true,
-                        ielts_batch_students: true,
+                        batch_instructors: true,
+                        batch_students: true,
                     },
                 },
-                ielts_batch_instructors: {
+                batch_instructors: {
                     include: {
                         User: { select: { id: true, name: true, email: true, profileImage: true } },
                     },
@@ -52,9 +52,9 @@ export async function getBatches(req: AuthRequest, res: Response) {
             status: b.status,
             maxStudents: b.max_students,
             createdAt: b.created_at,
-            instructorCount: b._count.ielts_batch_instructors,
-            studentCount: b._count.ielts_batch_students,
-            instructors: b.ieltsBatchInstructor.map((bi: any) => ({
+            instructorCount: b._count.batch_instructors,
+            studentCount: b._count.batch_students,
+            instructors: b.batch_instructors.map((bi: any) => ({
                 userId: bi.User.id,
                 name: bi.User.name,
                 email: bi.User.email,
@@ -83,7 +83,7 @@ export async function createBatch(req: AuthRequest, res: Response) {
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const batch = await (prisma as any).ieltsBatch.create({
+        const batch = await prisma.batch.create({
             data: {
                 institute_id: instituteId,
                 name: name.trim(),
@@ -115,23 +115,23 @@ export async function createBatch(req: AuthRequest, res: Response) {
 
 // â”€â”€â”€ GET /api/institute-admin/batches/:id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function getBatchDetail(req: AuthRequest, res: Response) {
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     try {
         const appUserId = (req as any).appUserId as string;
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const batch = await (prisma as any).ieltsBatch.findFirst({
+        const batch = await prisma.batch.findFirst({
             where: { id, institute_id: instituteId },
             include: {
-                ielts_batch_instructors: {
+                batch_instructors: {
                     include: {
                         User: { select: { id: true, name: true, email: true, profileImage: true } },
                     },
                     orderBy: { assigned_at: 'asc' },
                 },
-                ielts_batch_students: {
+                batch_students: {
                     include: {
                         User: { select: { id: true, name: true, email: true, profileImage: true, phoneNo: true } },
                     },
@@ -150,14 +150,14 @@ export async function getBatchDetail(req: AuthRequest, res: Response) {
                 status: batch.status,
                 maxStudents: batch.max_students,
                 createdAt: batch.created_at,
-                instructors: batch.ieltsBatchInstructor.map((bi: any) => ({
+                instructors: batch.batch_instructors.map((bi: any) => ({
                     userId: bi.User.id,
                     name: bi.User.name,
                     email: bi.User.email,
                     profileImage: bi.User.profileImage,
                     assignedAt: bi.assigned_at,
                 })),
-                students: batch.ieltsBatchStudent.map((bs: any) => ({
+                students: batch.batch_students.map((bs: any) => ({
                     userId: bs.User.id,
                     name: bs.User.name,
                     email: bs.User.email,
@@ -176,7 +176,7 @@ export async function getBatchDetail(req: AuthRequest, res: Response) {
 // â”€â”€â”€ PATCH /api/institute-admin/batches/:id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { name?, description?, status?, maxStudents? }
 export async function updateBatch(req: AuthRequest, res: Response) {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { name, description, status, maxStudents } = req.body as {
         name?: string; description?: string; status?: string; maxStudents?: number | null;
     };
@@ -186,12 +186,12 @@ export async function updateBatch(req: AuthRequest, res: Response) {
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const existing = await (prisma as any).ieltsBatch.findFirst({
+        const existing = await prisma.batch.findFirst({
             where: { id, institute_id: instituteId },
         });
         if (!existing) return res.status(404).json({ error: 'Batch not found.' });
 
-        const updated = await (prisma as any).ieltsBatch.update({
+        const updated = await prisma.batch.update({
             where: { id },
             data: {
                 ...(name !== undefined ? { name: name.trim() } : {}),
@@ -213,19 +213,19 @@ export async function updateBatch(req: AuthRequest, res: Response) {
 
 // â”€â”€â”€ DELETE /api/institute-admin/batches/:id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function deleteBatch(req: AuthRequest, res: Response) {
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     try {
         const appUserId = (req as any).appUserId as string;
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const existing = await (prisma as any).ieltsBatch.findFirst({
+        const existing = await prisma.batch.findFirst({
             where: { id, institute_id: instituteId },
         });
         if (!existing) return res.status(404).json({ error: 'Batch not found.' });
 
-        await (prisma as any).ieltsBatch.delete({ where: { id } });
+        await prisma.batch.delete({ where: { id } });
 
         return res.json({ data: { deleted: true, id } });
     } catch (err: any) {
@@ -237,7 +237,7 @@ export async function deleteBatch(req: AuthRequest, res: Response) {
 // â”€â”€â”€ POST /api/institute-admin/batches/:id/instructors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { userId }  â€” must be in institute_instructors
 export async function addInstructorToBatch(req: AuthRequest, res: Response) {
-    const { id: batchId } = req.params;
+    const batchId = req.params.id as string;
     const { userId } = req.body as { userId: string };
 
     if (!userId) return res.status(400).json({ error: 'userId is required.' });
@@ -248,7 +248,7 @@ export async function addInstructorToBatch(req: AuthRequest, res: Response) {
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
         // Verify batch belongs to this institute
-        const batch = await (prisma as any).ieltsBatch.findFirst({ where: { id: batchId, institute_id: instituteId } });
+        const batch = await prisma.batch.findFirst({ where: { id: batchId, institute_id: instituteId } });
         if (!batch) return res.status(404).json({ error: 'Batch not found.' });
 
         // Verify the user is an instructor in this institute
@@ -257,7 +257,7 @@ export async function addInstructorToBatch(req: AuthRequest, res: Response) {
         });
         if (!isInstructor) return res.status(400).json({ error: 'User is not a tutor in your institute.' });
 
-        await (prisma as any).ieltsBatchInstructor.create({
+        await prisma.batchInstructor.create({
             data: { batch_id: batchId, user_id: userId },
         });
 
@@ -275,20 +275,21 @@ export async function addInstructorToBatch(req: AuthRequest, res: Response) {
 
 // â”€â”€â”€ DELETE /api/institute-admin/batches/:id/instructors/:userId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function removeInstructorFromBatch(req: AuthRequest, res: Response) {
-    const { id: batchId, userId } = req.params;
+    const batchId = req.params.id as string;
+    const userId = req.params.userId as string;
 
     try {
         const appUserId = (req as any).appUserId as string;
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const batch = await (prisma as any).ieltsBatch.findFirst({ where: { id: batchId, institute_id: instituteId } });
+        const batch = await prisma.batch.findFirst({ where: { id: batchId, institute_id: instituteId } });
         if (!batch) return res.status(404).json({ error: 'Batch not found.' });
 
-        const row = await (prisma as any).ieltsBatchInstructor.findFirst({ where: { batch_id: batchId, user_id: userId } });
+        const row = await prisma.batchInstructor.findFirst({ where: { batch_id: batchId, user_id: userId } });
         if (!row) return res.status(404).json({ error: 'Instructor not in this batch.' });
 
-        await (prisma as any).ieltsBatchInstructor.delete({ where: { id: row.id } });
+        await prisma.batchInstructor.delete({ where: { id: row.id } });
 
         return res.json({ data: { removed: true, userId } });
     } catch (err: any) {
@@ -300,7 +301,7 @@ export async function removeInstructorFromBatch(req: AuthRequest, res: Response)
 // â”€â”€â”€ POST /api/institute-admin/batches/:id/students â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { userId }  â€” must be in institute_students
 export async function addStudentToBatch(req: AuthRequest, res: Response) {
-    const { id: batchId } = req.params;
+    const batchId = req.params.id as string;
     const { userId } = req.body as { userId: string };
 
     if (!userId) return res.status(400).json({ error: 'userId is required.' });
@@ -310,12 +311,12 @@ export async function addStudentToBatch(req: AuthRequest, res: Response) {
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const batch = await (prisma as any).ieltsBatch.findFirst({ where: { id: batchId, institute_id: instituteId } });
+        const batch = await prisma.batch.findFirst({ where: { id: batchId, institute_id: instituteId } });
         if (!batch) return res.status(404).json({ error: 'Batch not found.' });
 
         // Max students capacity check
         if (batch.max_students) {
-            const currentCount = await (prisma as any).ieltsBatchStudent.count({ where: { batch_id: batchId } });
+            const currentCount = await prisma.batchStudent.count({ where: { batch_id: batchId } });
             if (currentCount >= batch.max_students) {
                 return res.status(400).json({ error: `Batch is full (max ${batch.max_students} students).` });
             }
@@ -327,7 +328,7 @@ export async function addStudentToBatch(req: AuthRequest, res: Response) {
         });
         if (!isStudent) return res.status(400).json({ error: 'User is not a student in your institute.' });
 
-        await (prisma as any).ieltsBatchStudent.create({
+        await prisma.batchStudent.create({
             data: { batch_id: batchId, user_id: userId },
         });
 
@@ -347,20 +348,21 @@ export async function addStudentToBatch(req: AuthRequest, res: Response) {
 
 // â”€â”€â”€ DELETE /api/institute-admin/batches/:id/students/:userId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function removeStudentFromBatch(req: AuthRequest, res: Response) {
-    const { id: batchId, userId } = req.params;
+    const batchId = req.params.id as string;
+    const userId = req.params.userId as string;
 
     try {
         const appUserId = (req as any).appUserId as string;
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
-        const batch = await (prisma as any).ieltsBatch.findFirst({ where: { id: batchId, institute_id: instituteId } });
+        const batch = await prisma.batch.findFirst({ where: { id: batchId, institute_id: instituteId } });
         if (!batch) return res.status(404).json({ error: 'Batch not found.' });
 
-        const row = await (prisma as any).ieltsBatchStudent.findFirst({ where: { batch_id: batchId, user_id: userId } });
+        const row = await prisma.batchStudent.findFirst({ where: { batch_id: batchId, user_id: userId } });
         if (!row) return res.status(404).json({ error: 'Student not in this batch.' });
 
-        await (prisma as any).ieltsBatchStudent.delete({ where: { id: row.id } });
+        await prisma.batchStudent.delete({ where: { id: row.id } });
 
         return res.json({ data: { removed: true, userId } });
     } catch (err: any) {
@@ -376,25 +378,25 @@ export async function getInstructorBatches(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
 
-        const assignments = await (prisma as any).ieltsBatchInstructor.findMany({
+        const assignments = await prisma.batchInstructor.findMany({
             where: { user_id: appUserId },
             include: {
-                ielts_batches: {
+                batch: {
                     include: {
                         institutes: { select: { id: true, name: true } },
-                        ielts_batch_instructors: {
+                        batch_instructors: {
                             include: {
                                 User: { select: { id: true, name: true, email: true, profileImage: true } },
                             },
                         },
-                        ielts_batch_students: {
+                        batch_students: {
                             include: {
                                 User: { select: { id: true, name: true, email: true, profileImage: true, phoneNo: true } },
                             },
                             orderBy: { enrolled_at: 'asc' },
                         },
                         _count: {
-                            select: { ielts_batch_instructors: true, ielts_batch_students: true },
+                            select: { batch_instructors: true, batch_students: true },
                         },
                     },
                 },
@@ -402,7 +404,7 @@ export async function getInstructorBatches(req: AuthRequest, res: Response) {
         });
 
         const data = assignments.map((a: any) => {
-            const b = a.ielts_batches;
+            const b = a.batch;
             return {
                 id: b.id,
                 name: b.name,
@@ -411,15 +413,15 @@ export async function getInstructorBatches(req: AuthRequest, res: Response) {
                 maxStudents: b.max_students,
                 createdAt: b.created_at,
                 institute: { id: b.institutes?.id ?? null, name: b.institutes?.name ?? null },
-                instructorCount: b._count.ielts_batch_instructors,
-                studentCount: b._count.ielts_batch_students,
-                instructors: b.ieltsBatchInstructor.map((bi: any) => ({
+                instructorCount: b._count.batch_instructors,
+                studentCount: b._count.batch_students,
+                instructors: b.batch_instructors.map((bi: any) => ({
                     userId: bi.User.id,
                     name: bi.User.name,
                     email: bi.User.email,
                     profileImage: bi.User.profileImage,
                 })),
-                students: b.ieltsBatchStudent.map((bs: any) => ({
+                students: b.batch_students.map((bs: any) => ({
                     userId: bs.User.id,
                     name: bs.User.name,
                     email: bs.User.email,
@@ -443,19 +445,19 @@ export async function getStudentBatches(req: AuthRequest, res: Response) {
     try {
         const appUserId = (req as any).appUserId as string;
 
-        const enrollments = await (prisma as any).ieltsBatchStudent.findMany({
+        const enrollments = await prisma.batchStudent.findMany({
             where: { user_id: appUserId },
             include: {
-                ielts_batches: {
+                batch: {
                     include: {
                         institutes: { select: { id: true, name: true } },
-                        ielts_batch_instructors: {
+                        batch_instructors: {
                             include: {
                                 User: { select: { id: true, name: true, email: true, profileImage: true } },
                             },
                         },
                         _count: {
-                            select: { ielts_batch_students: true },
+                            select: { batch_students: true },
                         },
                     },
                 },
@@ -463,7 +465,7 @@ export async function getStudentBatches(req: AuthRequest, res: Response) {
         });
 
         const data = enrollments.map((e: any) => {
-            const b = e.ielts_batches;
+            const b = e.batch;
             return {
                 id: b.id,
                 name: b.name,
@@ -472,8 +474,8 @@ export async function getStudentBatches(req: AuthRequest, res: Response) {
                 maxStudents: b.max_students,
                 enrolledAt: e.enrolled_at,
                 institute: { id: b.institutes?.id ?? null, name: b.institutes?.name ?? null },
-                studentCount: b._count.ielts_batch_students,
-                instructors: b.ieltsBatchInstructor.map((bi: any) => ({
+                studentCount: b._count.batch_students,
+                instructors: b.batch_instructors.map((bi: any) => ({
                     userId: bi.User.id,
                     name: bi.User.name,
                     email: bi.User.email,
