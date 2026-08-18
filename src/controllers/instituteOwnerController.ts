@@ -1201,6 +1201,9 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
             await tx.studentCompetencyMatrix.deleteMany({
                 where: { student_id: instStudent.id, skill: { in: skills as any } },
             });
+            await tx.diagnosticSession.deleteMany({
+                where: { student_id: instStudent.id, skill: { in: skills as any } },
+            });
             await tx.instituteStudent.update({
                 where: { id: instStudent.id },
                 // updated_at is explicit, not @updatedAt-managed — the frontend reads it
