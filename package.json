@@ -7,7 +7,18 @@
         "build": "tsc",
         "start": "node dist/index.js",
         "seed": "tsx prisma/seed.ts",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "drills:verify": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer1-verifier/cli.ts",
+        "drills:verify:typecheck": "tsc -p Verification/tsconfig.json --noEmit",
+        "drills:verify:test": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer1-verifier/layer1.spec.ts",
+        "drills:judge": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer2-content-judge/cli.ts",
+        "drills:judge:test": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer2-content-judge/layer2.spec.ts",
+        "drills:assign-keys": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/key-assignment-tool/cli.ts",
+        "drills:assign-keys:test": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/key-assignment-tool/keyAssignment.spec.ts",
+        "drills:import": "ts-node --project tsconfig.dev.json Import/cli.ts",
+        "drills:import:test": "ts-node --project tsconfig.dev.json Import/importer.spec.ts",
+        "diagnostic:verify": "ts-node --project tsconfig.dev.json Verification/diagnostic/question-banks/layer1-verifier/cli.ts",
+        "diagnostic:judge": "ts-node --project tsconfig.dev.json Verification/diagnostic/question-banks/layer2-content-judge/cli.ts",
+        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test"
     },
     "prisma": {
         "seed": "tsx prisma/seed.ts"

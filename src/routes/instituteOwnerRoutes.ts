@@ -28,6 +28,7 @@ router.get('/batches',                                  shared, C.getInstituteBa
 router.get('/batches/:batchId/dashboard-summary',       shared, C.getOwnerBatchDashboardSummary);
 router.get('/students',                                 shared, C.getInstituteStudents);
 router.get('/students/:studentId/full-progress',        shared, C.getOwnerStudentFullProgress);
+router.post('/students/:studentId/diagnostic/reset',    shared, C.resetStudentDiagnostic);
 router.get('/at-risk',                                  shared, C.getInstituteAtRisk);
 router.get('/instructors',                              shared, C.getInstituteInstructors);
 router.get('/assessment-overview',                      shared, C.getInstituteAssessmentOverview);

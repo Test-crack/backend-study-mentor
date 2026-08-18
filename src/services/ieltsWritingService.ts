@@ -9,7 +9,7 @@ export async function analyzeWriting(topic: string, content: string, taskType: "
     throw new Error('GEMINI_API_KEY is missing');
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0 } });
 
   const wordCount = content.trim().split(/\s+/).length;
 
