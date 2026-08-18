@@ -1,0 +1,5 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+READING,READING,BEGINNER,"This row is well formed.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""A""","Seven columns, as expected."
+READING,READING,BEGINNER,"This row is missing its explanation column entirely.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""B"""
+READING,READING,BEGINNER,"This row has an extra eighth column.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""C""","Seven columns plus one.","stray extra cell"
+READING,READING,BEGINNER,"This row is well formed too.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""D""","Seven columns, as expected."

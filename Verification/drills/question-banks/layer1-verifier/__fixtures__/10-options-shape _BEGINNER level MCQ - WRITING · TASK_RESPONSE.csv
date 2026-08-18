@@ -1,0 +1,7 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+WRITING,TASK_RESPONSE,BEGINNER,"Options are a JSON array, not an object.","[""one"",""two"",""three"",""four""]","""A""","This row exists to prove an array is rejected."
+WRITING,TASK_RESPONSE,BEGINNER,"Options carry a fifth key E.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four"",""E"":""five""}","""A""","This row exists to prove an extra key is rejected."
+WRITING,TASK_RESPONSE,BEGINNER,"Options are missing key D.","{""A"":""one"",""B"":""two"",""C"":""three""}","""A""","This row exists to prove a missing key is rejected."
+WRITING,TASK_RESPONSE,BEGINNER,"Option D is an empty string.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""   ""}","""A""","This row exists to prove a blank option is rejected."
+WRITING,TASK_RESPONSE,BEGINNER,"Option C is a number, not a string.","{""A"":""one"",""B"":""two"",""C"":3,""D"":""four""}","""A""","This row exists to prove a non-string option is rejected."
+WRITING,TASK_RESPONSE,BEGINNER,"Options are not valid JSON at all.","{A: one, B: two, C: three, D: four}","""A""","This row exists to prove unparseable JSON is rejected."

@@ -1,0 +1,4 @@
+skill,sub_skill,level,prompt_text,options,correct_answer,explanation
+WRITING,VOCABULARY,BEGINNER,"Choose the word closest in meaning to happy.","{""A"":""cheerful"",""B"":""tired"",""C"":""cheerful"",""D"":""angry""}","""A""","Cheerful is the synonym, but two options carry the same text."
+WRITING,VOCABULARY,BEGINNER,"Choose the word closest in meaning to large.","{""A"":""small"",""B"":""huge"",""C"":""narrow"",""D"":""thin""}","""B""","Huge is the closest synonym for large."
+WRITING,VOCABULARY,BEGINNER,"Choose the best word to complete: a ___ decision.","{""A"":""difficult"",""B"":""  difficult  "",""C"":""tasty"",""D"":""green""}","""A""","The duplicate here differs only by surrounding whitespace."
