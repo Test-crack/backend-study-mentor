@@ -665,6 +665,8 @@ model InstituteStudent {
   extra_drill_credits     Int                       @default(0)
   exam_date               DateTime?                 @db.Date
   exam_type               ExamType                  @default(IELTS)
+  date_of_birth           DateTime?                 @db.Date
+  is_minor                Boolean                   @default(false) // DPDP: derived from date_of_birth on save (age < 18)
   AssessmentHistory       AssessmentHistory[]
   IASession               IASession[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
@@ -673,10 +675,62 @@ model InstituteStudent {
   User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   mocksessions            MockSession[]
   GameScores              StudentGameScore[]
+  guardian_consent        GuardianConsent?
+  viva_sessions           VivaSession[]
 
   @@index([is_active], map: "idx_institute_students_active")
   @@index([institute_id], map: "idx_institute_students_institute")
   @@map("institute_students")
+}
+
+/// DPDP: parental/guardian consent for minor students. Table added in Phase 4;
+/// no application logic wired yet — rows are created once the consent flow ships.
+model GuardianConsent {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id     String           @unique @db.Uuid
+  guardian_name  String           @db.VarChar(255)
+  guardian_phone String           @db.VarChar(20)
+  consented_at   DateTime         @db.Timestamptz(6)
+  consent_method String           @db.VarChar(20) // WRITTEN | DIGITAL
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("guardian_consent")
+}
+
+/// Viva Engine (Phase 4 scaffold). Tables added; no serving/evaluation logic yet.
+/// One session = one viva attempt; answers are independent rows so a failure on
+/// one question never loses the others.
+model VivaSession {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id   String       @db.Uuid
+  exam_type    ExamType
+  status       String       @default("PENDING") @db.VarChar(20) // PENDING | IN_PROGRESS | COMPLETED | EXPIRED
+  started_at   DateTime?    @db.Timestamptz(6)
+  completed_at DateTime?    @db.Timestamptz(6)
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  answers      VivaAnswer[]
+
+  @@index([student_id], map: "idx_viva_sessions_student")
+  @@map("viva_sessions")
+}
+
+model VivaAnswer {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id      String      @db.Uuid
+  question_id     String      @db.Uuid
+  audio_url       String?     @db.VarChar(500)
+  transcript      String?
+  score           Decimal?    @db.Decimal(2, 1)
+  sub_scores      Json?
+  evaluated_at    DateTime?   @db.Timestamptz(6)
+  retention_until DateTime?   @db.Timestamptz(6) // DPDP: scheduled purge of voice-recording data
+  created_at      DateTime    @default(now()) @db.Timestamptz(6)
+  viva_sessions   VivaSession @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([session_id], map: "idx_viva_answers_session")
+  @@map("viva_answers")
 }
 
 model Institute {
