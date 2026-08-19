@@ -34,14 +34,16 @@ Nothing stopped two submissions for the same section from being processed at the
 
 **Fix applied:** Postgres advisory lock closes the race so only one submission per skill per student can be processed.
 
-### 5. Writing and Speaking accept any question ID, unchecked — ⬜ Not started
+### 5. Writing and Speaking accept any question ID, unchecked — ✔ Fixed
 The server currently trusts the submitted question ID without checking it belongs to the student, matches her level, or is even a Writing/Speaking question.
 
-**Turns out to be two related gaps, not one:**
-- **Submission-side (the original finding):** the server never validates the submitted `question_id` against skill/level/active status, so a client could submit any real question's id — even one never served to this student — and dodge, e.g., a stricter word-count requirement.
-- **Fetch-side (found while scoping the fix, 2026-08-18):** the "which question was this student served" pin is client-side only (`localStorage`, from an earlier fix — "M-20" — that stops mid-section refresh from re-rolling). If a student clears `localStorage` (or switches browser/device) *before* submitting, her next fetch carries no pin and the server serves a fresh random question. Nothing blocks this pre-submission — `isSkillAlreadyScored` only gates re-fetching *after* a skill is already submitted — so a student can reroll for free by clearing state, no submission tampering needed at all.
+**Turned out to be two related gaps, not one:**
+- **Submission-side (the original finding):** the server never validated the submitted `question_id` against skill/level/active status, so a client could submit any real question's id — even one never served to this student — and dodge, e.g., a stricter word-count requirement.
+- **Fetch-side (found while scoping the fix):** the "which question was this student served" pin was client-side only (`localStorage`, from an earlier fix — "M-20" — that stops mid-section refresh from re-rolling). If a student cleared `localStorage` before submitting, her next fetch carried no pin and the server served a fresh random question — a free reroll, no submission tampering needed at all.
 
-**Fix:** validating the submitted `question_id` alone (skill/level/active check) closes the first gap but NOT the second — a rerolled question is still a real, valid, active question at the right skill/level, so it'd pass that check cleanly. The fix that closes both at once: persist which question/set was actually served to a student server-side (a small table or column keyed by student+skill) the first time it's handed out, and validate submission against that persisted record instead of re-deriving validity from scratch. Client-side pinning stays as a nice-to-have for the refresh UX, but stops being the only thing standing between a student and a free reroll.
+**Fix applied:** new `DiagnosticSession` table (student_id, exam_type, skill, set_id) is now the server-side source of truth for both directions. Fetch always re-serves whatever's recorded there — client-supplied `set_id`/`question_id` is no longer trusted at all — creating a row on first fetch. Submission resolves the graded prompt from that record instead of the request body, so a tampered `question_id` is never even looked up. Listening/Reading's server-derived set is now also cross-checked against the session record. Admin reset clears the session row for the reset skill(s) so a reset student gets a genuinely fresh question next time.
+
+Verified live against a QA test student: fetching twice with no query params (simulating cleared `localStorage`) returns the identical question both times; submitting with a different real `question_id` is silently ignored and grades against the session's actual question.
 
 ### 6. A server error can wrongly delete a student's recording — ✔ Fixed
 When AI grading failed on our end (a real server error), the frontend treated it identically to "no speech detected," deleting a perfectly good recording and blaming the student's microphone.
