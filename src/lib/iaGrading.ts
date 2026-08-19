@@ -116,9 +116,19 @@ Band 1 — Unintelligible. Cannot be understood.`,
 
 // ── Shared Gemini call ────────────────────────────────────────────────────────
 
+const GEMINI_TIMEOUT_MS = 30_000;
+
 async function callGemini(prompt: string): Promise<IAGradeResult> {
-    const model  = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
+    const model  = genAI.getGenerativeModel({
+        model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+        generationConfig: { temperature: 0 },
+    });
+    const result = await Promise.race([
+        model.generateContent(prompt),
+        new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Gemini request timed out')), GEMINI_TIMEOUT_MS)
+        ),
+    ]);
     let raw = result.response.text().trim();
 
     // Remove markdown code fences if present
@@ -134,6 +144,7 @@ async function callGemini(prompt: string): Promise<IAGradeResult> {
     
     // Allow 0.5-increment values (e.g. 6.5) so submitIA can produce proper IELTS half-bands
     let band = Number(parsed.band);
+    if (!Number.isFinite(band)) throw new Error('AI returned a non-numeric band.');
     band = Math.round(band * 2) / 2;       // round to nearest 0.5
     band = Math.min(10, Math.max(1, band)); // clamp to 1–10
     
@@ -248,7 +259,7 @@ export async function gradeIAWritingPrompt(
     questionPrompt: string,
     response:       string,
 ): Promise<IAGradeResult> {
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+    if (!GEMINI_API_KEY) throw new AIGradingError('GEMINI_API_KEY missing');
     if (!response?.trim()) {
         return { 
             band: 1, 
@@ -272,7 +283,7 @@ export async function gradeIASpeakingPrompt(
     questionPrompt: string,
     transcript:     string,
 ): Promise<IAGradeResult> {
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+    if (!GEMINI_API_KEY) throw new AIGradingError('GEMINI_API_KEY missing');
     if (!transcript?.trim()) {
         return { 
             band: 1, 

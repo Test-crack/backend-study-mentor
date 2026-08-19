@@ -82,8 +82,29 @@ export interface IAProcessResult {
  * Grades a session, writes results to DB (COMPLETED), and returns scoring data.
  * The session must exist and belong to the given student.
  * Caller is responsible for validating status before calling (don't call on MISSED/COMPLETED).
+ *
+ * Serializes concurrent grading of the same session behind a session-scoped advisory
+ * lock so a double-click submit (or a submit racing the miss-detector's auto-grade)
+ * can't run the Gemini calls twice. Held for the AI calls themselves, not just the
+ * closing transaction — so it can't be tx-scoped without holding a DB connection open
+ * for however long Gemini takes.
  */
 export async function processIASession(
+    sessionId: string,
+    studentId: string,
+): Promise<IAProcessResult> {
+    const [{ locked }] = await prisma.$queryRaw<{ locked: boolean }[]>`
+        SELECT pg_try_advisory_lock(hashtext(${sessionId})) AS locked
+    `;
+    if (!locked) throw new AlreadyCompletedError();
+    try {
+        return await gradeIASessionLocked(sessionId, studentId);
+    } finally {
+        await prisma.$queryRaw`SELECT pg_advisory_unlock(hashtext(${sessionId}))`;
+    }
+}
+
+async function gradeIASessionLocked(
     sessionId: string,
     studentId: string,
 ): Promise<IAProcessResult> {
