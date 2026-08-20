@@ -3,24 +3,29 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { sendInvite } from '../lib/sendInvite';
-import { UserRoleType, ExamType } from '@prisma/client';
+import { UserRoleType } from '@prisma/client';
 import { paramStr } from '../utils/httpParams';
 
 const VALID_ROLES = Object.values(UserRoleType);
-const VALID_EXAM_TYPES = Object.values(ExamType);
 const VALID_BILLING_STATUSES = ['TRIAL', 'ACTIVE', 'CANCELLED'] as const;
 type BillingStatus = (typeof VALID_BILLING_STATUSES)[number];
 
 const TRIAL_DAYS = 30;
 const trialEndDate = () => new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
 
-/** Normalize + validate an exam-type list; returns unique valid ExamType[] or null if any invalid. */
-function parseExamTypes(input: unknown): ExamType[] | null {
+/** Valid exam ids come from the Exam registry table (data) — no hardcoded enum. */
+async function validExamIds(): Promise<Set<string>> {
+    const rows = await prisma.exam.findMany({ select: { id: true } });
+    return new Set(rows.map((r) => r.id));
+}
+
+/** Normalize an exam-id list to unique non-empty strings; null if the shape is wrong. */
+function parseExamTypes(input: unknown): string[] | null {
     if (!Array.isArray(input)) return null;
-    const seen = new Set<ExamType>();
+    const seen = new Set<string>();
     for (const raw of input) {
-        if (typeof raw !== 'string' || !VALID_EXAM_TYPES.includes(raw as ExamType)) return null;
-        seen.add(raw as ExamType);
+        if (typeof raw !== 'string' || !raw.trim()) return null;
+        seen.add(raw.trim());
     }
     return [...seen];
 }
@@ -149,7 +154,7 @@ export async function getInstitutes(req: AuthRequest, res: Response) {
                 }
                 : null,
             exams: inst.exam_subscriptions.map((s) => ({
-                examType: s.exam_type,
+                examType: s.exam_id,
                 billingStatus: s.billing_status,
                 trialEndsAt: s.trial_ends_at,
                 seatCap: s.seat_cap,
@@ -265,6 +270,12 @@ export async function createInstitute(req: AuthRequest, res: Response) {
     }
 
     try {
+        const valid = await validExamIds();
+        const unknown = exams.filter((e) => !valid.has(e));
+        if (unknown.length) {
+            return res.status(400).json({ error: `Unknown exam id(s): ${unknown.join(', ')}.` });
+        }
+
         // Pre-check for existing user and role clash
         const existingUser = await prisma.user.findUnique({ where: { email: ownerEmail } });
         if (existingUser && existingUser.role !== UserRoleType.INSTITUTE_OWNER) {
@@ -316,9 +327,9 @@ export async function createInstitute(req: AuthRequest, res: Response) {
 
             const trialEndsAt = trialEndDate();
             await tx.instituteExamSubscription.createMany({
-                data: exams.map((exam_type) => ({
+                data: exams.map((examId) => ({
                     institute_id: institute.id,
-                    exam_type,
+                    exam_id: examId,
                     billing_status: 'TRIAL',
                     trial_ends_at: trialEndsAt,
                 })),
@@ -363,10 +374,16 @@ export async function setInstituteExams(req: AuthRequest, res: Response) {
     const id = paramStr(req.params.id);
     const exams = parseExamTypes((req.body as any)?.examTypes);
     if (!exams) {
-        return res.status(400).json({ error: 'examTypes must be an array of valid exam types.' });
+        return res.status(400).json({ error: 'examTypes must be an array of valid exam ids.' });
     }
 
     try {
+        const valid = await validExamIds();
+        const unknown = exams.filter((e) => !valid.has(e));
+        if (unknown.length) {
+            return res.status(400).json({ error: `Unknown exam id(s): ${unknown.join(', ')}.` });
+        }
+
         const institute = await prisma.institute.findUnique({
             where: { id },
             include: { exam_subscriptions: true },
@@ -374,15 +391,15 @@ export async function setInstituteExams(req: AuthRequest, res: Response) {
         if (!institute) return res.status(404).json({ error: 'Institute not found.' });
 
         const wanted = new Set(exams);
-        const existingByType = new Map(institute.exam_subscriptions.map((s) => [s.exam_type, s]));
+        const existingByType = new Map(institute.exam_subscriptions.map((s) => [s.exam_id, s]));
 
         await prisma.$transaction(async (tx) => {
             // Add or reactivate
-            for (const exam_type of exams) {
-                const row = existingByType.get(exam_type);
+            for (const examId of exams) {
+                const row = existingByType.get(examId);
                 if (!row) {
                     await tx.instituteExamSubscription.create({
-                        data: { institute_id: id, exam_type, billing_status: 'TRIAL', trial_ends_at: trialEndDate() },
+                        data: { institute_id: id, exam_id: examId, billing_status: 'TRIAL', trial_ends_at: trialEndDate() },
                     });
                 } else if (row.billing_status === 'CANCELLED') {
                     await tx.instituteExamSubscription.update({
@@ -393,7 +410,7 @@ export async function setInstituteExams(req: AuthRequest, res: Response) {
             }
             // Cancel exams no longer wanted (preserve the row)
             for (const row of institute.exam_subscriptions) {
-                if (!wanted.has(row.exam_type) && row.billing_status !== 'CANCELLED') {
+                if (!wanted.has(row.exam_id) && row.billing_status !== 'CANCELLED') {
                     await tx.instituteExamSubscription.update({
                         where: { id: row.id },
                         data: { billing_status: 'CANCELLED' },
@@ -409,7 +426,7 @@ export async function setInstituteExams(req: AuthRequest, res: Response) {
 
         return res.json({
             data: refreshed.map((s) => ({
-                examType: s.exam_type,
+                examType: s.exam_id,
                 billingStatus: s.billing_status,
                 trialEndsAt: s.trial_ends_at,
                 seatCap: s.seat_cap,
@@ -425,19 +442,16 @@ export async function setInstituteExams(req: AuthRequest, res: Response) {
 // Body: { billingStatus: 'TRIAL' | 'ACTIVE' | 'CANCELLED' }
 export async function setExamStatus(req: AuthRequest, res: Response) {
     const id = paramStr(req.params.id);
-    const examTypeRaw = paramStr(req.params.examType);
+    const examId = paramStr(req.params.examType);
     const { billingStatus } = req.body as { billingStatus?: string };
 
-    if (!VALID_EXAM_TYPES.includes(examTypeRaw as ExamType)) {
-        return res.status(400).json({ error: 'Invalid examType.' });
-    }
     if (!billingStatus || !VALID_BILLING_STATUSES.includes(billingStatus as BillingStatus)) {
         return res.status(400).json({ error: `billingStatus must be one of ${VALID_BILLING_STATUSES.join(', ')}.` });
     }
 
     try {
         const row = await prisma.instituteExamSubscription.findUnique({
-            where: { institute_id_exam_type: { institute_id: id, exam_type: examTypeRaw as ExamType } },
+            where: { institute_id_exam_id: { institute_id: id, exam_id: examId } },
         });
         if (!row) return res.status(404).json({ error: 'This institute does not offer that exam.' });
 
@@ -453,7 +467,7 @@ export async function setExamStatus(req: AuthRequest, res: Response) {
 
         return res.json({
             data: {
-                examType: updated.exam_type,
+                examType: updated.exam_id,
                 billingStatus: updated.billing_status,
                 trialEndsAt: updated.trial_ends_at,
                 seatCap: updated.seat_cap,
@@ -482,7 +496,7 @@ export async function getSubscriptions(req: AuthRequest, res: Response) {
 
         const rows = await prisma.instituteExamSubscription.findMany({
             where,
-            orderBy: [{ institutes: { name: 'asc' } }, { exam_type: 'asc' }],
+            orderBy: [{ institutes: { name: 'asc' } }, { exam_id: 'asc' }],
             include: {
                 institutes: {
                     select: {
@@ -498,7 +512,7 @@ export async function getSubscriptions(req: AuthRequest, res: Response) {
             instituteId: s.institute_id,
             instituteName: s.institutes.name,
             instituteActive: s.institutes.is_active,
-            examType: s.exam_type,
+            examType: s.exam_id,
             billingStatus: s.billing_status,
             trialEndsAt: s.trial_ends_at,
             seatCap: s.seat_cap,

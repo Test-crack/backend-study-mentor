@@ -28,7 +28,7 @@ router.patch('/institutes/:id/status', superadminController.toggleInstituteStatu
 router.patch('/institutes/:id', superadminController.updateInstitute);
 
 // Institute exam subscriptions
-// PUT   /api/superadmin/institutes/:id/exams              { examTypes: ExamType[] }
+// PUT   /api/superadmin/institutes/:id/exams              { examTypes: string[] (exam ids) }
 // PATCH /api/superadmin/institutes/:id/exams/:examType    { billingStatus }
 router.put('/institutes/:id/exams', superadminController.setInstituteExams);
 router.patch('/institutes/:id/exams/:examType', superadminController.setExamStatus);
