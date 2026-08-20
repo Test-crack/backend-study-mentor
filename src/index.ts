@@ -31,6 +31,7 @@ import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
 import { requireDiagnosed } from './middleware/requireDiagnosed';
 import { initializeStorage } from './services/youtubeNotes/fileStorageService';
+import { loadExamEngine } from './exam-engine';
 
 const app = express();
 const server = http.createServer(app);
@@ -127,6 +128,10 @@ async function startServer() {
     // Initialize file storage
     await initializeStorage();
     console.log('✅ File storage initialized');
+
+    // Load + validate the exam-engine config. Throws on an invalid config →
+    // startServer's catch exits the process (fail loud). See Phase 5 · B1/B2.
+    await loadExamEngine();
 
     // Start WebSocket server sharing the HTTP server
     startWSServer(server);
