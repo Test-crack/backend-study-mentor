@@ -11,6 +11,10 @@ export { getStrategy, hasStrategy, knownStrategies } from './registry';
 export type { ScoringStrategy } from './registry';
 export { assertUnit, asPercent, asBand, asFraction, readAll, RawScoreUnitError } from './rawScore';
 export {
+  toPublicConfig, toPublicExamSummary, listPublicConfigs, listPublicSummaries,
+} from './publicConfig';
+export type { PublicExamConfig, PublicExamSummary } from './publicConfig';
+export {
   loadExamEngine,
   getEngineConfig,
   getExamConfig,

@@ -25,6 +25,7 @@ import drillRoutes from './routes/drillRoutes';
 import diagnosticRoutes from './routes/diagnosticRoutes';
 import iaRoutes   from './routes/iaRoutes';
 import mockRoutes from './routes/mockRoutes';
+import examsRoutes from './routes/examsRoutes';
 import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
@@ -111,6 +112,7 @@ app.use('/api/domains', domainRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/ielts-reading', ieltsReadingRoutes);
 app.use('/api/voice-lab', voiceLabRoutes);
+app.use('/api/exams', examsRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/institute-owner', instituteOwnerRoutes);
 app.use('/api/institute-admin', instituteAdminRoutes);
