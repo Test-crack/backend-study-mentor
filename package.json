@@ -7,6 +7,7 @@
         "build": "tsc",
         "start": "node dist/index.js",
         "seed": "tsx prisma/seed.ts",
+        "exam-engine:vectors": "ts-node --transpile-only src/exam-engine/vectors.check.ts",
         "drills:verify": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer1-verifier/cli.ts",
         "drills:verify:typecheck": "tsc -p Verification/tsconfig.json --noEmit",
         "drills:verify:test": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer1-verifier/layer1.spec.ts",

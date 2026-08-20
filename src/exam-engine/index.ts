@@ -2,6 +2,15 @@
 export * from './types';
 export { validateConfig } from './validator';
 export {
+  roundHalfUpToStep, clamp, tidy,
+  pctToLevel, withinLevelProgress, nextLevel, levelIndex,
+  bandMean, cefrHybrid,
+} from './scoring';
+export { numericMomentum, ordinalMomentum, trend, buildEnvelope } from './progression';
+export { getStrategy, hasStrategy, knownStrategies } from './registry';
+export type { ScoringStrategy } from './registry';
+export { assertUnit, asPercent, asBand, asFraction, readAll, RawScoreUnitError } from './rawScore';
+export {
   loadExamEngine,
   getEngineConfig,
   getExamConfig,
