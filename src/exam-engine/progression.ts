@@ -4,6 +4,7 @@
 // so it can't diverge; momentum is free to differ.
 
 import { clamp, tidy, nextLevel, withinLevelProgress } from './scoring';
+import { OverallMode } from './types';
 
 export interface NumericMomentum {
   basis: 'rounding_interval';
@@ -64,32 +65,56 @@ export function trend(values: number[], window: number): 'up' | 'down' | 'flat' 
 
 export interface BuildEnvelopeArgs {
   examId: string;
-  strategy: string;
-  overall: { kind: string; value: any; label: string };
-  momentum: any;
+  strategy: string | null;
+  /** Defaults to 'per_component' when `overall` is null, else 'aggregate'. */
+  mode?: OverallMode;
+  /** Null for per_component exams (OET/GRE/GMAT). */
+  overall?: { kind: string; value: any; label: string } | null;
+  /** Per-component results — the report body when there is no single headline. */
+  components?: any[];
+  momentum?: any;
   baseline?: { value: any; label: string } | null;
   history?: number[] | null;
   trendWindow?: number;
+  // Provenance (B9) — the engine + config version this result was scored under.
+  engineVersion?: string;
+  configVersion?: string;
 }
 
+/**
+ * B8: one envelope shape for every exam. `overall` is null for per_component exams;
+ * B9: every result carries engine_version + config_version so a later threshold
+ * recalibration can't silently reinterpret history.
+ */
 export function buildEnvelope(args: BuildEnvelopeArgs): any {
-  const { examId, strategy, overall, momentum, baseline, history, trendWindow } = args;
-  const env = {
+  const {
+    examId, strategy, overall, components, momentum, baseline, history, trendWindow,
+    engineVersion, configVersion,
+  } = args;
+
+  const isPerComponent = args.mode === 'per_component' || overall == null;
+
+  const env: any = {
     exam_id: examId,
-    strategy,
-    overall: { kind: overall.kind, value: overall.value, label: overall.label },
-    progression: {
-      baseline: baseline ? { value: baseline.value, label: baseline.label, style: 'challenge' } : null,
-      // headline MUST equal overall.value — the guarded field, copied not recomputed.
-      headline: { value: overall.value, label: overall.label },
-      // momentum is ALLOWED to differ from the headline. Separate display.
-      momentum,
-      recent_trend: history ? trend(history, trendWindow ?? 3) : null,
-    },
+    engine_version: engineVersion ?? null,
+    config_version: configVersion ?? null,
+    strategy: isPerComponent ? null : strategy,
+    overall: isPerComponent ? null : { kind: overall!.kind, value: overall!.value, label: overall!.label },
+    ...(components ? { components } : {}),
+    progression: isPerComponent
+      ? null
+      : {
+          baseline: baseline ? { value: baseline.value, label: baseline.label, style: 'challenge' } : null,
+          // headline MUST equal overall.value — the guarded field, copied not recomputed.
+          headline: { value: overall!.value, label: overall!.label },
+          // momentum is ALLOWED to differ from the headline. Separate display.
+          momentum: momentum ?? null,
+          recent_trend: history ? trend(history, trendWindow ?? 3) : null,
+        },
   };
 
-  // The invariant, corrected: it guards `headline`, not `momentum`.
-  if (env.progression.headline.value !== env.overall.value) {
+  // The invariant guards `headline` (aggregate exams only; per_component has none).
+  if (!isPerComponent && env.progression.headline.value !== env.overall.value) {
     throw new Error(
       `INVARIANT VIOLATION: progression.headline (${env.progression.headline.value}) !== overall (${env.overall.value})`
     );

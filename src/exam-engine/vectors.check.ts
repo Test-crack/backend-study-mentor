@@ -103,8 +103,26 @@ const okEnv = buildEnvelope({
   overall: bandMean({ l: 6, r: 6, w: 6, sp: 5.5 }, BAND),
   momentum: numericMomentum(5.875, 6.0, BAND),
   baseline: { value: 4.0, label: '4.0' }, history: [5.0, 5.5, 6.0], trendWindow: 3,
+  engineVersion: '2.0.0', configVersion: '2.0.0',
 });
 check('  valid envelope: headline == overall', okEnv.progression.headline.value, okEnv.overall.value);
+// B9: provenance stamped on the envelope
+check('  aggregate envelope carries config_version', okEnv.config_version, '2.0.0');
+
+// B8: per_component envelope — overall is null, no progression ladder, still valid
+head('§6b  per_component envelope (OET/GRE/GMAT)');
+const perComp = buildEnvelope({
+  examId: 'oet', strategy: null, mode: 'per_component',
+  components: [
+    { id: 'listening', assessed: true, kind: 'oet_score', value: 350, display: '350 (B)' },
+    { id: 'reading', assessed: true, kind: 'oet_score', value: 360, display: '360 (B)' },
+  ],
+  engineVersion: '2.0.0', configVersion: '2.0.0',
+});
+check('  per_component: overall is null', perComp.overall, null);
+check('  per_component: no progression ladder', perComp.progression, null);
+check('  per_component: components preserved', perComp.components.length, 2);
+check('  per_component: provenance stamped', perComp.engine_version, '2.0.0');
 
 // §7 per-component exams
 head('§7  Exams with no computable headline');

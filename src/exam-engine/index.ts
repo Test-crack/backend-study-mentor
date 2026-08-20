@@ -22,6 +22,7 @@ export {
   getScale,
   getEngineVersion,
   getConfigVersion,
+  provenance,
   readConfigFile,
   configFilePath,
 } from './loader';

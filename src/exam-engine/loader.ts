@@ -101,3 +101,13 @@ export function getEngineVersion(): string {
 export function getConfigVersion(): string {
   return getEngineConfig().config_version;
 }
+
+/**
+ * Provenance (B9). Spread onto every stored result row — the columns
+ * engine_version + config_version exist on assessment_history and viva_answers.
+ * Wiring the write paths through this happens in Phase 6/8.
+ */
+export function provenance(): { engine_version: string; config_version: string } {
+  const cfg = getEngineConfig();
+  return { engine_version: cfg.engine_version, config_version: cfg.config_version };
+}
