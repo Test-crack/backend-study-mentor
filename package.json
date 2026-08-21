@@ -4,7 +4,7 @@
     "main": "index.js",
     "scripts": {
         "dev": "nodemon",
-        "build": "tsc",
+        "build": "tsc && node scripts/copy-assets.js",
         "start": "node dist/index.js",
         "seed": "tsx prisma/seed.ts",
         "exam-engine:vectors": "ts-node --transpile-only src/exam-engine/vectors.check.ts",
