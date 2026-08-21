@@ -4,6 +4,18 @@ import { AuthRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
 
+/**
+ * DPDP: a student is a minor if under 18 today. Computed on write (age depends on
+ * "today", so it can't be a Postgres generated column). Returns false for a null DOB.
+ */
+function computeIsMinor(dob: Date): boolean {
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+  return age < 18;
+}
+
 // GET /api/profile - Fetch user profile
 export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
   try {
@@ -48,7 +60,9 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
           select: {
             isDiagnosed: true,
             recommendationSeeded: true,
-            target_band: true
+            target_band: true,
+            date_of_birth: true,
+            is_minor: true
           }
         },
         Instructor: {
@@ -85,10 +99,14 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     let isDiagnosed = false;
     let recommendationSeeded = false;
     let targetBand = null;
+    let dateOfBirth: Date | null = null;
+    let isMinor = false;
     if (user.role === 'STUDENT' && user.institute_students) {
       isDiagnosed = user.institute_students.isDiagnosed;
       recommendationSeeded = user.institute_students.recommendationSeeded;
       targetBand = user.institute_students.target_band;
+      dateOfBirth = user.institute_students.date_of_birth;
+      isMinor = user.institute_students.is_minor;
     }
 
     delete (user as any).institute_owners;
@@ -96,9 +114,8 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     delete (user as any).institute_students;
 
     // Note: exam_date is served by GET /api/student/competency-scores (the profile
-    // page's source). It can be added to this auth profile once the Prisma client
-    // is regenerated (blocked here by the running dev server locking the DLL).
-    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand, isEnrolled } });
+    // page's source).
+    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand, dateOfBirth, isMinor, isEnrolled } });
   } catch (error) {
     console.error('[getUserProfile] Error:', error);
     res.status(500).json({ error: 'Failed to fetch user profile' });
@@ -117,8 +134,9 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
 
     // Accept camelCase (primary) and snake_case (fallback) for the student-goal fields.
     const { name, countryCode, phoneNo } = req.body;
-    const targetBand = req.body.targetBand ?? req.body.target_band;
-    const examDate   = req.body.examDate   ?? req.body.exam_date;
+    const targetBand  = req.body.targetBand  ?? req.body.target_band;
+    const examDate    = req.body.examDate    ?? req.body.exam_date;
+    const dateOfBirth = req.body.dateOfBirth ?? req.body.date_of_birth;
 
     // â”€â”€ User fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const updateData: any = { updatedAt: new Date() };
@@ -166,6 +184,26 @@ export const updateUserProfile = async (req: AuthRequest & { appUserId?: string 
         return res.status(400).json({ error: 'Exam date must be in the future.' });
       }
       studentData.exam_date = d;
+    }
+
+    // Date of birth — must be a valid past date. is_minor is derived, never trusted from the client.
+    if (dateOfBirth !== undefined) {
+      if (dateOfBirth === null || dateOfBirth === '') {
+        studentData.date_of_birth = null;
+        studentData.is_minor = false;
+      } else {
+        const dob = new Date(dateOfBirth);
+        if (isNaN(dob.getTime())) {
+          return res.status(400).json({ error: 'Invalid date of birth.' });
+        }
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const cmp = new Date(dob); cmp.setHours(0, 0, 0, 0);
+        if (cmp >= today) {
+          return res.status(400).json({ error: 'Date of birth must be in the past.' });
+        }
+        studentData.date_of_birth = dob;
+        studentData.is_minor = computeIsMinor(dob);
+      }
     }
 
     if (Object.keys(studentData).length > 0) {
