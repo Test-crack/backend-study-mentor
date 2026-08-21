@@ -10,8 +10,10 @@
  * zero active sets, which is a real 404 lockout for any student on that tier
  * (confirmed in diagnosticController.ts's getDiagnosticQuestionsBySkill).
  *
- * Only content columns change: question_type, prompt_text, options,
- * correct_answer, min_words, passage_text, audio_url. The staging CSV's own
+ * Content columns change: question_type, prompt_text, options,
+ * correct_answer, min_words, passage_text, audio_url — plus `created_at`,
+ * reset to the moment of import, since this is meant to read as a genuinely
+ * new question going live, not an edit of the old one. The staging CSV's own
  * `transcript` column is never written anywhere — that column doesn't exist
  * on diagnostic_questions; transcript only ever existed to ground Layer 2's
  * AI judging.
@@ -111,6 +113,7 @@ async function main(): Promise<void> {
         min_words: true,
         passage_text: true,
         audio_url: true,
+        created_at: true,
       },
     });
 
@@ -139,6 +142,10 @@ async function main(): Promise<void> {
     console.log(`  Target set: ${opts.setId}   skill=${skill}   level=${level} (preserved, not changed)`);
     console.log(`  Mode: ${opts.confirm ? 'WRITE (--confirm)' : 'DRY RUN — nothing will be written'}`);
     console.log('═══════════════════════════════════════════════════════════\n');
+
+    // One shared timestamp for every row in this set, so a fresh-start batch reads
+    // as one coherent moment rather than N microseconds apart.
+    const importedAt = new Date();
 
     const updates = existing.map((dbRow: (typeof existing)[number], i: number) => {
       const staged = stagedRows[i];
@@ -170,6 +177,9 @@ async function main(): Promise<void> {
           min_words: staged.min_words.trim() ? Number(staged.min_words) : null,
           passage_text: staged.passage_text.trim() || null,
           audio_url: audioUrl,
+          // Fresh start: this is a genuinely new question, not an edit of the old
+          // one — created_at is reset to when it actually went live, on request.
+          created_at: importedAt,
         },
       };
     });

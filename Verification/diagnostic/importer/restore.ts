@@ -38,6 +38,7 @@ interface BackedUpRow {
   min_words: number | null;
   passage_text: string | null;
   audio_url: string | null;
+  created_at: string;
 }
 
 function truncate(s: string, n = 70): string {
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
             min_words: r.min_words,
             passage_text: r.passage_text,
             audio_url: r.audio_url,
+            created_at: new Date(r.created_at),
           },
           select: { id: true },
         }),
