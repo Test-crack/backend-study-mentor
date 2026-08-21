@@ -95,6 +95,13 @@
       "report_floor": 4.0,
       "rounding": "half_up_to_step",
       "label_format": "one_decimal",
+      "proficiency_bands": [
+        { "level": "A", "difficulty": "BEGINNER",     "max_exclusive": 5.5 },
+        { "level": "B", "difficulty": "INTERMEDIATE", "max_exclusive": 7.0 },
+        { "level": "C", "difficulty": "ADVANCED",     "max_exclusive": 9.01 }
+      ],
+      "weakness_gap": { "from": 4.0, "to": 9.0 },
+      "_proficiency_note": "A/B/C proficiency level + drill difficulty cuts (even thirds of [4,9], decision D3) and the weakness-gap domain (D4, gap 1.0 at 4.0 → 0.0 at 9.0). Values equal src/lib/bandScale.ts (bandToLevel/bandToDifficulty/bandGap) exactly; parity-asserted in vectors.check.ts §9. These are cut scores — stripped by toPublicConfig, never shipped to the client.",
       "_official_range_note": "The official IELTS scale is 1.0–9.0. report_floor 4.0 is a deliberate product choice: genuine sub-4.0 performances display as 4.0. min is kept at 0.0 internally so the floor can be lowered in config without a code change."
     },
 

@@ -5,6 +5,7 @@ export {
   roundHalfUpToStep, clamp, tidy,
   pctToLevel, withinLevelProgress, nextLevel, levelIndex,
   bandMean, cefrHybrid,
+  proficiencyLevel, difficulty, weaknessGap,
 } from './scoring';
 export { numericMomentum, ordinalMomentum, trend, buildEnvelope } from './progression';
 export { getStrategy, hasStrategy, knownStrategies } from './registry';

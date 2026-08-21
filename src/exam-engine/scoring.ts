@@ -132,3 +132,40 @@ export function cefrHybrid(subskillPercents: Record<string, number>, scale: any)
     }),
   };
 }
+
+// ──────────────────── proficiency level / difficulty / weakness (numeric)
+
+export interface ProficiencyBand {
+  level: string;
+  difficulty: string;
+  max_exclusive: number;
+}
+
+/** First proficiency band the value falls under (value < max_exclusive); else the top band. */
+function resolveProficiency(value: number, scale: any): ProficiencyBand {
+  const bands: ProficiencyBand[] = scale.proficiency_bands ?? [];
+  for (const b of bands) if (value < b.max_exclusive) return b;
+  return bands[bands.length - 1];
+}
+
+/** Proficiency LEVEL for a value on a numeric scale (IELTS: A/B/C). Replaces bandToLevel. */
+export function proficiencyLevel(value: number, scale: any): string {
+  return resolveProficiency(value, scale).level;
+}
+
+/** Drill/IA DIFFICULTY for a value on a numeric scale (IELTS: BEGINNER/…). Replaces bandToDifficulty. */
+export function difficulty(value: number, scale: any): string {
+  return resolveProficiency(value, scale).difficulty;
+}
+
+/**
+ * Weakness gap 0..1 for drill/IA targeting: the `from` end is fully weak (1.0), the
+ * `to` end has no gap (0.0). IELTS (from 4.0, to 9.0) reproduces bandScale.bandGap
+ * exactly — identical constants, identical arithmetic, no re-rounding. Targeting only,
+ * never a stored/displayed score. Parity-asserted in vectors.check.ts §9.
+ */
+export function weaknessGap(value: number, scale: any): number {
+  const { from, to } = scale.weakness_gap;
+  const v = Math.min(to, Math.max(from, Number.isFinite(value) ? value : from));
+  return 1 - (v - from) / (to - from);
+}

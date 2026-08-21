@@ -9,9 +9,10 @@ import path from 'path';
 import { validateConfig } from './validator';
 import {
   roundHalfUpToStep, tidy, pctToLevel, withinLevelProgress,
-  bandMean, cefrHybrid,
+  bandMean, cefrHybrid, proficiencyLevel, difficulty, weaknessGap,
 } from './scoring';
 import { numericMomentum, ordinalMomentum, trend, buildEnvelope } from './progression';
+import { bandToLevel, bandToDifficulty, bandGap } from '../lib/bandScale';
 
 const cfg: any = JSON.parse(fs.readFileSync(path.join(__dirname, 'exam-engine-config.v2.json'), 'utf8'));
 const BAND = cfg.scales.ielts_band;
@@ -147,6 +148,30 @@ function oetGrade(score: number): string | null {
 const sortedBands = [...oet.grade_bands].sort((a: any, b: any) => a.min - b.min);
 check('  bands tile the scale at step 10',
   sortedBands.every((b: any, i: number) => i === 0 || b.min - sortedBands[i - 1].max === oet.step), true);
+
+// §9 proficiency / difficulty / weakness-gap parity vs bandScale (Phase 6 extraction gate)
+head('§9  Proficiency + weakness-gap — engine == bandScale across the grid');
+{
+  const grid: number[] = [];
+  for (let b = 0; b <= 10.0001; b += 0.1) grid.push(tidy(b, 1));
+  grid.push(5.5, 7.0, 4.0, 9.0, 3.0, 9.5);   // exact cut edges + out-of-range
+  let mism = 0;
+  for (const b of grid) {
+    const ok = proficiencyLevel(b, BAND) === bandToLevel(b)
+      && difficulty(b, BAND) === bandToDifficulty(b)
+      && weaknessGap(b, BAND) === bandGap(b);
+    if (!ok) {
+      mism++;
+      console.log(`  FAIL band ${b}  lvl ${proficiencyLevel(b, BAND)}/${bandToLevel(b)}  diff ${difficulty(b, BAND)}/${bandToDifficulty(b)}  gap ${weaknessGap(b, BAND)}/${bandGap(b)}`);
+    }
+  }
+  check(`  ${grid.length} bands: engine level+difficulty+gap identical to bandScale`, mism, 0);
+  // spot-check the exact cut boundaries read from config
+  check('  5.5 -> B (cut boundary)', proficiencyLevel(5.5, BAND), 'B');
+  check('  7.0 -> C (cut boundary)', proficiencyLevel(7.0, BAND), 'C');
+  check('  gap at 4.0 is fully weak', weaknessGap(4.0, BAND), 1);
+  check('  gap at 9.0 is zero', weaknessGap(9.0, BAND), 0);
+}
 
 // summary
 console.log(`\n${'='.repeat(70)}`);
