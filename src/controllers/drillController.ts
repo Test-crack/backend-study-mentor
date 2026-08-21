@@ -42,7 +42,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
 
         // Cursor = total all-time completed drills. Persists across days without a DB column.
         // Each completion advances the cursor by 1; the next fetch starts one step ahead.
-        const [totalCompleted, todayCompleted, drillAgg] = await Promise.all([
+        const [totalCompleted, todayCompleted, drillAgg, todayDonePairs] = await Promise.all([
             prisma.drillSession.count({
                 where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] } }
             }),
@@ -54,6 +54,12 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
                 by:   ['skill', 'sub_skill'],
                 where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] } },
                 _sum: { correct_answers: true, total_questions: true },
+            }),
+            // Sub-skills already completed TODAY — excluded from today's recommendations
+            // so a student is never re-offered a drill they've finished today.
+            prisma.drillSession.findMany({
+                where: { student_id: student.id, status: { in: [DrillSessionStatus.DRILL_DONE, DrillSessionStatus.APPLY_DONE] }, created_at: { gte: todayStartIST() } },
+                select: { skill: true, sub_skill: true },
             }),
         ]);
 
@@ -146,24 +152,37 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             }
         }
 
-        // Round-robin cursor: slice the ordered array starting at (totalCompleted % N).
-        // This persists across days â€” each completion advances the cursor by 1 globally,
-        // so students never repeat the same rotation position two days in a row.
-        const N = interleaved.length;
         const MAX_DRILLS_PER_DAY = 4; // 3 free + 1 purchasable extra
         const remainingToday = Math.max(0, MAX_DRILLS_PER_DAY - todayCompleted);
-        const startIndex     = N > 0 ? totalCompleted % N : 0;
+
+        // Never re-offer a (skill, sub_skill) already completed TODAY. There are ~10
+        // pairs and the daily cap is 4, so distinct pairs always remain — this makes
+        // the "complete 2 drills to unlock" gate structurally reachable and prevents a
+        // repeat from stranding the student on an already-finished drill's result card.
+        const doneTodayKeys = new Set(
+            (todayDonePairs as { skill: string; sub_skill: string }[])
+                .map(d => `${d.skill}::${d.sub_skill}`)
+        );
+        const totalPairs = interleaved.length;
+        const available  = interleaved.filter(it => !doneTodayKeys.has(`${it.skill}::${it.sub_skill}`));
+
+        // Round-robin cursor over the still-available pairs. Persists across days —
+        // each completion advances the cursor by 1, so students don't repeat the same
+        // rotation position two days running.
+        const N = available.length;
+        const startIndex = N > 0 ? totalCompleted % N : 0;
 
         const recommended_drills: DrillItem[] = [];
-        for (let i = 0; i < remainingToday && N > 0; i++) {
-            recommended_drills.push(interleaved[(startIndex + i) % N]);
+        // i < N guarantees distinct picks within one response (no modulo wrap-around repeat).
+        for (let i = 0; i < remainingToday && i < N; i++) {
+            recommended_drills.push(available[(startIndex + i) % N]);
         }
 
         const message = recommended_drills.length > 0
             ? "Here are your prioritised drills."
             : todayCompleted >= MAX_DRILLS_PER_DAY
                 ? "Daily limit reached. Come back tomorrow for your next drills!"
-                : N === 0
+                : totalPairs === 0
                     ? "Complete your Initial Assessment (Diagnostics) to unlock personalised drills."
                     : "You have completed all available sub-skills for today!";
 
