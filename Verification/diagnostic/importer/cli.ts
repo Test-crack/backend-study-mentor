@@ -23,6 +23,10 @@
  *   npm run diagnostic:import -- --file ./batch.csv --set-id LD_A_01                (dry run)
  *   npm run diagnostic:import -- --file ./batch.csv --set-id LD_A_01 --confirm      (writes)
  *
+ * A staging file may bundle several sets together (our Reading/Writing/
+ * Speaking batches do) — pass --source-set-id to pick just one of them out
+ * before matching against --set-id. Omit it when the file only has one set.
+ *
  * Exit codes: 0 written, 2 dry run only (nothing written), 3 usage error.
  */
 
@@ -40,6 +44,7 @@ class UsageError extends Error {}
 interface CliOptions {
   file: string;
   setId: string;
+  sourceSetId?: string;
   audioUrlPrefix: string;
   confirm?: boolean;
 }
@@ -54,6 +59,7 @@ async function main(): Promise<void> {
     .name('diagnostic:import')
     .requiredOption('--file <path>', 'the verified staging CSV to import')
     .requiredOption('--set-id <id>', 'the EXISTING diagnostic_questions set_id to update in place')
+    .option('--source-set-id <id>', 'which set_id to pull out of the staging file, when it bundles more than one')
     .option('--audio-url-prefix <prefix>', 'path prefix prepended to audio_file to build audio_url', '/diagnostics/audio/')
     .option('--confirm', 'actually write. Without this, nothing is committed.')
     .parse(process.argv);
@@ -73,11 +79,39 @@ async function main(): Promise<void> {
       );
     }
 
-    const stagedRows = [...loaded.rows].sort((a, b) => Number(a.sequence) - Number(b.sequence));
+    const sourceRows = opts.sourceSetId ? loaded.rows.filter(r => r.set_id.trim() === opts.sourceSetId) : loaded.rows;
 
+    if (opts.sourceSetId && sourceRows.length === 0) {
+      const found = [...new Set(loaded.rows.map(r => r.set_id.trim()))];
+      throw new UsageError(
+        `No rows found with set_id "${opts.sourceSetId}" in ${opts.file}. Sets actually in this file: ${found.join(', ')}.`,
+      );
+    }
+
+    const stagedRows = [...sourceRows].sort((a, b) => Number(a.sequence) - Number(b.sequence));
+
+    // Explicit `select` — not just the fields we happen to use, but a hedge against
+    // schema/DB drift from unrelated in-flight work (e.g. a new column added to the
+    // Prisma schema before its migration has actually landed on this DB). Letting
+    // Prisma select every model field by default would make this tool fail on any
+    // such drift, even though nothing we do here touches those columns.
     const existing = await prisma.diagnosticQuestion.findMany({
       where: { set_id: opts.setId },
       orderBy: { sequence: 'asc' },
+      select: {
+        id: true,
+        set_id: true,
+        sequence: true,
+        skill: true,
+        level: true,
+        question_type: true,
+        prompt_text: true,
+        options: true,
+        correct_answer: true,
+        min_words: true,
+        passage_text: true,
+        audio_url: true,
+      },
     });
 
     if (existing.length === 0) {
@@ -88,9 +122,12 @@ async function main(): Promise<void> {
     }
 
     if (existing.length !== stagedRows.length) {
+      const hint = opts.sourceSetId
+        ? ''
+        : ` If ${opts.file} bundles more than one set, pass --source-set-id to pick just one out.`;
       throw new UsageError(
         `Row count mismatch: staging CSV has ${stagedRows.length} row(s), but existing set "${opts.setId}" ` +
-          `has ${existing.length}. They must match 1:1 by sequence — a set can't grow or shrink through this tool.`,
+          `has ${existing.length}. They must match 1:1 by sequence — a set can't grow or shrink through this tool.${hint}`,
       );
     }
 
@@ -154,7 +191,9 @@ async function main(): Promise<void> {
     fs.writeFileSync(backupPath, JSON.stringify(existing, null, 2), 'utf8');
     console.log(`Backup: ${existing.length} row(s) -> ${backupPath}\n`);
 
-    await prisma.$transaction(updates.map(u => prisma.diagnosticQuestion.update({ where: { id: u.id }, data: u.after })));
+    await prisma.$transaction(
+      updates.map(u => prisma.diagnosticQuestion.update({ where: { id: u.id }, data: u.after, select: { id: true } })),
+    );
 
     console.log(`Done. ${updates.length} row(s) updated in set "${opts.setId}".`);
     console.log(`Rollback: re-write the pre-update values from ${backupPath} if this was wrong.`);
