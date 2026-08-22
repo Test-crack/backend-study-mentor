@@ -18,7 +18,15 @@
         "drills:import:test": "ts-node --project tsconfig.dev.json Import/importer.spec.ts",
         "diagnostic:verify": "ts-node --project tsconfig.dev.json Verification/diagnostic/question-banks/layer1-verifier/cli.ts",
         "diagnostic:judge": "ts-node --project tsconfig.dev.json Verification/diagnostic/question-banks/layer2-content-judge/cli.ts",
-        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test"
+        "ia:verify": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/layer1-verifier/cli.ts",
+        "ia:verify:test": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/layer1-verifier/layer1.spec.ts",
+        "ia:judge": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/layer2-content-judge/cli.ts",
+        "ia:judge:test": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/layer2-content-judge/layer2.spec.ts",
+        "ia:assign-keys": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/key-assignment-tool/cli.ts",
+        "ia:assign-keys:test": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/key-assignment-tool/keyAssignment.spec.ts",
+        "ia:import": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/importer/cli.ts",
+        "ia:import:test": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/importer/importer.spec.ts",
+        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test && npm run ia:verify:test && npm run ia:judge:test && npm run ia:assign-keys:test && npm run ia:import:test"
     },
     "prisma": {
         "seed": "tsx prisma/seed.ts"

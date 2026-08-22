@@ -1,0 +1,3 @@
+skill,sub_skill,difficulty,question_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+READING,READING,BEGINNER,MCQ,p1,"The sun rises in the east and sets in the west every day.",,"According to the passage, where does the sun rise?","{""A"":""East"",""B"":""West"",""C"":""North"",""D"":""South""}","""A""","The passage states the sun rises in the east.",IELTS
+READING,READING,BEGINNER,TFNG,p1,"The sun rises in the east and sets in the west every day.",,"The sun sets in the west.","","""T""","The passage confirms this directly.",IELTS
