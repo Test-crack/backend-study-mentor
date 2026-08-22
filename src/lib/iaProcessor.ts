@@ -241,25 +241,39 @@ async function gradeIASessionLocked(
     }
 
     // â”€â”€ 5. Momentum calculation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Ordered newestâ†’oldest so we can take the most recent band PER SUB-SKILL.
-    // (A single "last session" is not enough: the 14-day exclusion guarantees
-    // today's sub-skills were not in the immediately preceding IA, so an
-    // improvement bonus keyed on that one session would never fire.)
-    const allPastSessions = await prisma.iASession.findMany({
-        where:   { student_id: studentId, status: 'COMPLETED' as any },
-        orderBy: { created_at: 'desc' },
-        select:  { scores: true },
-    });
+    // Only need the latest + best band for the sub-skills THIS session covers, not
+    // every sub-skill across the student's whole history — unnest `scores` and filter
+    // inside Postgres instead of pulling every past session's full JSON into Node and
+    // looping (that scan grows unbounded with a student's tenure; IA repeats every 3
+    // days indefinitely, so a 1-year student had ~120 rows to re-scan on every submit).
+    const subSkillsThisSession = [...new Set(sectionScores.map(s => s.sub_skill))];
+    const [bandRows, priorCompletedCount] = await Promise.all([
+        prisma.$queryRaw<{ sub_skill: string; last_band: number; best_band: number }[]>`
+            SELECT DISTINCT ON (sub_skill)
+                   sub_skill,
+                   band                                     AS last_band,
+                   MAX(band) OVER (PARTITION BY sub_skill)  AS best_band
+            FROM (
+                SELECT elem->>'sub_skill'     AS sub_skill,
+                       (elem->>'band')::float AS band,
+                       created_at
+                FROM   "ia_sessions", jsonb_array_elements(scores) AS elem
+                WHERE  student_id = ${studentId}::uuid
+                  AND  status = 'COMPLETED'
+                  AND  elem->>'sub_skill' = ANY(${subSkillsThisSession})
+            ) unnested
+            ORDER BY sub_skill, created_at DESC
+        `,
+        // isFirstIA needs "has this student completed ANY IA before", not scoped to
+        // this session's sub-skills — a plain count is cheap (index-only, no JSON scan).
+        prisma.iASession.count({ where: { student_id: studentId, status: 'COMPLETED' as any } }),
+    ]);
 
     const lastBands = new Map<string, number>();   // most recent band per sub-skill
     const allTimeBests = new Map<string, number>(); // best band ever per sub-skill
-    for (const ps of allPastSessions) {
-        for (const s of (ps.scores ?? []) as SectionScore[]) {
-            // sessions are newest-first, so the first band seen for a sub-skill is the latest
-            if (!lastBands.has(s.sub_skill)) lastBands.set(s.sub_skill, s.band);
-            const prev = allTimeBests.get(s.sub_skill) ?? BAND_MIN;
-            if (s.band > prev) allTimeBests.set(s.sub_skill, s.band);
-        }
+    for (const row of bandRows) {
+        lastBands.set(row.sub_skill, row.last_band);
+        allTimeBests.set(row.sub_skill, row.best_band);
     }
 
     const momentumBreakdown: { reason: string; points: number }[] = [{ reason: 'Participation', points: 100 }];
@@ -353,6 +367,6 @@ async function gradeIASessionLocked(
         momentumAwarded,
         momentumBreakdown,
         updatedMomentum,
-        isFirstIA: allPastSessions.length === 0,
+        isFirstIA: priorCompletedCount === 0,
     };
 }
