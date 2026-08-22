@@ -226,7 +226,7 @@ GRADING INSTRUCTIONS:
 Step 1: Check relevance — Does this answer the question asked?
 Step 2: Check length — Is there enough content to fairly assess the skill?
 Step 3: Evaluate the "${criterion}" criterion using the band descriptors
-Step 4: Assign a band from 1-10 (whole numbers only, no decimals)
+Step 4: Assign a band from 1-10, in increments of 0.5 (e.g. 6.0, 6.5, 7.0)
 Step 5: Write a clear rationale citing specific evidence from the response
 Step 6: List 2-3 key observations (strengths or weaknesses)
 
@@ -236,7 +236,7 @@ OUTPUT FORMAT:
 Return ONLY valid JSON with NO markdown, NO code fences, NO extra text:
 
 {
-  "band": <integer 1-10>,
+  "band": <number 1-10, in increments of 0.5>,
   "rationale": "<2-3 sentences explaining the band score with specific evidence from the response>",
   "key_observations": [
     "<specific observation 1 with example from text>",
@@ -245,8 +245,8 @@ Return ONLY valid JSON with NO markdown, NO code fences, NO extra text:
   ]
 }
 
-IMPORTANT: 
-- Band must be an integer from 1 to 10
+IMPORTANT:
+- Band must be a number from 1 to 10 in 0.5 increments (whole or half only, e.g. 6.0 or 6.5 — never 6.3)
 - Rationale must cite specific examples from the student's response
 - Key observations must be concrete and evidence-based
 - Be consistent with IELTS standards — strict but fair`;
