@@ -25,12 +25,14 @@ import drillRoutes from './routes/drillRoutes';
 import diagnosticRoutes from './routes/diagnosticRoutes';
 import iaRoutes   from './routes/iaRoutes';
 import mockRoutes from './routes/mockRoutes';
+import examsRoutes from './routes/examsRoutes';
 import { startWSServer } from './wsServer';
 
 import { requireAuth } from './middleware/auth';
 import { ensureUser } from './middleware/ensureUser';
 import { requireDiagnosed } from './middleware/requireDiagnosed';
 import { initializeStorage } from './services/youtubeNotes/fileStorageService';
+import { loadExamEngine } from './exam-engine';
 
 const app = express();
 const server = http.createServer(app);
@@ -110,6 +112,7 @@ app.use('/api/domains', domainRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/ielts-reading', ieltsReadingRoutes);
 app.use('/api/voice-lab', voiceLabRoutes);
+app.use('/api/exams', examsRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/institute-owner', instituteOwnerRoutes);
 app.use('/api/institute-admin', instituteAdminRoutes);
@@ -127,6 +130,10 @@ async function startServer() {
     // Initialize file storage
     await initializeStorage();
     console.log('✅ File storage initialized');
+
+    // Load + validate the exam-engine config. Throws on an invalid config →
+    // startServer's catch exits the process (fail loud). See Phase 5 · B1/B2.
+    await loadExamEngine();
 
     // Start WebSocket server sharing the HTTP server
     startWSServer(server);

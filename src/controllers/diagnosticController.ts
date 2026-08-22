@@ -41,14 +41,14 @@ async function pickRandomSetId(level: string, skill: string): Promise<string | n
  * check the request against instead of trusting it outright.
  */
 async function resolveServedId(
-    student: { id: string; exam_type: string } | null,
+    student: { id: string; exam_id: string } | null,
     skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING',
     pick: () => Promise<string | null>,
 ): Promise<string | null> {
     if (!student) return pick(); // no student row to pin against (submit requires one anyway)
 
     const existing = await prisma.diagnosticSession.findUnique({
-        where: { student_id_exam_type_skill: { student_id: student.id, exam_type: student.exam_type as any, skill } },
+        where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill } },
     });
     if (existing) return existing.set_id;
 
@@ -56,7 +56,7 @@ async function resolveServedId(
     if (!picked) return null;
 
     await prisma.diagnosticSession.create({
-        data: { student_id: student.id, exam_type: student.exam_type as any, skill, set_id: picked },
+        data: { student_id: student.id, exam_id: student.exam_id, skill, set_id: picked },
     });
     return picked;
 }
@@ -309,7 +309,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             // The derived set must also be the one actually served to this student â€”
             // otherwise answers mixed in from a different (e.g. easier) set would count.
             const session = await prisma.diagnosticSession.findUnique({
-                where: { student_id_exam_type_skill: { student_id: student.id, exam_type: student.exam_type as any, skill: skillUpper } },
+                where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: skillUpper } },
             });
             if (setId && session && setId !== session.set_id) setId = null;
 
@@ -366,7 +366,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 // student, not whatever question_id the request carries — a submitted
                 // id is never trusted for grading.
                 const session = await prisma.diagnosticSession.findUnique({
-                    where: { student_id_exam_type_skill: { student_id: student.id, exam_type: student.exam_type as any, skill: 'WRITING' } },
+                    where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'WRITING' } },
                 });
                 const promptRow = session
                     ? await prisma.diagnosticQuestion.findUnique({ where: { id: session.set_id } })
@@ -463,7 +463,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         // The prompt is resolved from what the server actually served this student,
         // not the question_id in the request — a submitted id is never trusted for grading.
         const session = await prisma.diagnosticSession.findUnique({
-            where: { student_id_exam_type_skill: { student_id: student.id, exam_type: student.exam_type as any, skill: 'SPEAKING' } },
+            where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'SPEAKING' } },
         });
         const promptRow = session
             ? await prisma.diagnosticQuestion.findUnique({ where: { id: session.set_id } })
