@@ -33,6 +33,34 @@ async function pickRandomSetId(level: string, skill: string): Promise<string | n
     return rows[0]?.set_id ?? null;
 }
 
+/**
+ * Server-side pinned served set_id/question_id for a student+skill. First call
+ * creates the DiagnosticSession row via `pick`; every call after returns the
+ * same value, ignoring anything the client sends. Closes the reroll gap (no
+ * more re-picking on a cleared localStorage) and gives submit a value to
+ * check the request against instead of trusting it outright.
+ */
+async function resolveServedId(
+    student: { id: string; exam_id: string } | null,
+    skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING',
+    pick: () => Promise<string | null>,
+): Promise<string | null> {
+    if (!student) return pick(); // no student row to pin against (submit requires one anyway)
+
+    const existing = await prisma.diagnosticSession.findUnique({
+        where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill } },
+    });
+    if (existing) return existing.set_id;
+
+    const picked = await pick();
+    if (!picked) return null;
+
+    await prisma.diagnosticSession.create({
+        data: { student_id: student.id, exam_id: student.exam_id, skill, set_id: picked },
+    });
+    return picked;
+}
+
 class DiagnosticAlreadyScoredError extends Error {}
 
 // Serializes concurrent submits for the same student+skill so the isSkillAlreadyScored
@@ -127,27 +155,11 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         const student    = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         const level      = resolveLevel(student?.target_band ?? 7.0);
-        const skillUpper = skill.toUpperCase();
-
-        // M-20: a mid-section refresh used to re-roll a random set, silently swapping
-        // the questions and wiping the student's saved answers. The client persists the
-        // served set_id and passes it back; if it's still valid for this level+skill we
-        // re-serve the SAME set. Invalid/absent â†’ fresh random pick as before.
-        const requestedSetId = typeof req.query.set_id === 'string' ? req.query.set_id : null;
-        const resolveSetId = async (sk: string): Promise<string | null> => {
-            if (requestedSetId) {
-                const valid = await prisma.diagnosticQuestion.findFirst({
-                    where:  { set_id: requestedSetId, level, skill: sk as any, is_active: true },
-                    select: { set_id: true },
-                });
-                if (valid) return requestedSetId;
-            }
-            return pickRandomSetId(level, sk);
-        };
+        const skillUpper = skill.toUpperCase() as 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
 
         // â”€â”€ LISTENING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'LISTENING') {
-            const setId = await resolveSetId('LISTENING');
+            const setId = await resolveServedId(student, 'LISTENING', () => pickRandomSetId(level, 'LISTENING'));
             if (!setId) return res.status(404).json({ error: 'No listening questions found for this level.' });
 
             const rows = await prisma.diagnosticQuestion.findMany({
@@ -166,7 +178,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // â”€â”€ READING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'READING') {
-            const setId = await resolveSetId('READING');
+            const setId = await resolveServedId(student, 'READING', () => pickRandomSetId(level, 'READING'));
             if (!setId) return res.status(404).json({ error: 'No reading questions found for this level.' });
 
             const rows = await prisma.diagnosticQuestion.findMany({
@@ -183,82 +195,48 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
             });
         }
 
-        // W/S single-prompt equivalent of resolveSetId: re-serve the same prompt on
-        // refresh when the client passes back the question_id it was originally given.
-        const requestedQuestionId = typeof req.query.question_id === 'string' ? req.query.question_id : null;
-
         // â”€â”€ WRITING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'WRITING') {
-            let rows: any[] = [];
-            if (requestedQuestionId) {
-                rows = await prisma.$queryRaw`
-                    SELECT id, prompt_text, min_words
-                    FROM   diagnostic_questions
-                    WHERE  id            = ${requestedQuestionId}::uuid
-                    AND    level         = ${level}
-                    AND    skill         = 'WRITING'::"SkillType"
-                    AND    question_type = 'WRITING_PROMPT'
-                    AND    is_active     = TRUE
-                    LIMIT  1
+            const questionId = await resolveServedId(student, 'WRITING', async () => {
+                const rows: any[] = await prisma.$queryRaw`
+                    SELECT id FROM diagnostic_questions
+                    WHERE  level = ${level} AND skill = 'WRITING'::"SkillType"
+                    AND    question_type = 'WRITING_PROMPT' AND is_active = TRUE
+                    ORDER  BY RANDOM() LIMIT 1
                 `;
-            }
-            if (rows.length === 0) {
-                rows = await prisma.$queryRaw`
-                    SELECT id, prompt_text, min_words
-                    FROM   diagnostic_questions
-                    WHERE  level         = ${level}
-                    AND    skill         = 'WRITING'::"SkillType"
-                    AND    question_type = 'WRITING_PROMPT'
-                    AND    is_active     = TRUE
-                    ORDER  BY RANDOM()
-                    LIMIT  1
-                `;
-            }
-            if (rows.length === 0) return res.status(404).json({ error: 'No writing prompt found for this level.' });
+                return rows[0]?.id ?? null;
+            });
+            const row = questionId ? await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } }) : null;
+            if (!row) return res.status(404).json({ error: 'No writing prompt found for this level.' });
 
             return res.json({
                 ok:       true,
                 skill:    'writing',
-                id:       rows[0].id,
-                topic:    rows[0].prompt_text,
-                minWords: rows[0].min_words ?? 150
+                id:       row.id,
+                topic:    row.prompt_text,
+                minWords: row.min_words ?? 150
             });
         }
 
         // â”€â”€ SPEAKING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'SPEAKING') {
-            let rows: any[] = [];
-            if (requestedQuestionId) {
-                rows = await prisma.$queryRaw`
-                    SELECT id, prompt_text
-                    FROM   diagnostic_questions
-                    WHERE  id            = ${requestedQuestionId}::uuid
-                    AND    level         = ${level}
-                    AND    skill         = 'SPEAKING'::"SkillType"
-                    AND    question_type = 'SPEAKING_PROMPT'
-                    AND    is_active     = TRUE
-                    LIMIT  1
+            const questionId = await resolveServedId(student, 'SPEAKING', async () => {
+                const rows: any[] = await prisma.$queryRaw`
+                    SELECT id FROM diagnostic_questions
+                    WHERE  level = ${level} AND skill = 'SPEAKING'::"SkillType"
+                    AND    question_type = 'SPEAKING_PROMPT' AND is_active = TRUE
+                    ORDER  BY RANDOM() LIMIT 1
                 `;
-            }
-            if (rows.length === 0) {
-                rows = await prisma.$queryRaw`
-                    SELECT id, prompt_text
-                    FROM   diagnostic_questions
-                    WHERE  level         = ${level}
-                    AND    skill         = 'SPEAKING'::"SkillType"
-                    AND    question_type = 'SPEAKING_PROMPT'
-                    AND    is_active     = TRUE
-                    ORDER  BY RANDOM()
-                    LIMIT  1
-                `;
-            }
-            if (rows.length === 0) return res.status(404).json({ error: 'No speaking prompt found for this level.' });
+                return rows[0]?.id ?? null;
+            });
+            const row = questionId ? await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } }) : null;
+            if (!row) return res.status(404).json({ error: 'No speaking prompt found for this level.' });
 
             return res.json({
                 ok:      true,
                 skill:   'speaking',
-                id:      rows[0].id,
-                prompts: [rows[0].prompt_text]   // array shape kept for backward compatibility
+                id:      row.id,
+                prompts: [row.prompt_text]   // array shape kept for backward compatibility
             });
         }
 
@@ -326,7 +304,14 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             // do NOT trust a client-supplied set_id here. Honouring req.body.set_id would
             // let a crafted request point the denominator at a tiny set and answer one
             // question for band 9.0 (a narrower re-open of the very hole this closes).
-            const setId = answeredRows[0]?.set_id ?? null;
+            let setId: string | null = answeredRows[0]?.set_id ?? null;
+
+            // The derived set must also be the one actually served to this student â€”
+            // otherwise answers mixed in from a different (e.g. easier) set would count.
+            const session = await prisma.diagnosticSession.findUnique({
+                where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: skillUpper } },
+            });
+            if (setId && session && setId !== session.set_id) setId = null;
 
             const questions = setId
                 ? await prisma.diagnosticQuestion.findMany({ where: { set_id: setId, skill: skillUpper, is_active: true } })
@@ -377,24 +362,24 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 bandScore = BAND_MIN;
                 subScores = { word_count: wordCount, error: 'Text too short to evaluate' };
             } else {
-                const questionId = parsedAnswers.question_id ?? req.body.question_id;
+                // The prompt is resolved from what the server actually served this
+                // student, not whatever question_id the request carries — a submitted
+                // id is never trusted for grading.
+                const session = await prisma.diagnosticSession.findUnique({
+                    where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'WRITING' } },
+                });
+                const promptRow = session
+                    ? await prisma.diagnosticQuestion.findUnique({ where: { id: session.set_id } })
+                    : null;
+
                 let topic = 'Describe the information provided.';
-                if (questionId) {
-                    const row = await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } });
-                    if (row) topic = row.prompt_text;
-                }
-                // Resolve the served prompt to get its min_words + task type so caps
-                // are enforced against the real requirement, not a hard-coded Task 1.
                 let minWords = 150;
                 let resolvedTaskType = taskType ?? 'Task 1';
-                if (questionId) {
-                    const promptRow = await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } });
-                    if (promptRow) {
-                        topic    = promptRow.prompt_text;
-                        minWords = (promptRow as any).min_words ?? 150;
-                        // Heuristic: Task 2 prompts require 250 words; use that to pick the task type
-                        resolvedTaskType = minWords >= 250 ? 'Task 2' : 'Task 1';
-                    }
+                if (promptRow) {
+                    topic    = promptRow.prompt_text;
+                    minWords = (promptRow as any).min_words ?? 150;
+                    // Heuristic: Task 2 prompts require 250 words; use that to pick the task type
+                    resolvedTaskType = minWords >= 250 ? 'Task 2' : 'Task 1';
                 }
 
                 let analysis;
@@ -475,13 +460,15 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
             return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' });
         }
 
-        // Fetch the prompt the student received (frontend sends question_id in FormData)
-        const questionId = req.body.question_id;
-        let topic = 'Introduce yourself and describe your hometown.';
-        if (questionId) {
-            const row = await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } });
-            if (row) topic = row.prompt_text;
-        }
+        // The prompt is resolved from what the server actually served this student,
+        // not the question_id in the request — a submitted id is never trusted for grading.
+        const session = await prisma.diagnosticSession.findUnique({
+            where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'SPEAKING' } },
+        });
+        const promptRow = session
+            ? await prisma.diagnosticQuestion.findUnique({ where: { id: session.set_id } })
+            : null;
+        const topic = promptRow?.prompt_text ?? 'Introduce yourself and describe your hometown.';
 
         let bandScore = 0;
         let subScores: any = {};

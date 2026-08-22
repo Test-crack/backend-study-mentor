@@ -32,6 +32,17 @@ const DEFAULT_CONCURRENCY = 4;
 
 class UsageError extends Error {}
 
+function resolveOutPath(out: string | undefined): string {
+  if (out === undefined) {
+    return path.join(RESULTS_DIR, `diagnostic-layer2--${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+  }
+  const resolved = path.resolve(out);
+  const looksLikeDir = (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) || path.extname(resolved) === '';
+  return looksLikeDir
+    ? path.join(resolved, `diagnostic-layer2--${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`)
+    : resolved;
+}
+
 interface CliOptions {
   file?: string[];
   dir?: string;
@@ -116,34 +127,43 @@ async function main(): Promise<void> {
     const run = await judgeRun(files, deps);
 
     let defects = 0;
+    let unresolved = 0;
     for (const file of run.files) {
       if (file.skipReason) {
         console.log(`  [SKIPPED] ${file.fileName}: ${file.skipReason}`);
         continue;
       }
       const answerDefects = ANSWER_JUDGE_OUTCOMES.filter(o => file.answerCounts[o] > 0 && SEVERITY_BY_ANSWER_OUTCOME[o] === 'defect');
+      const answerUnresolved = ANSWER_JUDGE_OUTCOMES.filter(o => file.answerCounts[o] > 0 && SEVERITY_BY_ANSWER_OUTCOME[o] === 'unknown');
       const promptDefects = PROMPT_JUDGE_OUTCOMES.filter(o => file.promptCounts[o] > 0 && SEVERITY_BY_PROMPT_OUTCOME[o] === 'defect');
+      const promptUnresolved = PROMPT_JUDGE_OUTCOMES.filter(o => file.promptCounts[o] > 0 && SEVERITY_BY_PROMPT_OUTCOME[o] === 'unknown');
       const audioMismatches = file.audioCrossChecks.filter(c => c.matchesSubmittedTranscript === false);
       const fileDefects = answerDefects.length + promptDefects.length + audioMismatches.length;
+      const fileUnresolved = answerUnresolved.reduce((n, o) => n + file.answerCounts[o], 0) + promptUnresolved.reduce((n, o) => n + file.promptCounts[o], 0);
       defects += fileDefects;
+      unresolved += fileUnresolved;
 
       console.log(`  ${file.fileName}: ${file.answerRows.length} MCQ/TFNG, ${file.promptRows.length} prompt row(s) judged`);
       for (const o of answerDefects) console.log(`    ${o}: ${file.answerCounts[o]}`);
       for (const o of promptDefects) console.log(`    ${o}: ${file.promptCounts[o]}`);
+      for (const o of answerUnresolved) console.log(`    ${o}: ${file.answerCounts[o]}  — NOT actually checked, not a pass`);
+      for (const o of promptUnresolved) console.log(`    ${o}: ${file.promptCounts[o]}  — NOT actually checked, not a pass`);
       if (audioMismatches.length > 0) console.log(`    AUDIO_MISMATCH: ${audioMismatches.length} set(s) — see report`);
     }
 
     console.log(`\nFresh model calls: ${stats.apiCalls}   Served from cache: ${stats.cacheHits}\n`);
 
-    const outDir = opts.out ? path.resolve(opts.out) : RESULTS_DIR;
-    fs.mkdirSync(outDir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outPath = path.join(outDir, `diagnostic-layer2--${stamp}.xlsx`);
+    const outPath = resolveOutPath(opts.out);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
     await writeJudgeReport(run, outPath);
     console.log(`Report: ${outPath}`);
 
     if (defects > 0) {
       console.log(`Verdict: ${defects} DEFECT(S) FOUND — fix before importing.`);
+      process.exit(1);
+    }
+    if (unresolved > 0) {
+      console.log(`Verdict: ${unresolved} row(s) could not be judged at all (UNJUDGED/SKIPPED) — re-run before importing, NOT a clean pass.`);
       process.exit(1);
     }
     console.log('Verdict: CLEAN — safe to import.');

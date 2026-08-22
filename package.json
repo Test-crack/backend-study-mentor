@@ -19,6 +19,8 @@
         "drills:import:test": "ts-node --project tsconfig.dev.json Import/importer.spec.ts",
         "diagnostic:verify": "ts-node --project tsconfig.dev.json Verification/diagnostic/question-banks/layer1-verifier/cli.ts",
         "diagnostic:judge": "ts-node --project tsconfig.dev.json Verification/diagnostic/question-banks/layer2-content-judge/cli.ts",
+        "diagnostic:import": "ts-node --project tsconfig.dev.json Verification/diagnostic/importer/cli.ts",
+        "diagnostic:import:restore": "ts-node --project tsconfig.dev.json Verification/diagnostic/importer/restore.ts",
         "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test"
     },
     "prisma": {

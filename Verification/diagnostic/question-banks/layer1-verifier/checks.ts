@@ -80,8 +80,8 @@ export function checkEnums(row: DiagnosticCsvRow): Finding[] {
           'QUESTION_TYPE_SKILL_MISMATCH',
           'row',
           `question_type ${questionType} is not valid for skill ${skill}. ${skill} allows only: ` +
-            `${allowed.join(', ')}. (Confirmed live: LISTENING is MCQ-only, READING allows ` +
-            `MCQ and TFNG, WRITING/SPEAKING are prompt-only.)`,
+            `${allowed.join(', ')}. (LISTENING and READING both allow MCQ and TFNG, ` +
+            `WRITING/SPEAKING are prompt-only.)`,
           { line: row.line, column: 'question_type' },
         ),
       );
