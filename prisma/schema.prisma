@@ -598,7 +598,7 @@ model Batch {
   created_by         String?         @db.Uuid
   created_at         DateTime        @default(now()) @db.Timestamptz(6)
   updated_at         DateTime        @default(now()) @db.Timestamptz(6)
-  exam_type          ExamType        @default(IELTS)
+  exam_id          String        @default("ielts")
   batch_instructors  BatchInstructor[]
   batch_students     BatchStudent[]
   User               User?           @relation(fields: [created_by], references: [id], onUpdate: NoAction)
@@ -664,7 +664,9 @@ model InstituteStudent {
   last_streak_date        DateTime?                 @db.Date
   extra_drill_credits     Int                       @default(0)
   exam_date               DateTime?                 @db.Date
-  exam_type               ExamType                  @default(IELTS)
+  exam_id               String                  @default("ielts")
+  date_of_birth           DateTime?                 @db.Date
+  is_minor                Boolean                   @default(false) // DPDP: derived from date_of_birth on save (age < 18)
   AssessmentHistory       AssessmentHistory[]
   IASession               IASession[]
   StudentCompetencyMatrix StudentCompetencyMatrix[]
@@ -673,10 +675,82 @@ model InstituteStudent {
   User                    User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   mocksessions            MockSession[]
   GameScores              StudentGameScore[]
+  guardian_consent        GuardianConsent?
+  viva_sessions           VivaSession[]
+
+  DiagnosticSessions      DiagnosticSession[]
 
   @@index([is_active], map: "idx_institute_students_active")
   @@index([institute_id], map: "idx_institute_students_institute")
   @@map("institute_students")
+}
+
+/// Which set_id was served to a student, per exam+skill. One row per
+/// student/exam/skill; deleted (not updated) on admin reset.
+model DiagnosticSession {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id String    @db.Uuid
+  exam_id    String    @default("ielts")
+  skill      SkillType
+  set_id     String    @db.VarChar(60)
+  served_at  DateTime  @default(now())
+
+  InstituteStudent InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([student_id, exam_id, skill])
+  @@map("diagnostic_sessions")
+}
+
+/// DPDP: parental/guardian consent for minor students. Table added in Phase 4;
+/// no application logic wired yet — rows are created once the consent flow ships.
+model GuardianConsent {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id     String           @unique @db.Uuid
+  guardian_name  String           @db.VarChar(255)
+  guardian_phone String           @db.VarChar(20)
+  consented_at   DateTime         @db.Timestamptz(6)
+  consent_method String           @db.VarChar(20) // WRITTEN | DIGITAL
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("guardian_consent")
+}
+
+/// Viva Engine (Phase 4 scaffold). Tables added; no serving/evaluation logic yet.
+/// One session = one viva attempt; answers are independent rows so a failure on
+/// one question never loses the others.
+model VivaSession {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id   String       @db.Uuid
+  exam_id    String
+  status       String       @default("PENDING") @db.VarChar(20) // PENDING | IN_PROGRESS | COMPLETED | EXPIRED
+  started_at   DateTime?    @db.Timestamptz(6)
+  completed_at DateTime?    @db.Timestamptz(6)
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  answers      VivaAnswer[]
+
+  @@index([student_id], map: "idx_viva_sessions_student")
+  @@map("viva_sessions")
+}
+
+model VivaAnswer {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id      String      @db.Uuid
+  question_id     String      @db.Uuid
+  audio_url       String?     @db.VarChar(500)
+  transcript      String?
+  score           Decimal?    @db.Decimal(2, 1)
+  sub_scores      Json?
+  evaluated_at    DateTime?   @db.Timestamptz(6)
+  retention_until DateTime?   @db.Timestamptz(6) // DPDP: scheduled purge of voice-recording data
+  engine_version  String?     @db.VarChar(20) // provenance: engine that scored this answer
+  config_version  String?     @db.VarChar(40) // provenance: config version scored under
+  created_at      DateTime    @default(now()) @db.Timestamptz(6)
+  viva_sessions   VivaSession @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([session_id], map: "idx_viva_answers_session")
+  @@map("viva_answers")
 }
 
 model Institute {
@@ -709,7 +783,7 @@ model Institute {
 model InstituteExamSubscription {
   id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   institute_id   String    @db.Uuid
-  exam_type      ExamType
+  exam_id      String
   billing_status String    @default("TRIAL") @db.VarChar(20) // TRIAL | ACTIVE | CANCELLED
   trial_ends_at  DateTime? @db.Timestamptz(6)
   seat_cap       Int? // reserved; not enforced this phase
@@ -717,9 +791,37 @@ model InstituteExamSubscription {
   updated_at     DateTime  @default(now()) @db.Timestamptz(6)
   institutes     Institute @relation(fields: [institute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([institute_id, exam_type])
+  @@unique([institute_id, exam_id])
   @@index([institute_id], map: "idx_institute_exam_subs_institute")
   @@map("institute_exam_subscriptions")
+}
+
+/// Exam registry — replaces the old ExamType enum (decision D2). Exam identity is a
+/// validated string id, so registering a new exam is a data row, not a migration.
+/// `exam_id` columns elsewhere reference this id (validated at the app layer).
+model Exam {
+  id      String       @id @db.VarChar(40) // "ielts", "spoken_english", "oet", "gre", "gmat"
+  label   String       @db.VarChar(120)
+  status  String       @default("reserved") @db.VarChar(20) // live | reserved | disabled
+  configs ExamConfig[]
+
+  @@map("exams")
+}
+
+/// Versioned exam-engine config, seeded from exam-engine-config.v2.json. The engine
+/// reads the active row; the JSON file stays in the repo as the reviewable seed.
+model ExamConfig {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  exam_id        String   @db.VarChar(40)
+  config_version String   @db.VarChar(40)
+  config         Json
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  exams          Exam     @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([exam_id, config_version])
+  @@index([exam_id, is_active], map: "idx_exam_configs_active")
+  @@map("exam_configs")
 }
 
 model StudentCompetencyMatrix {
@@ -731,7 +833,7 @@ model StudentCompetencyMatrix {
   sub_scores         Json?
   assessments_count  Int              @default(0)
   last_updated       DateTime         @default(now()) @db.Timestamptz(6)
-  exam_type          ExamType         @default(IELTS)
+  exam_id          String         @default("ielts")
   institute_students InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@unique([student_id, skill])
@@ -750,7 +852,9 @@ model AssessmentHistory {
   transcript         String?
   raw_answers        Json?
   created_at         DateTime           @default(now()) @db.Timestamptz(6)
-  exam_type          ExamType           @default(IELTS)
+  exam_id            String             @default("ielts")
+  engine_version     String?            @db.VarChar(20) // provenance: engine that scored this result
+  config_version     String?            @db.VarChar(40) // provenance: config version scored under
   institute_students InstituteStudent   @relation(fields: [student_id], references: [id], onDelete: Cascade)
 
   @@index([student_id])
@@ -861,7 +965,7 @@ model DrillQuestion {
   is_active      Boolean             @default(true)
   created_at     DateTime            @default(now()) @db.Timestamptz(6)
   updated_at     DateTime            @default(now()) @db.Timestamptz(6)
-  exam_type      ExamType            @default(IELTS)
+  exam_id      String            @default("ielts")
   source_key     String?             @unique @db.VarChar(100)
 
   @@index([skill, sub_skill, level, is_active])
@@ -884,7 +988,7 @@ model IAQuestion {
   difficulty     DifficultyType
   is_active      Boolean           @default(true)
   created_at     DateTime          @default(now()) @db.Timestamptz(6)
-  exam_type      ExamType          @default(IELTS)
+  exam_id      String          @default("ielts")
   source_key     String?           @unique @db.VarChar(100)
 
   @@index([is_active], map: "idx_iaquestion_active")
@@ -933,7 +1037,7 @@ model MockQuestion {
   explanation    String?
   is_active      Boolean            @default(true)
   created_at     DateTime           @default(now()) @db.Timestamptz(6)
-  exam_type      ExamType           @default(IELTS)
+  exam_id      String           @default("ielts")
   source_key     String?            @unique(map: "uq_mock_questions_source_key") @db.VarChar(100)
 
   @@index([skill, is_active], map: "idx_mock_questions_skill_active")
@@ -1001,21 +1105,12 @@ model DiagnosticQuestion {
   sequence       Int            @default(1) @db.SmallInt
   is_active      Boolean        @default(true)
   created_at     DateTime       @default(now()) @db.Timestamptz(6)
-  exam_type      ExamType       @default(IELTS)
+  exam_id      String       @default("ielts")
 
   @@index([level, skill, is_active], map: "idx_dq_level_skill_active")
   @@index([set_id], map: "idx_dq_set_id")
   @@index([set_id, sequence], map: "idx_dq_set_sequence")
   @@map("diagnostic_questions")
-}
-
-enum ExamType {
-  IELTS
-  SPOKEN
-  OET
-  GRE
-  TOEFL
-  PTE
 }
 
 enum SubSkillType {

@@ -168,3 +168,11 @@ Verification/drills/question-banks/cache/
 # CSV files are local-only, never push to origin
 *.csv
 
+# Local Claude Code tooling/config — never commit
+.claude/
+CLAUDE.md
+
+# Local-only seeder/admin scripts — some bypass Supabase auth to create users
+# directly; must never be pushed anywhere this repo is public or shared.
+scripts/
+

@@ -4,9 +4,10 @@
     "main": "index.js",
     "scripts": {
         "dev": "nodemon",
-        "build": "tsc",
+        "build": "tsc && node scripts/copy-assets.js",
         "start": "node dist/index.js",
         "seed": "tsx prisma/seed.ts",
+        "exam-engine:vectors": "ts-node --transpile-only src/exam-engine/vectors.check.ts",
         "drills:verify": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer1-verifier/cli.ts",
         "drills:verify:typecheck": "tsc -p Verification/tsconfig.json --noEmit",
         "drills:verify:test": "ts-node --project tsconfig.dev.json Verification/drills/question-banks/layer1-verifier/layer1.spec.ts",
@@ -26,6 +27,8 @@
         "ia:assign-keys:test": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/key-assignment-tool/keyAssignment.spec.ts",
         "ia:import": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/importer/cli.ts",
         "ia:import:test": "ts-node --project tsconfig.dev.json Verification/ia/question-banks/importer/importer.spec.ts",
+        "diagnostic:import": "ts-node --project tsconfig.dev.json Verification/diagnostic/importer/cli.ts",
+        "diagnostic:import:restore": "ts-node --project tsconfig.dev.json Verification/diagnostic/importer/restore.ts",
         "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test && npm run ia:verify:test && npm run ia:judge:test && npm run ia:assign-keys:test && npm run ia:import:test"
     },
     "prisma": {

@@ -1,0 +1,783 @@
+{
+  "engine_version": "2.0.0",
+  "config_version": "2.0.0",
+  "_note": "Single source of truth. No exam name, legal string, scale value, threshold or policy number is ever hand-typed in backend or UI code. Everything reads from here. Adding an exam = a new object under 'exams' + (only if its aggregation maths is genuinely new) a new strategy. v2 replaces the 'skills' array with 'components', and splits scale / component / aggregation into three orthogonal concepts so that non-language exams (GRE, GMAT) fit without a rewrite.",
+
+  "_v2_changes": [
+    "skills -> components. A component is any assessable or practisable unit. Modality (reading/listening/writing/speaking/quantitative/integrated) is an optional TAG, not the organising rule.",
+    "scales extracted to a reusable top-level block. A component references a scale by id.",
+    "overall.mode added: aggregate | per_component. Three of the five exams here have NO computable headline score - this is a fact about the exams, not a gap.",
+    "surface_only removed - superseded by assessed:true|false. One mechanism, not two.",
+    "remediation added at component, subskill and item_tag level, by content reference (never embedded URLs).",
+    "variants added (IELTS Academic/General Training, OET's 12 professions).",
+    "defaults block added for platform-wide policy; exams may override.",
+    "legal block extended with machine-checkable usage constraints.",
+    "progression reworked: headline vs momentum separated so the invariant is satisfiable."
+  ],
+
+  "defaults": {
+    "_note": "Platform-wide policy. An exam may override any key. Founder-confirmed Aug 2026.",
+
+    "attempts": {
+      "practice": "unlimited",
+      "retake_policy": "school_strict",
+      "allow_retake": false,
+      "on_missed_window": "forfeit",
+      "_note": "Scheduled assessments only. Missing the window forfeits the attempt; there is no retake. Practice and drills are unlimited and ungraded."
+    },
+
+    "graded_attempts": {
+      "internal_assessment": {
+        "per": "scheduled_session",
+        "count": 1,
+        "forfeited_counts_toward_unlock": false
+      },
+      "full_mock": {
+        "per": "rolling_30_days",
+        "count": 1,
+        "unlock_requirement": {
+          "min_internal_assessments_completed": 6,
+          "window": "rolling_30_days",
+          "or_all_scheduled_in_window": true,
+          "_note": "or_all_scheduled_in_window exists so a student in an institute that schedules fewer than 6 IAs a month is not permanently locked out through no fault of their own. Unlock = completed >= min(6, scheduled_in_window)."
+        },
+        "entitlement_expiry": "TBD_FOUNDER",
+        "_entitlement_note": "If a mock is unlocked but unused when the window rolls, does the entitlement lapse or carry? Unanswered. Default until decided: lapse."
+      },
+      "_b2c_gap": "TBD_FOUNDER — school_strict assumes someone schedules the assessments. Self-serve B2C students have no scheduler, so no IA is ever 'missed' and the full mock never unlocks. Either (a) B2C students self-schedule into a fixed cadence, or (b) B2C overrides retake_policy to 'self_paced'. Build the override field now; decide before B2C launch."
+    },
+
+    "scheduling": {
+      "window_timezone_source": "institute_timezone",
+      "fallback_timezone": "Asia/Kolkata",
+      "_note": "Month/window boundaries must resolve in a declared timezone or a student in a different timezone forfeits early. src/lib/timezone.ts already exists - use it."
+    },
+
+    "progression": {
+      "enabled": true,
+      "baseline": {
+        "source": "diagnostic",
+        "style": "challenge",
+        "zero_based": true,
+        "disclose_as": "Challenge Baseline",
+        "note_to_student": "Your diagnostic is intentionally tough — it's your starting benchmark, not your ceiling. Everything from here is real, earned improvement."
+      },
+      "display": {
+        "mode": "personal_best_relative",
+        "never_inflate_assessed_score": true,
+        "show_next_rung": true,
+        "show_trajectory": true,
+        "show_improvement_since_baseline": true,
+        "trend_window_sessions": 3,
+        "trend_within_instrument_only": true,
+        "_trend_note": "Trend must compare like with like. An IA and a full mock are different instruments with different difficulty; mixing them in one 3-point window measures instrument, not progress."
+      },
+      "improvement_basis": "unclamped",
+      "_improvement_note": "Improvement since baseline is computed on the UNCLAMPED assessed value, then displayed. If it were computed on the clamped reported value, a student moving from a true 3.0 to a true 4.5 would show +0.5 instead of +1.5 — the report_floor would eat exactly the signal this layer exists to show."
+    },
+
+    "result_provenance": {
+      "record_engine_version": true,
+      "record_config_version": true,
+      "rescore_historical_on_config_change": false,
+      "_note": "Every stored result records the engine_version and config_version it was scored under. Without this, the post-calibration threshold change silently rewrites history and every trend line becomes meaningless. Non-negotiable before the first CEFR result is stored."
+    }
+  },
+
+  "scales": {
+    "_note": "Reusable scale definitions. A component references one by id. Adding an exam whose components use an existing scale requires no new scale and no new code.",
+
+    "ielts_band": {
+      "kind": "numeric",
+      "min": 0.0,
+      "max": 9.0,
+      "step": 0.5,
+      "report_floor": 4.0,
+      "rounding": "half_up_to_step",
+      "label_format": "one_decimal",
+      "_official_range_note": "The official IELTS scale is 1.0–9.0. report_floor 4.0 is a deliberate product choice: genuine sub-4.0 performances display as 4.0. min is kept at 0.0 internally so the floor can be lowered in config without a code change."
+    },
+
+    "cefr_6": {
+      "kind": "ordinal",
+      "levels": ["below_a1", "a1", "a2", "b1", "b2", "c1", "c2"],
+      "labels": {
+        "below_a1": "Below A1",
+        "a1": "A1",
+        "a2": "A2",
+        "b1": "B1",
+        "b2": "B2",
+        "c1": "C1",
+        "c2": "C2"
+      },
+      "score_input": "percent_0_100",
+      "thresholds_min_pct": {
+        "below_a1": 0,
+        "a1": 15.0,
+        "a2": 25.0,
+        "b1": 41.25,
+        "b2": 61.25,
+        "c1": 82.5,
+        "c2": 93.75
+      },
+      "supports_within_level_progress": true,
+      "_threshold_provenance": "Derived from Pearson's published Global Scale of English -> CEFR mapping (GSE 10–90: below A1 10–21, A1 22–29, A2 30–42, B1 43–58, B2 59–75, C1 76–84, C2 85–90), converted by pct = (GSE - 10) / 80 * 100. Every value here is that formula applied to the level's minimum GSE. PROVISIONAL — see EE-04 calibration protocol.",
+      "_threshold_correction_note": "v1 used 0/14/24/41/59/79/93. Those do not match the stated GSE derivation: B2 was 2.25 points low and C1 was 3.5 points low, which moves a real boundary. Corrected here.",
+      "_borrowed_alignment_warning": "These boundaries import Pearson's alignment of GSE to CEFR (itself anchored to North 2000). Using them means borrowing a vendor's alignment claim rather than making our own. Defensible as a starting point, NOT as a calibration. Replace after the study in EE-04.",
+      "_calibration_status": "PROVISIONAL_UNCALIBRATED"
+    },
+
+    "oet_500": {
+      "kind": "numeric",
+      "min": 0,
+      "max": 500,
+      "step": 10,
+      "rounding": "none",
+      "label_format": "integer_with_grade",
+      "grade_bands": [
+        { "grade": "A",  "min": 450, "max": 500 },
+        { "grade": "B",  "min": 350, "max": 440 },
+        { "grade": "C+", "min": 300, "max": 340 },
+        { "grade": "C",  "min": 200, "max": 290 },
+        { "grade": "D",  "min": 100, "max": 190 },
+        { "grade": "E",  "min": 0,   "max": 90  }
+      ],
+      "_provenance": "oet.com/test/after-the-test — 0–500 in ten-point increments, letter grade A–E per sub-test. Bands in force since the September 2018 scoring change.",
+      "_band_tiling_note": "The bands look non-contiguous (B tops at 440, C+ starts at 300) but they tile exactly because the scale increments in 10s. Validator must assert tiling AT THE SCALE STEP, not at 1."
+    },
+
+    "gre_section": {
+      "kind": "numeric",
+      "min": 130,
+      "max": 170,
+      "step": 1,
+      "label_format": "integer",
+      "_provenance": "ETS — Verbal Reasoning and Quantitative Reasoning, 130–170 in 1-point increments."
+    },
+
+    "gre_analytical_writing": {
+      "kind": "numeric",
+      "min": 0,
+      "max": 6,
+      "step": 0.5,
+      "label_format": "one_decimal",
+      "_provenance": "ETS — Analytical Writing, 0–6 in half-point increments."
+    },
+
+    "gmat_section": {
+      "kind": "numeric",
+      "min": 60,
+      "max": 90,
+      "step": 1,
+      "label_format": "integer",
+      "_provenance": "mba.com — Quantitative Reasoning, Verbal Reasoning and Data Insights each 60–90 in 1-point intervals."
+    },
+
+    "gmat_total": {
+      "kind": "numeric",
+      "min": 205,
+      "max": 805,
+      "step": 10,
+      "label_format": "integer",
+      "computable": false,
+      "_computable_note": "GMAC does not publish the Total Score formula. It is a proprietary scaled composite of three IRT-scaled section scores, not a sum or a mean — three sections of 60–90 sum to 180–270 and average to 60–90, neither of which maps to 205–805. This scale is declared so a real GMAT score can be STORED and displayed if a student enters one. It must never be computed by this engine."
+    }
+  },
+
+  "exams": {
+
+    "ielts": {
+      "exam_id": "ielts",
+      "prisma_enum": "IELTS",
+      "config_version": "2.0.0",
+      "status": "live",
+      "requires_entitlement": true,
+
+      "naming": {
+        "public_display_name": "IELTS Preparation",
+        "legal_display_name": "IELTS Preparation",
+        "short_code": "IELTS"
+      },
+
+      "legal": {
+        "jurisdictions": ["IN", "US"],
+        "rights_holder": "British Council, IDP: IELTS Australia, and Cambridge University Press & Assessment",
+        "may_use_mark_in_product_name": false,
+        "required_attribution": "IELTS is a registered trademark of its respective owners. This product is not endorsed by or affiliated with them.",
+        "permission_status": "not_requested",
+        "review_contact": null,
+        "disclaimer_short": "IELTS Preparation provides practice materials only and is not affiliated with, endorsed by, or connected to the owners of the IELTS trademark. IELTS is a registered trademark of its respective owners.",
+        "disclaimer_full": "IELTS Preparation provides practice and preparation materials only. It is not affiliated with, endorsed by, or connected to the owners of the IELTS trademark (British Council, IDP: IELTS Australia, and Cambridge University Press & Assessment). IELTS is a registered trademark of its respective owners. Scores shown are practice estimates and are not official IELTS results.",
+        "display_rules": { "show_full_at_onboarding": true, "show_short_in_footer": true },
+        "_status": "DRAFT_FOR_COUNSEL — wording approved by founder, pending lawyer ratification. Editable here without a code change.",
+        "_naming_conflict": "may_use_mark_in_product_name is false, yet public_display_name is 'IELTS Preparation', which uses the mark in the product name. Descriptive/nominative use of this kind is common in the prep industry but it is a legal judgement, not an engineering one. Counsel must resolve this before launch; the validator will flag it."
+      },
+
+      "variants": {
+        "dimension": "module",
+        "options": [
+          { "id": "academic",         "label": "Academic" },
+          { "id": "general_training", "label": "General Training" }
+        ],
+        "applies_to_components": ["reading", "writing"],
+        "default": "academic",
+        "_note": "Academic and General Training share Listening and Speaking but have different Reading and Writing papers, and different published reliabilities. Content selection must filter on variant. The current schema has no variant column — see EE-00 §4.3."
+      },
+
+      "components": [
+        {
+          "id": "listening",
+          "label": "Listening",
+          "modality": "listening",
+          "assessed": true,
+          "scale": "ielts_band",
+          "delivery": "audio_item_set",
+          "weight": 1.0,
+          "time_limit_minutes": 30,
+          "subskills": [],
+          "item_tags": ["multiple_choice", "matching", "plan_map_diagram_labelling", "form_note_table_completion", "sentence_completion", "short_answer"],
+          "remediation": {
+            "level": "item_tag",
+            "trigger": { "kind": "below_pct", "value": 60 },
+            "content_refs": [],
+            "drill_tags": ["multiple_choice", "matching", "form_note_table_completion", "sentence_completion"],
+            "max_items": 3,
+            "_todo": "content_refs are empty pending the media team's remediation library. Tag-level remediation is what makes Listening/Reading coachable at all — they have no scored subskills, so without this there is nothing to attach a video to."
+          },
+          "_time_note": "30 minutes for the audio. Paper-based adds 10 minutes transfer time; computer-delivered adds 2. Model the delivery difference before running timed mocks."
+        },
+        {
+          "id": "reading",
+          "label": "Reading",
+          "modality": "reading",
+          "assessed": true,
+          "scale": "ielts_band",
+          "delivery": "passage_item_set",
+          "weight": 1.0,
+          "time_limit_minutes": 60,
+          "variant_scoped": true,
+          "subskills": [],
+          "item_tags": ["multiple_choice", "identifying_information", "matching_headings", "matching_features", "sentence_completion", "summary_completion", "short_answer"],
+          "remediation": {
+            "level": "item_tag",
+            "trigger": { "kind": "below_pct", "value": 60 },
+            "content_refs": [],
+            "drill_tags": ["identifying_information", "matching_headings", "matching_features", "summary_completion"],
+            "max_items": 3
+          }
+        },
+        {
+          "id": "writing",
+          "label": "Writing",
+          "modality": "writing",
+          "assessed": true,
+          "scale": "ielts_band",
+          "delivery": "essay",
+          "weight": 1.0,
+          "time_limit_minutes": 60,
+          "variant_scoped": true,
+          "subskills": [
+            { "id": "task_response",               "label": "Task Response / Achievement" },
+            { "id": "coherence_cohesion",          "label": "Coherence & Cohesion" },
+            { "id": "lexical_resource",            "label": "Lexical Resource" },
+            { "id": "grammatical_range_accuracy",  "label": "Grammatical Range & Accuracy" }
+          ],
+          "remediation": {
+            "level": "subskill",
+            "trigger": { "kind": "below_pct", "value": 60 },
+            "content_refs": [],
+            "max_items": 3
+          }
+        },
+        {
+          "id": "speaking",
+          "label": "Speaking",
+          "modality": "speaking",
+          "assessed": true,
+          "scale": "ielts_band",
+          "delivery": "ielts_speaking",
+          "weight": 1.0,
+          "time_limit_minutes": 14,
+          "subskills": [
+            { "id": "fluency_coherence",           "label": "Fluency & Coherence" },
+            { "id": "lexical_resource",            "label": "Lexical Resource" },
+            { "id": "grammatical_range_accuracy",  "label": "Grammatical Range & Accuracy" },
+            { "id": "pronunciation",               "label": "Pronunciation" }
+          ],
+          "remediation": {
+            "level": "subskill",
+            "trigger": { "kind": "below_pct", "value": 60 },
+            "content_refs": [],
+            "max_items": 3
+          }
+        }
+      ],
+
+      "overall": {
+        "mode": "aggregate",
+        "strategy": "band_mean",
+        "components": ["listening", "reading", "writing", "speaking"],
+        "scale": "ielts_band",
+        "params": { "formula": "mean_of_components", "apply_report_floor": true }
+      },
+
+      "target": { "enabled": true, "kind": "numeric", "scale": "ielts_band", "min": 4.0, "max": 9.0, "step": 0.5 },
+
+      "progression": { "inherits_defaults": true },
+
+      "modules": {
+        "diagnostic":          { "enabled": true },
+        "daily_drills":        { "enabled": true },
+        "lexigrid":            { "enabled": true },
+        "internal_assessment": { "enabled": true, "speaking_delivery": "ielts_speaking" },
+        "full_mock":           { "enabled": true, "speaking_delivery": "ielts_speaking" }
+      },
+
+      "rules": { "inherits_defaults": true }
+    },
+
+    "spoken_english": {
+      "exam_id": "spoken_english",
+      "prisma_enum": "SPOKEN",
+      "config_version": "2.0.0",
+      "status": "live",
+      "requires_entitlement": true,
+
+      "naming": {
+        "public_display_name": "Spoken English (CEFR-aligned)",
+        "legal_display_name": "Spoken English (CEFR-aligned)",
+        "short_code": "SPK-EN"
+      },
+
+      "legal": {
+        "jurisdictions": ["IN", "US"],
+        "rights_holder": "Council of Europe (author of the CEFR)",
+        "may_use_mark_in_product_name": true,
+        "required_attribution": "Aligned to the Common European Framework of Reference for Languages. Not affiliated with or endorsed by the Council of Europe.",
+        "permission_status": "not_required",
+        "review_contact": null,
+        "disclaimer_short": "CEFR level results shown are estimates aligned to the framework and are not official CEFR certifications.",
+        "disclaimer_full": "This Spoken English assessment is aligned to the Common European Framework of Reference for Languages (CEFR). It is not affiliated with, endorsed by, or connected to the Council of Europe. CEFR level results shown are estimates aligned to the framework and are not official CEFR certifications. The Council of Europe does not verify or validate alignment claims made by any provider.",
+        "display_rules": { "show_full_at_onboarding": true, "show_short_in_footer": true },
+        "banned_terms_near_output": ["certified", "certificate", "certification", "official CEFR level", "CEFR accredited", "recognised by the Council of Europe"],
+        "_status": "DRAFT_FOR_COUNSEL",
+        "_risk_note": "The CEFR is a published framework, not a trademark licensed like IELTS or OET. The exposure here is misrepresentation, not trademark infringement. The Council of Europe explicitly does not validate CEFR linking claims, so 'CEFR certified' is not merely risky — it describes something that does not exist."
+      },
+
+      "variants": null,
+
+      "components": [
+        {
+          "id": "speaking",
+          "label": "Speaking",
+          "modality": "speaking",
+          "assessed": true,
+          "scale": "cefr_6",
+          "delivery": "viva",
+          "weight": 1.0,
+          "time_limit_minutes": 15,
+          "subskills": [
+            { "id": "range",       "label": "Range" },
+            { "id": "accuracy",    "label": "Accuracy" },
+            { "id": "fluency",     "label": "Fluency" },
+            { "id": "interaction", "label": "Interaction" },
+            { "id": "coherence",   "label": "Coherence" },
+            { "id": "phonology",   "label": "Phonological Control" }
+          ],
+          "remediation": {
+            "level": "subskill",
+            "trigger": { "kind": "below_level", "value": "b1" },
+            "content_refs": [],
+            "max_items": 3
+          },
+          "_subskill_provenance": "CEFR Companion Volume (2020), Appendix 3 — 'Qualitative features of spoken language, expanded with phonology'. NOTE: cite Appendix 3, not Table 3. The main Table 3 in both the 2001 CEFR and the Companion Volume carries FIVE criteria; Phonology is the sixth column added only in Appendix 3.",
+          "_subskill_caveat": "These are level-descriptive bands, not a scoring rubric. Using them as rubric dimensions is legitimate but each dimension must then be validated separately — per-dimension agreement, not just overall. See EE-04."
+        },
+        {
+          "id": "listening",
+          "label": "Listening",
+          "modality": "listening",
+          "assessed": false,
+          "scale": null,
+          "delivery": "audio_item_set",
+          "weight": 0,
+          "subskills": [],
+          "item_tags": ["comprehension", "gist", "detail", "inference"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": ["gist", "detail", "inference"], "max_items": 3 }
+        },
+        {
+          "id": "reading",
+          "label": "Reading",
+          "modality": "reading",
+          "assessed": false,
+          "scale": null,
+          "delivery": "passage_item_set",
+          "weight": 0,
+          "subskills": [],
+          "item_tags": ["comprehension", "gist", "detail", "inference"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": ["gist", "detail", "inference"], "max_items": 3 }
+        },
+        {
+          "id": "writing",
+          "label": "Writing",
+          "modality": "writing",
+          "assessed": false,
+          "scale": null,
+          "delivery": "essay",
+          "weight": 0,
+          "subskills": [],
+          "item_tags": [],
+          "remediation": null
+        }
+      ],
+
+      "overall": {
+        "mode": "aggregate",
+        "strategy": "cefr_hybrid",
+        "components": ["speaking"],
+        "scale": "cefr_6",
+        "params": {
+          "rule": "average_subskill_pct_then_map",
+          "show_per_subskill_profile": true,
+          "within_level_progress": true
+        },
+        "_confirmed": "Founder-confirmed: the headline Spoken English CEFR level is driven by the Speaking component alone. Listening, Reading and Writing are practice surfaces (assessed:false) — present in the product, absent from the headline. Changing this later is one line: add component ids to overall.components and set assessed:true."
+      },
+
+      "target": { "enabled": true, "kind": "ordinal", "scale": "cefr_6", "allowed_levels": ["a1", "a2", "b1", "b2", "c1", "c2"] },
+
+      "progression": { "inherits_defaults": true },
+
+      "modules": {
+        "diagnostic":          { "enabled": true },
+        "daily_drills":        { "enabled": true },
+        "lexigrid":            { "enabled": true },
+        "internal_assessment": { "enabled": true, "speaking_delivery": "viva" },
+        "full_mock":           { "enabled": true, "speaking_delivery": "viva" }
+      },
+
+      "viva": {
+        "enabled": true,
+        "max_questions": 10,
+        "min_questions": 5,
+        "question_bank": "shared_speaking_bank",
+        "required_tag": "cefr",
+        "_applies_to": "Derived from components[].delivery == 'viva' plus modules[].speaking_delivery. The v1 field 'applies_to_modules' duplicated that and is removed — two sources of truth for the same fact is how they drift."
+      },
+
+      "rules": {
+        "inherits_defaults": true,
+        "_baseline_note": "The diagnostic must compute the baseline using the SAME overall.components rule as a live assessment (speaking only). If the diagnostic averages all four components while assessments average one, improvement_since_baseline compares two different quantities and every number in the progression layer is wrong."
+      }
+    },
+
+    "oet": {
+      "exam_id": "oet",
+      "prisma_enum": "OET",
+      "config_version": "2.0.0",
+      "status": "reserved",
+      "requires_entitlement": true,
+
+      "naming": {
+        "public_display_name": "Healthcare English Preparation",
+        "legal_display_name": "Healthcare English Preparation",
+        "short_code": "HC-EN",
+        "_naming_note": "Deliberately does NOT put 'OET' in the product name. See legal below — this is the one exam in the set where the rights holder publishes no nominative-use carve-out."
+      },
+
+      "legal": {
+        "jurisdictions": ["IN", "AU", "UK"],
+        "rights_holder": "Cambridge Boxhill Language Assessment Pty Ltd (ACN 159 885 257), a venture between Cambridge Assessment English and Box Hill Institute",
+        "may_use_mark_in_product_name": false,
+        "required_attribution": "OET is a registered trademark of Cambridge Boxhill Language Assessment. This product is not affiliated with, endorsed by or connected to CBLA.",
+        "permission_status": "not_requested",
+        "review_contact": "marketing@oet.com.au",
+        "disclaimer_short": "Practice materials only. Not affiliated with or endorsed by Cambridge Boxhill Language Assessment. Scores shown are practice estimates, not official OET results.",
+        "disclaimer_full": "This preparation course provides practice materials for healthcare English assessment. It is not affiliated with, endorsed by, or connected to Cambridge Boxhill Language Assessment Pty Ltd, the owner of the OET trademark. OET is a registered trademark of CBLA. Scores and grades shown are practice estimates and are not official OET results.",
+        "display_rules": { "show_full_at_onboarding": true, "show_short_in_footer": true },
+        "_status": "BLOCKED_ON_COUNSEL — do not launch on this config.",
+        "_risk_note": "CBLA's published IP policy states its marks 'cannot be used without the prior express written permission of CBLA', and the Terms & Conditions state 'You are not permitted to use any trade marks, logos or trade names appearing on the Website.' Unlike ETS, CBLA publishes NO nominative-use or fair-use carve-out for preparation providers. It instead runs a paid Preparation Provider Programme whose Premium tier grants an official logo. This is materially more restrictive than the IELTS position. Treat 'can we call it OET prep?' as a counsel question with a real chance of 'no'."
+      },
+
+      "variants": {
+        "dimension": "profession",
+        "options": [
+          { "id": "nursing", "label": "Nursing" },
+          { "id": "medicine", "label": "Medicine" },
+          { "id": "dentistry", "label": "Dentistry" },
+          { "id": "pharmacy", "label": "Pharmacy" },
+          { "id": "physiotherapy", "label": "Physiotherapy" },
+          { "id": "radiography", "label": "Radiography" },
+          { "id": "dietetics", "label": "Dietetics" },
+          { "id": "occupational_therapy", "label": "Occupational Therapy" },
+          { "id": "optometry", "label": "Optometry" },
+          { "id": "podiatry", "label": "Podiatry" },
+          { "id": "speech_pathology", "label": "Speech Pathology" },
+          { "id": "veterinary_science", "label": "Veterinary Science" }
+        ],
+        "applies_to_components": ["writing", "speaking"],
+        "default": "nursing",
+        "_note": "Listening and Reading are identical for all professions; Writing and Speaking are profession-specific. This is the single biggest content-cost fact about OET: 2 shared banks + 2 x N profession-specific banks. Launch scope is nursing only."
+      },
+
+      "components": [
+        {
+          "id": "listening", "label": "Listening", "modality": "listening",
+          "assessed": true, "scale": "oet_500", "delivery": "audio_item_set",
+          "weight": 1.0, "time_limit_minutes": 40, "variant_scoped": false,
+          "subskills": [],
+          "item_tags": ["consultation_extract", "short_workplace_extract", "presentation_interview"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_score", "value": 350 }, "content_refs": [], "drill_tags": [], "max_items": 3 }
+        },
+        {
+          "id": "reading", "label": "Reading", "modality": "reading",
+          "assessed": true, "scale": "oet_500", "delivery": "passage_item_set",
+          "weight": 1.0, "time_limit_minutes": 60, "variant_scoped": false,
+          "subskills": [],
+          "item_tags": ["expeditious_reading", "careful_reading_short", "careful_reading_long"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_score", "value": 350 }, "content_refs": [], "drill_tags": [], "max_items": 3 }
+        },
+        {
+          "id": "writing", "label": "Writing", "modality": "writing",
+          "assessed": true, "scale": "oet_500", "delivery": "essay",
+          "weight": 1.0, "time_limit_minutes": 45, "variant_scoped": true,
+          "subskills": [],
+          "item_tags": ["referral_letter", "transfer_letter", "discharge_letter", "advice_letter"],
+          "remediation": { "level": "component", "trigger": { "kind": "below_score", "value": 350 }, "content_refs": [], "max_items": 3 },
+          "_subskill_todo": "OET publishes analytic assessment criteria for Writing. They are NOT reproduced here because they were not verified against a primary CBLA source in this pass. Do not invent them. Confirm from the OET Assessor guidelines before populating."
+        },
+        {
+          "id": "speaking", "label": "Speaking", "modality": "speaking",
+          "assessed": true, "scale": "oet_500", "delivery": "roleplay",
+          "weight": 1.0, "time_limit_minutes": 20, "variant_scoped": true,
+          "subskills": [],
+          "item_tags": ["role_play"],
+          "remediation": { "level": "component", "trigger": { "kind": "below_score", "value": 350 }, "content_refs": [], "max_items": 3 },
+          "_subskill_todo": "OET Speaking is assessed on both linguistic and clinical-communication criteria. NOT reproduced here — unverified. Confirm from primary source before populating.",
+          "_delivery_note": "delivery is 'roleplay', which the frontend has reserved as a SpeakingFormat enum value but has never built. This is real new UI, not a config change."
+        }
+      ],
+
+      "overall": {
+        "mode": "per_component",
+        "strategy": null,
+        "components": [],
+        "scale": null,
+        "_critical": "OET DOES NOT ISSUE AN OVERALL GRADE. Confirmed three ways in CBLA's own materials: the Test Regulations ('An overall grade for the OET Test is not issued'), the results page ('There is no overall grade for the OET Test'), and the statistics page ('OET does not report overall scores or grades'). Any headline 'OET score' is an invention. This is why overall.mode exists — see EE-00 §2.1. Regulators set requirements per sub-test precisely because no aggregate exists.",
+        "_regulator_targets_note": "Because requirements are per sub-test, the target model for OET is a per-component target (e.g. B in Listening, Reading, Speaking; C+ in Writing for the NMC), not a single headline target."
+      },
+
+      "target": {
+        "enabled": true,
+        "kind": "per_component",
+        "scale": "oet_500",
+        "per_component_default": { "listening": 350, "reading": 350, "writing": 350, "speaking": 350 },
+        "presets": [
+          { "id": "gmc",  "label": "UK — General Medical Council",           "targets": { "listening": 350, "reading": 350, "writing": 350, "speaking": 350 } },
+          { "id": "nmc",  "label": "UK — Nursing & Midwifery Council",       "targets": { "listening": 350, "reading": 350, "writing": 300, "speaking": 350 } },
+          { "id": "ahpra","label": "Australia — Ahpra (from 23 Apr 2026)",   "targets": { "listening": 350, "reading": 360, "writing": 350, "speaking": 360 } }
+        ],
+        "_preset_note": "Regulator requirements change. These are config, so they update without a deploy — but they must be re-verified against each regulator before launch and reviewed at least annually."
+      },
+
+      "progression": { "inherits_defaults": true, "_note": "Per-component progression only. There is no headline rung to climb." },
+
+      "modules": {
+        "diagnostic":          { "enabled": true },
+        "daily_drills":        { "enabled": true },
+        "lexigrid":            { "enabled": false },
+        "internal_assessment": { "enabled": true, "speaking_delivery": "roleplay" },
+        "full_mock":           { "enabled": true, "speaking_delivery": "roleplay" }
+      },
+
+      "rules": { "inherits_defaults": true }
+    },
+
+    "gre": {
+      "exam_id": "gre",
+      "prisma_enum": "GRE",
+      "config_version": "2.0.0",
+      "status": "reserved",
+      "requires_entitlement": true,
+
+      "naming": {
+        "public_display_name": "Graduate Admissions Test Preparation",
+        "legal_display_name": "Graduate Admissions Test Preparation",
+        "short_code": "GRAD-PREP"
+      },
+
+      "legal": {
+        "jurisdictions": ["IN", "US"],
+        "rights_holder": "ETS",
+        "may_use_mark_in_product_name": false,
+        "required_attribution": "GRE is a registered trademark of ETS. This product is not endorsed or approved by ETS.",
+        "permission_status": "not_requested",
+        "review_contact": "trademarks@ets.org",
+        "disclaimer_short": "Practice materials only. GRE is a registered trademark of ETS. This product is not endorsed or approved by ETS.",
+        "disclaimer_full": "This preparation course provides practice materials only. GRE is a registered trademark of ETS. This product is not endorsed or approved by ETS. Scores shown are practice estimates and are not official GRE scores.",
+        "display_rules": { "show_full_at_onboarding": true, "show_short_in_footer": true },
+        "_status": "DRAFT_FOR_COUNSEL",
+        "_policy_note": "ETS publishes an explicit third-party trademark policy — this is the most workable of the three restricted marks. It requires the exact attribution above, forbids use of ETS marks in company, domain or product names, forbids ETS logos, and requires materials to be submitted to trademarks@ets.org for review (roughly 10 business days). Build the review step into the launch checklist, not after."
+      },
+
+      "variants": null,
+
+      "components": [
+        {
+          "id": "verbal_reasoning", "label": "Verbal Reasoning", "modality": "reading",
+          "assessed": true, "scale": "gre_section", "delivery": "passage_item_set",
+          "weight": 1.0, "time_limit_minutes": 41, "item_count": 27,
+          "subskills": [],
+          "item_tags": ["reading_comprehension", "text_completion", "sentence_equivalence"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": [], "max_items": 3 },
+          "_structure": "Two sections: 12 questions / 18 min, then 15 questions / 23 min. Section-level adaptive — the second section's difficulty depends on performance in the first.",
+          "_reuse": "modality 'reading' — reuses the existing passage/item runner. No new UI."
+        },
+        {
+          "id": "quantitative_reasoning", "label": "Quantitative Reasoning", "modality": "quantitative",
+          "assessed": true, "scale": "gre_section", "delivery": "quantitative_item_set",
+          "weight": 1.0, "time_limit_minutes": 47, "item_count": 27,
+          "subskills": [],
+          "item_tags": ["arithmetic", "algebra", "geometry", "data_analysis", "quantitative_comparison"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": [], "max_items": 3 },
+          "_structure": "Two sections: 12 questions / 21 min, then 15 questions / 26 min. Section-level adaptive. On-screen calculator provided.",
+          "_new_build": "delivery 'quantitative_item_set' does NOT exist. This needs a real item renderer — maths notation, figures, quantitative-comparison answer layout, calculator. This is the honest cost of GRE: config covers everything except this."
+        },
+        {
+          "id": "analytical_writing", "label": "Analytical Writing", "modality": "writing",
+          "assessed": true, "scale": "gre_analytical_writing", "delivery": "essay",
+          "weight": 1.0, "time_limit_minutes": 30, "item_count": 1,
+          "subskills": [],
+          "item_tags": ["analyze_an_issue"],
+          "remediation": { "level": "component", "trigger": { "kind": "below_score", "value": 4.0 }, "content_refs": [], "max_items": 3 },
+          "_structure": "One 'Analyze an Issue' task, 30 minutes, always presented first. The 'Analyze an Argument' task was retired with the shortened format.",
+          "_reuse": "modality 'writing' — reuses the existing essay runner."
+        }
+      ],
+
+      "overall": {
+        "mode": "per_component",
+        "strategy": null,
+        "components": [],
+        "scale": null,
+        "_critical": "ETS reports three scores and NO combined score. The Guide to the Use of Scores instructs users to 'Consider Verbal Reasoning, Quantitative Reasoning and Analytical Writing Scores as Three Separate and Independent Measures.' The widely quoted 260–340 'GRE total' is third parties summing V+Q; ETS does not compute, report or endorse it, and it discards Analytical Writing entirely.",
+        "unofficial_aggregate": {
+          "enabled": false,
+          "formula": "verbal_reasoning + quantitative_reasoning",
+          "range": [260, 340],
+          "label": "V+Q (unofficial)",
+          "_note": "Present but DISABLED. If ever enabled it must render with the word 'unofficial' adjacent, must never be called a 'total', and must never be the headline. Enabling it is a product decision with a truthfulness cost."
+        }
+      },
+
+      "target": {
+        "enabled": true,
+        "kind": "per_component",
+        "per_component_default": { "verbal_reasoning": 155, "quantitative_reasoning": 160, "analytical_writing": 4.0 }
+      },
+
+      "progression": { "inherits_defaults": true },
+
+      "modules": {
+        "diagnostic":          { "enabled": true },
+        "daily_drills":        { "enabled": true },
+        "lexigrid":            { "enabled": true },
+        "internal_assessment": { "enabled": true },
+        "full_mock":           { "enabled": true }
+      },
+
+      "rules": {
+        "inherits_defaults": true,
+        "_reliability_reference": "ETS publishes reliability and SEM for the shortened test: Verbal reliability 0.88 / SEM 3.17; Quantitative 0.94 / SEM 2.56; Analytical Writing 0.77 / SEM 0.40. Use these as the denominator for any calibration claim on GRE — see TC-09."
+      }
+    },
+
+    "gmat": {
+      "exam_id": "gmat",
+      "prisma_enum": "GMAT",
+      "_prisma_enum_warning": "GMAT IS NOT IN THE CURRENT PRISMA ExamType ENUM (IELTS, SPOKEN, OET, GRE, TOEFL, PTE). Registering this exam therefore requires a schema migration — which is precisely the 'config-only, zero code change' promise failing on the very first new exam. See EE-00 §4.1.",
+      "config_version": "2.0.0",
+      "status": "reserved",
+      "requires_entitlement": true,
+
+      "naming": {
+        "public_display_name": "Business School Admissions Preparation",
+        "legal_display_name": "Business School Admissions Preparation",
+        "short_code": "BSCH-PREP"
+      },
+
+      "legal": {
+        "jurisdictions": ["IN", "US"],
+        "rights_holder": "Graduate Management Admission Council (GMAC)",
+        "may_use_mark_in_product_name": false,
+        "required_attribution": "GMAT is a trademark of the Graduate Management Admission Council. This product is not endorsed or approved by GMAC.",
+        "permission_status": "not_requested",
+        "review_contact": "legal@gmac.com",
+        "disclaimer_short": "Practice materials only. GMAT is a trademark of GMAC. This product is not endorsed or approved by GMAC.",
+        "disclaimer_full": "This preparation course provides practice materials only. GMAT is a trademark of the Graduate Management Admission Council (GMAC). This product is not affiliated with, endorsed by or approved by GMAC. Scores shown are practice estimates and are not official GMAT scores.",
+        "display_rules": { "show_full_at_onboarding": true, "show_short_in_footer": true },
+        "_status": "DRAFT_FOR_COUNSEL",
+        "_policy_note": "GMAC publishes no public trademark-usage guidance for third parties — unlike ETS. The only route is legal@gmac.com. Absence of a published carve-out is not permission; treat as restrictive until counsel says otherwise."
+      },
+
+      "variants": null,
+
+      "components": [
+        {
+          "id": "quantitative_reasoning", "label": "Quantitative Reasoning", "modality": "quantitative",
+          "assessed": true, "scale": "gmat_section", "delivery": "quantitative_item_set",
+          "weight": 1.0, "time_limit_minutes": 45, "item_count": 21,
+          "subskills": [], "item_tags": ["problem_solving"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": [], "max_items": 3 },
+          "_new_build": "Same missing renderer as GRE Quant. Build once, both exams use it."
+        },
+        {
+          "id": "verbal_reasoning", "label": "Verbal Reasoning", "modality": "reading",
+          "assessed": true, "scale": "gmat_section", "delivery": "passage_item_set",
+          "weight": 1.0, "time_limit_minutes": 45, "item_count": 23,
+          "subskills": [], "item_tags": ["reading_comprehension", "critical_reasoning"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": [], "max_items": 3 },
+          "_reuse": "Reuses the existing passage/item runner. Sentence Correction was retired with the Focus Edition — do not build it."
+        },
+        {
+          "id": "data_insights", "label": "Data Insights", "modality": "integrated",
+          "assessed": true, "scale": "gmat_section", "delivery": "data_insights_item_set",
+          "weight": 1.0, "time_limit_minutes": 45, "item_count": 20,
+          "subskills": [], "item_tags": ["data_sufficiency", "multi_source_reasoning", "table_analysis", "graphics_interpretation", "two_part_analysis"],
+          "remediation": { "level": "item_tag", "trigger": { "kind": "below_pct", "value": 60 }, "content_refs": [], "drill_tags": [], "max_items": 3 },
+          "_new_build": "The most expensive component in this config. Sortable tables, multi-tab source panels, chart interpretation, two-part answer grids — five distinct interaction patterns with no existing analogue in the platform."
+        }
+      ],
+
+      "overall": {
+        "mode": "per_component",
+        "strategy": null,
+        "components": [],
+        "scale": "gmat_total",
+        "_critical": "A GMAT Total Score exists (205–805, in 10s, always ending in 5) but THIS ENGINE MUST NEVER COMPUTE IT. GMAC does not publish the formula; it is a proprietary scaled composite of three IRT-scaled section scores. GMAC states only that the three sections are 'weighted equally'. It is demonstrably not a sum or mean — three sections of 60–90 sum to 180–270 and average to 60–90, and neither maps to 205–805. The scale is declared so that a real, student-entered GMAT score can be stored and displayed. Practice results report per component only.",
+        "_no_estimate": "Do not ship an 'estimated GMAT total'. Any number we invent would be presented next to a real, well-known scale and read as a prediction of it. That is the single clearest way to make a calibration claim we cannot defend."
+      },
+
+      "target": {
+        "enabled": true,
+        "kind": "per_component",
+        "per_component_default": { "quantitative_reasoning": 80, "verbal_reasoning": 80, "data_insights": 80 }
+      },
+
+      "progression": { "inherits_defaults": true },
+
+      "modules": {
+        "diagnostic":          { "enabled": true },
+        "daily_drills":        { "enabled": true },
+        "lexigrid":            { "enabled": false },
+        "internal_assessment": { "enabled": true },
+        "full_mock":           { "enabled": true }
+      },
+
+      "rules": {
+        "inherits_defaults": true,
+        "_edition_note": "The current exam is the GMAT Focus Edition, live since 1 February 2024, replacing the 10th Edition. It has no Analytical Writing Assessment and no Integrated Reasoning section. Focus and 10th Edition scores are not directly comparable; GMAC publishes concordance tables. Any legacy content written to the old structure is unusable."
+      }
+    }
+  }
+}

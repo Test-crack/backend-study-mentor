@@ -119,9 +119,18 @@ function answerDomainFor(isTfng: boolean): readonly string[] {
   return isTfng ? TFNG_ANSWERS : OPTION_KEYS;
 }
 
+/** Model output drifts to full words occasionally despite the prompt asking for T/F/NG. */
+const TFNG_WORD_MAP: Record<string, string> = {
+  TRUE: 'T',
+  FALSE: 'F',
+  'NOT GIVEN': 'NG',
+  NOTGIVEN: 'NG',
+};
+
 export function parseBlindSolve(raw: string, isTfng: boolean): BlindSolve {
   const obj = asRecord(parseJsonLoose(raw));
-  const answer = String(obj.answer ?? '').trim().toUpperCase();
+  let answer = String(obj.answer ?? '').trim().toUpperCase();
+  if (isTfng && answer in TFNG_WORD_MAP) answer = TFNG_WORD_MAP[answer];
   const domain = answerDomainFor(isTfng);
 
   if (!domain.includes(answer)) {
@@ -147,7 +156,8 @@ export function parseAdjudication(raw: string, isTfng: boolean): Adjudication {
   if (!VERDICTS.includes(verdict)) throw new MalformedResponseError(`Model returned unknown verdict "${verdict}".`);
 
   const domain = answerDomainFor(isTfng);
-  const letter = String(obj.correct_answer ?? '').trim().toUpperCase();
+  let letter = String(obj.correct_answer ?? '').trim().toUpperCase();
+  if (isTfng && letter in TFNG_WORD_MAP) letter = TFNG_WORD_MAP[letter];
 
   return {
     verdict: verdict as AdjudicationVerdict,
