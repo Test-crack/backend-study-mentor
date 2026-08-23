@@ -12,7 +12,8 @@ import {
   bandMean, cefrHybrid, proficiencyLevel, difficulty, weaknessGap,
 } from './scoring';
 import { numericMomentum, ordinalMomentum, trend, buildEnvelope } from './progression';
-import { bandToLevel, bandToDifficulty, bandGap } from '../lib/bandScale';
+import { bandToLevel, bandToDifficulty, bandGap, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
+import { componentBand } from './component';
 
 const cfg: any = JSON.parse(fs.readFileSync(path.join(__dirname, 'exam-engine-config.v2.json'), 'utf8'));
 const BAND = cfg.scales.ielts_band;
@@ -178,6 +179,36 @@ head('§9  Proficiency + weakness-gap — engine == bandScale across the grid');
   check('  ielts overall scale id', ieltsScaleId, 'ielts_band');
   check('  resolved scale has proficiency_bands', Array.isArray(cfg.scales[ieltsScaleId].proficiency_bands), true);
   check('  resolved scale has weakness_gap.from', typeof cfg.scales[ieltsScaleId].weakness_gap.from, 'number');
+}
+
+// §10 scoreComponent parity vs bandScale (Phase 6 Part 1b — component production)
+head('§10  componentBand — engine == bandScale across the grid');
+{
+  let mism = 0, n = 0;
+  // objective raw (correct/total) — Listening/Reading MCQ
+  for (let total = 1; total <= 40; total++) {
+    for (let correct = 0; correct <= total; correct++) {
+      n++;
+      const eng = componentBand({ unit: 'raw', correct, total }, BAND).value;
+      const old = fractionToBand(correct / total);
+      if (eng !== old) { mism++; console.log(`  FAIL raw ${correct}/${total} eng=${eng} old=${old}`); }
+    }
+  }
+  // AI internal 1..10 (0.1 steps) — blend result
+  for (let s = 1; s <= 10.0001; s = tidy(s + 0.1, 1)) {
+    n++;
+    const eng = componentBand({ unit: 'internal', value: s, min: 1, max: 10 }, BAND).value;
+    const old = internalToBand(s);
+    if (eng !== old) { mism++; console.log(`  FAIL internal ${s} eng=${eng} old=${old}`); }
+  }
+  // band pass-through (mean-of-criteria) — 0.25 steps across [3,10]
+  for (let b = 3.0; b <= 10.0001; b = tidy(b + 0.25, 2)) {
+    n++;
+    const eng = componentBand({ unit: 'band', value: b, scale: 'ielts_band' }, BAND).value;
+    const old = toBand(b);
+    if (eng !== old) { mism++; console.log(`  FAIL band ${b} eng=${eng} old=${old}`); }
+  }
+  check(`  ${n} component inputs identical to bandScale (raw/internal/band)`, mism, 0);
 }
 
 // summary

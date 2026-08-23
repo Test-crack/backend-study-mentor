@@ -139,6 +139,15 @@ export function validateConfig(cfg: EngineConfig): ValidationResult {
       if (c.variant_scoped && !ex.variants) {
         errors.push(`${id}.${c.id}: variant_scoped:true but the exam declares no variants`);
       }
+
+      if (c.raw_input) {
+        const ri = c.raw_input;
+        const kinds = new Set(['fraction', 'internal', 'percent', 'band']);
+        if (!kinds.has(ri.kind)) errors.push(`${id}.${c.id}: unknown raw_input.kind '${ri.kind}'`);
+        if (ri.kind === 'internal' && !(typeof ri.min === 'number' && typeof ri.max === 'number' && ri.min < ri.max)) {
+          errors.push(`${id}.${c.id}: raw_input.kind='internal' needs numeric min < max`);
+        }
+      }
     }
 
     if (ex.variants) {
