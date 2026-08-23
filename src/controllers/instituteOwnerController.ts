@@ -16,6 +16,30 @@ import {
     avgBandFromScores,
 } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
+import { resolveAccessibleExamIds } from '../lib/sessionContext';
+import { getExamConfig } from '../exam-engine';
+
+// ─── GET /api/institute-{owner,admin}/my-exams ───────────────────────────────
+// The exams this institute may currently use (ACTIVE/TRIAL subscriptions), with
+// labels — populates the owner/admin exam-context selector (Track A A1c). Not
+// exam-scoped itself; it IS the list of exams to choose from.
+export async function getMyExams(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getCallerInstitute(appUserId);
+        if (!instituteId) return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
+
+        const examIds = await resolveAccessibleExamIds(instituteId);
+        const data = examIds.map((id) => {
+            const ex: any = getExamConfig(id);
+            return { exam_id: id, label: ex?.naming?.public_display_name ?? id };
+        });
+        return res.json({ success: true, data });
+    } catch (err) {
+        console.error('[InstituteOwner] getMyExams error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
 
 // â”€â”€â”€ Helper: get institute for owner OR admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

@@ -32,6 +32,7 @@ router.use(attachExamContext);
 const shared = authorize(IA, IO);
 
 // ─── Read-only analytics (owner controller, shared) ───────────────────────────
+router.get('/my-exams',                             shared, Owner.getMyExams);
 router.get('/summary',                              shared, Owner.getSummary);
 router.get('/at-risk',                              shared, Owner.getInstituteAtRisk);
 router.get('/instructors',                          shared, Owner.getInstituteInstructors);

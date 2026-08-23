@@ -27,6 +27,7 @@ router.delete('/admins/:userId',   authorize(IO), C.removeAdmin);
 // ── Shared operational routes (owner OR admin) ────────────────────────────────
 const shared = authorize(IO, IA);
 
+router.get('/my-exams',                                 shared, C.getMyExams);
 router.get('/summary',                                  shared, C.getSummary);
 router.get('/batches',                                  shared, C.getInstituteBatches);
 router.get('/batches/:batchId/dashboard-summary',       shared, C.getOwnerBatchDashboardSummary);
