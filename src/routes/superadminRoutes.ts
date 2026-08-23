@@ -37,4 +37,10 @@ router.patch('/institutes/:id/exams/:examType', superadminController.setExamStat
 // GET /api/superadmin/subscriptions?status=TRIAL&search=ace
 router.get('/subscriptions', superadminController.getSubscriptions);
 
+// Exam config explorer (A4 — READ-ONLY; scoring config is file-sourced + code-reviewed)
+// GET /api/superadmin/exams              — list exams (status/label)
+// GET /api/superadmin/exams/:id/config   — full config entry (view / draft template)
+router.get('/exams', superadminController.listExamsForConfig);
+router.get('/exams/:id/config', superadminController.getExamConfigForView);
+
 export default router;
