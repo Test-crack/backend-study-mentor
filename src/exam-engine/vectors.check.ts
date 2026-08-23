@@ -171,6 +171,13 @@ head('§9  Proficiency + weakness-gap — engine == bandScale across the grid');
   check('  7.0 -> C (cut boundary)', proficiencyLevel(7.0, BAND), 'C');
   check('  gap at 4.0 is fully weak', weaknessGap(4.0, BAND), 1);
   check('  gap at 9.0 is zero', weaknessGap(9.0, BAND), 0);
+
+  // facade resolution: the exam's overall scale is the one carrying the new cuts,
+  // so examDifficulty('ielts', b) resolves to this BAND and matches bandScale.
+  const ieltsScaleId = cfg.exams.ielts.overall.scale;
+  check('  ielts overall scale id', ieltsScaleId, 'ielts_band');
+  check('  resolved scale has proficiency_bands', Array.isArray(cfg.scales[ieltsScaleId].proficiency_bands), true);
+  check('  resolved scale has weakness_gap.from', typeof cfg.scales[ieltsScaleId].weakness_gap.from, 'number');
 }
 
 // summary

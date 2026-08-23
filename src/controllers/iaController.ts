@@ -6,7 +6,7 @@ import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
 import { processIASession, AlreadyCompletedError, applySmoothing, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
-import { bandToDifficulty } from '../lib/bandScale';
+import { examDifficulty } from '../exam-engine';
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
@@ -260,9 +260,9 @@ function todayEndIST(): Date {
     return new Date(todayStartISTLocal().getTime() + 24 * 60 * 60 * 1000);
 }
 
-// Even thirds of the [4,9] band domain (D3), via the canonical helper.
+// Difficulty from the exam's config-declared proficiency cuts (Phase 6 Part 2).
 function getDifficulty(band: number): 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED' {
-    return bandToDifficulty(band);
+    return examDifficulty('ielts', band) as 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
 }
 
 function getBandForSubSkill(

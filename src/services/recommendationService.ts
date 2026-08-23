@@ -1,6 +1,6 @@
 import prisma from '../lib/prisma';
 import { SkillType, RecommendationLevel } from '@prisma/client';
-import { bandToDifficulty } from '../lib/bandScale';
+import { examDifficulty } from '../exam-engine';
 
 /**
  * Helper to map a numeric band score to a RecommendationLevel.
@@ -8,7 +8,7 @@ import { bandToDifficulty } from '../lib/bandScale';
  * threshold set shared with diagnostic level (A/B/C) and IA difficulty.
  */
 export const getBandLevel = (bandScore: number): RecommendationLevel => {
-  return RecommendationLevel[bandToDifficulty(bandScore)];
+  return RecommendationLevel[examDifficulty('ielts', bandScore) as keyof typeof RecommendationLevel];
 };
 
 /**
