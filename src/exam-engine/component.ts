@@ -17,6 +17,7 @@
 import { toBand, fractionToBand, internalToBand } from '../lib/bandScale';
 import { getExamConfig, getScale } from './loader';
 import { bandMean } from './scoring';
+import { getStrategy } from './registry';
 import { RawScore } from './types';
 
 export interface ComponentResult {
@@ -76,4 +77,21 @@ export function scoreComponentFromSubskills(
 ): ComponentResult {
   const r = bandMean(subskillBands, componentScale(examId, componentId));
   return { value: r.value, label: r.label };
+}
+
+/**
+ * Headline overall for an exam: aggregate its assessed component bands using the
+ * strategy NAMED in config (`overall.strategy`), never `if (examId)`. IELTS → band_mean
+ * (mean of components, floored). Identical to the old `toBand(mean)` for 0.5-step bands
+ * (see vectors.check.ts §11).
+ */
+export function scoreOverall(examId: string, componentBands: Record<string, number>) {
+  const ex = getExamConfig(examId);
+  const strategyName = ex?.overall?.strategy;
+  const scaleId = ex?.overall?.scale;
+  const scale = scaleId ? getScale(scaleId) : null;
+  if (!strategyName || !scale) {
+    throw new Error(`[exam-engine] scoreOverall: exam '${examId}' has no aggregate strategy/scale`);
+  }
+  return getStrategy(strategyName).scoreOverall(componentBands, scale);
 }
