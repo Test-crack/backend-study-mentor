@@ -1152,9 +1152,9 @@ export async function getOwnerStudentFullProgress(req: AuthRequest, res: Respons
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        // Verify student belongs to the institute via any batch
+        // Verify student belongs to the institute (+ the selected exam's enrollment when set)
         const instStudent = await prisma.instituteStudent.findFirst({
-            where: { user_id: studentId, institute_id: instituteId },
+            where: { user_id: studentId, institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
         });
         if (!instStudent) {
@@ -1202,8 +1202,11 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
+        // Disambiguate by exam context: with multi-exam students there is one
+        // InstituteStudent row per exam; scope to the selected exam's enrollment so the
+        // reset (deletes are keyed on this instStudent.id) can't touch another exam's data.
         const instStudent = await prisma.instituteStudent.findFirst({
-            where:  { user_id: studentId, institute_id: instituteId },
+            where:  { user_id: studentId, institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true },
         });
         if (!instStudent) {
@@ -1706,7 +1709,7 @@ export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const { instStudentIds } = await resolveInstituteStudents(instituteId);
+        const { instStudentIds } = await resolveInstituteStudents(instituteId, (req as any).ctx?.examId);
         if (instStudentIds.length === 0) {
             return res.json({ success: true, data: { monthly_points: [] } });
         }
@@ -1791,7 +1794,7 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: {
                 batch_students: { select: { user_id: true } },
             },
@@ -2035,7 +2038,7 @@ export async function getAnalyticsEngagementTrends(req: AuthRequest, res: Respon
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const { instStudents, instStudentIds } = await resolveInstituteStudents(instituteId);
+        const { instStudents, instStudentIds } = await resolveInstituteStudents(instituteId, (req as any).ctx?.examId);
         if (instStudentIds.length === 0) {
             return res.json({ success: true, data: [] });
         }
@@ -2109,7 +2112,7 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: { batch_students: { select: { user_id: true } } },
         });
 
@@ -2203,7 +2206,7 @@ export async function getAnalyticsSubskillHeatmap(req: AuthRequest, res: Respons
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const { instStudentIds } = await resolveInstituteStudents(instituteId);
+        const { instStudentIds } = await resolveInstituteStudents(instituteId, (req as any).ctx?.examId);
         if (instStudentIds.length === 0) {
             return res.json({ success: true, data: [] });
         }
