@@ -44,7 +44,7 @@ async function getOwnedInstitute(appUserId: string): Promise<string | null> {
 
 // â”€â”€â”€ Helper: resolve all institute_students for an institute â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-async function resolveInstituteStudents(instituteId: string): Promise<{
+async function resolveInstituteStudents(instituteId: string, examId?: string | null): Promise<{
     instStudents: Array<{
         id: string;
         user_id: string;
@@ -57,7 +57,7 @@ async function resolveInstituteStudents(instituteId: string): Promise<{
     instStudentIds: string[];
 }> {
     const instStudents = await prisma.instituteStudent.findMany({
-        where: { institute_id: instituteId, is_active: true },
+        where: { institute_id: instituteId, is_active: true, ...(examId ? { exam_id: examId } : {}) },
         select: {
             id: true,
             user_id: true,
@@ -628,16 +628,21 @@ export async function getSummary(req: AuthRequest, res: Response) {
         if (!instituteId) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
+        // Exam context (Track A A1): when an exam is selected, scope batches + students to it.
+        const examId = (req as any).ctx?.examId as string | undefined;
+        const examScope = examId ? { exam_id: examId } : {};
 
         const [institute, batches, allStudents, adminsCount, instructorRows, invitedNotStarted] = await Promise.all([
             prisma.institute.findUnique({ where: { id: instituteId }, select: { name: true } }),
             prisma.batch.findMany({
-                where: { institute_id: instituteId },
+                where: { institute_id: instituteId, ...examScope },
                 select: { id: true, name: true, status: true },
             }),
-            resolveInstituteStudents(instituteId),
+            resolveInstituteStudents(instituteId, examId),
             prisma.instituteAdmin.count({ where: { institute_id: instituteId } }),
-            // Tutors of this institute + their batch assignments (for unassigned count)
+            // Tutors of this institute + their batch assignments (for unassigned count).
+            // Instructors are institute-level; the exam view derives their relevance from
+            // assignment to this exam's batches (batchIdSet below is already exam-scoped).
             prisma.instituteInstructor.findMany({
                 where:  { institute_id: instituteId },
                 select: { user_id: true, User: { select: { batch_instructors: { select: { batch_id: true } } } } },
@@ -645,7 +650,7 @@ export async function getSummary(req: AuthRequest, res: Response) {
             // Students invited but who never started (no diagnostic yet) â€” the honest
             // "needs attention" number that replaced the fictional approve/reject queue.
             prisma.instituteStudent.count({
-                where: { institute_id: instituteId, isDiagnosed: false, is_active: true },
+                where: { institute_id: instituteId, isDiagnosed: false, is_active: true, ...examScope },
             }),
         ]);
 
