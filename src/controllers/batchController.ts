@@ -28,7 +28,7 @@ export async function getBatches(req: AuthRequest, res: Response) {
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
         const batches = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             orderBy: { created_at: 'desc' },
             include: {
                 _count: {
@@ -83,6 +83,9 @@ export async function createBatch(req: AuthRequest, res: Response) {
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
+        // A new batch belongs to the selected exam context; absent context falls back to
+        // the schema default ('ielts') so pre-A1c behavior is unchanged (bug fix #3).
+        const examId = (req as any).ctx?.examId as string | undefined;
         const batch = await prisma.batch.create({
             data: {
                 institute_id: instituteId,
@@ -91,6 +94,7 @@ export async function createBatch(req: AuthRequest, res: Response) {
                 max_students: maxStudents ?? null,
                 status: status ?? 'ACTIVE',
                 created_by: appUserId,
+                ...(examId ? { exam_id: examId } : {}),
             },
         });
 
