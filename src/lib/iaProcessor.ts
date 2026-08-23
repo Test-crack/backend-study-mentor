@@ -10,6 +10,7 @@
 import prisma from './prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt } from './iaGrading';
 import { BAND_MIN, toBand, internalToBand } from './bandScale';
+import { provenance } from '../exam-engine';
 
 // Thrown when processIASession is called on an already-COMPLETED session.
 // Callers must catch this and return the stored result instead of erroring.
@@ -280,6 +281,7 @@ export async function processIASession(
                     mode:       'INTERNAL_ASSESSMENT' as any,
                     band_score: s.band,
                     sub_scores: subScoreKey ? { [subScoreKey]: s.band } : {} as any,
+                    ...provenance(),
                 },
             });
 
