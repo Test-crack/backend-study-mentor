@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { ensureUser } from '../middleware/ensureUser';
 import { requireActiveInstitute } from '../middleware/requireActiveInstitute';
+import { attachExamContext } from '../middleware/attachExamContext';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import * as C from '../controllers/instituteOwnerController';
@@ -16,6 +17,7 @@ const IA = UserRoleType.INSTITUTE_ADMIN;
 router.use(requireAuth);
 router.use(ensureUser);
 router.use(requireActiveInstitute);
+router.use(attachExamContext);
 
 // ── Owner-only routes (admin management) ─────────────────────────────────────
 router.get('/admins',              authorize(IO), C.getAdmins);

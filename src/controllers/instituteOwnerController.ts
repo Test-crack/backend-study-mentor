@@ -294,12 +294,19 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
     const batchId = paramStr(req.params.batchId);
 
     try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getCallerInstitute(appUserId);
+        if (!instituteId) return res.status(403).json({ error: 'No institute is associated with this account.' });
+        // Scope to the caller's institute (security fix) + the selected exam context if any.
+        const examId = (req as any).ctx?.examId as string | null | undefined;
+        const scope = { institute_id: instituteId, ...(examId ? { exam_id: examId } : {}) };
+
         const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(batchId);
         let batch: any = null;
 
         if (isUuid) {
             batch = await prisma.batch.findFirst({
-                where: { id: batchId },
+                where: { id: batchId, ...scope },
                 include: {
                     batch_students: {
                         include: {
@@ -312,6 +319,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             });
         } else {
             const allBatches = await prisma.batch.findMany({
+                where: scope,
                 include: {
                     batch_students: {
                         include: {
