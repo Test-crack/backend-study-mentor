@@ -757,10 +757,12 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
         if (!instituteId) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
+        const examId = (req as any).ctx?.examId as string | undefined;
 
         const batches: any[] = await prisma.batch.findMany({
             where: {
                 institute_id: instituteId,
+                ...(examId ? { exam_id: examId } : {}),
             },
             include: {
                 batch_students: { select: { user_id: true } },
@@ -981,6 +983,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
             where: {
                 institute_id: instituteId,
                 ...(batchIdFilter ? { id: batchIdFilter } : {}),
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
             },
             select: { id: true, name: true },
         });
@@ -1244,7 +1247,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true, name: true },
         });
 
@@ -1373,7 +1376,7 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: {
                 batch_instructors: {
                     include: { User: { select: { id: true, name: true, profileImage: true, email: true } } },
@@ -1448,6 +1451,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             where: {
                 institute_id: instituteId,
                 ...(batchIdFilter ? { id: batchIdFilter } : {}),
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
             },
             select: { id: true, name: true },
         });
@@ -1909,7 +1913,7 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: {
                 batch_instructors: {
                     include: { User: { select: { id: true, name: true, profileImage: true } } },
