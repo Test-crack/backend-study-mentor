@@ -4,7 +4,8 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
-import { BAND_MIN, toBand, fractionToBand, bandToLevel } from '../lib/bandScale';
+import { BAND_MIN, toBand } from '../lib/bandScale';
+import { scoreComponent, examProficiencyLevel, provenance } from '../exam-engine';
 import fs from 'fs';
 import { paramStr } from '../utils/httpParams';
 
@@ -12,9 +13,9 @@ import { paramStr } from '../utils/httpParams';
 
 type DiagnosticLevel = 'A' | 'B' | 'C';
 
-// Even thirds of the [4,9] band domain (D3): A 4.0â€“5.5, B 5.5â€“7.0, C 7.0â€“9.0.
+// Proficiency level from the exam's config-declared cuts (Phase 6 Part 4a).
 function resolveLevel(targetBand: number): DiagnosticLevel {
-    return bandToLevel(targetBand);
+    return examProficiencyLevel('ielts', targetBand) as DiagnosticLevel;
 }
 
 /** Pick one random set_id for the given level + skill. */
@@ -54,7 +55,7 @@ async function saveDiagnosticAssessment(
     subScores: any
 ) {
     await tx.assessmentHistory.create({
-        data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores }
+        data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores, ...provenance() }
     });
     await tx.studentCompetencyMatrix.upsert({
         where:  { student_id_skill: { student_id: studentId, skill } },
@@ -356,8 +357,8 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 bandScore = BAND_MIN;
                 subScores = { total_questions: 0, correct_answers: 0, accuracy_percentage: 0, by_question_type: {} };
             } else {
-                // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
-                bandScore = fractionToBand(correct / total);
+                // Mastery fraction → band, via the engine (config-driven scale for this component).
+                bandScore = scoreComponent('ielts', skillUpper.toLowerCase(), { unit: 'raw', correct, total }).value;
                 subScores = {
                     total_questions:     total,
                     correct_answers:     correct,
