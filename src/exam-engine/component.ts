@@ -16,6 +16,7 @@
 
 import { toBand, fractionToBand, internalToBand } from '../lib/bandScale';
 import { getExamConfig, getScale } from './loader';
+import { bandMean } from './scoring';
 import { RawScore } from './types';
 
 export interface ComponentResult {
@@ -48,11 +49,31 @@ export function componentBand(raw: RawScore, _scale: any): ComponentResult {
   return { value, label: value.toFixed(1) };
 }
 
-/** Facade: resolve a component's scale from config, then score its raw performance. */
-export function scoreComponent(examId: string, componentId: string, raw: RawScore): ComponentResult {
+function componentScale(examId: string, componentId: string): any {
   const ex = getExamConfig(examId);
   const comp = ex?.components?.find((c: any) => c.id === componentId);
   const scale = comp?.scale ? getScale(comp.scale) : null;
-  if (!scale) throw new Error(`[exam-engine] scoreComponent: no scale for ${examId}.${componentId}`);
-  return componentBand(raw, scale);
+  if (!scale) throw new Error(`[exam-engine] no scale for ${examId}.${componentId}`);
+  return scale;
+}
+
+/** Facade: resolve a component's scale from config, then score its raw performance. */
+export function scoreComponent(examId: string, componentId: string, raw: RawScore): ComponentResult {
+  return componentBand(raw, componentScale(examId, componentId));
+}
+
+/**
+ * Aggregate a component's already-graded subskill bands into the component band.
+ * IELTS writing/speaking = mean of the 4 criteria; delegates to band_mean on the
+ * component's scale (identical to the old `toBand(mean)` for 0.5-step criteria —
+ * parity-asserted in vectors.check.ts §11). The rubric that produced the criteria
+ * (prompt, penalties, floors) stays in the grading service (Layer B).
+ */
+export function scoreComponentFromSubskills(
+  examId: string,
+  componentId: string,
+  subskillBands: Record<string, number>
+): ComponentResult {
+  const r = bandMean(subskillBands, componentScale(examId, componentId));
+  return { value: r.value, label: r.label };
 }

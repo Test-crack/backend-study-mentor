@@ -211,6 +211,21 @@ head('§10  componentBand — engine == bandScale across the grid');
   check(`  ${n} component inputs identical to bandScale (raw/internal/band)`, mism, 0);
 }
 
+// §11 AI-service aggregation parity: band_mean(4 criteria) == toBand(mean) (Phase 6 Part 3)
+head('§11  AI mean-of-criteria — band_mean == toBand(avg) across all 0.5-step quads');
+{
+  const vals: number[] = [];
+  for (let b = 4.0; b <= 9.0001; b = tidy(b + 0.5, 1)) vals.push(b);
+  let mism = 0, n = 0;
+  for (const a of vals) for (const b of vals) for (const c of vals) for (const d of vals) {
+    n++;
+    const eng = bandMean({ a, b, c, d }, BAND).value;
+    const old = toBand((a + b + c + d) / 4);
+    if (eng !== old) { mism++; if (mism <= 5) console.log(`  FAIL [${a},${b},${c},${d}] eng=${eng} old=${old}`); }
+  }
+  check(`  ${n} criterion quads: band_mean identical to toBand(avg)`, mism, 0);
+}
+
 // summary
 console.log(`\n${'='.repeat(70)}`);
 console.log(`  ${pass} passed, ${fail} failed`);

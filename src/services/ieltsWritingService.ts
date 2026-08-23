@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { toBand } from '../lib/bandScale';
+import { scoreComponentFromSubskills } from '../exam-engine';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -177,14 +178,14 @@ Return ONLY valid JSON with no markdown, no code fences, no preamble:
     evaluation.vocabularyScore   = toBand(Number(evaluation.vocabularyScore));
     evaluation.grammarScore      = toBand(Number(evaluation.grammarScore));
 
-    const criteria = [
-      evaluation.taskResponseScore,
-      evaluation.coherenceScore,
-      evaluation.vocabularyScore,
-      evaluation.grammarScore
-    ];
-    const avg = criteria.reduce((a, b) => a + b, 0) / criteria.length;
-    evaluation.bandScore = toBand(avg);
+    // Component band = mean of the 4 criteria, via the engine (band_mean on ielts_band).
+    // Identical to the old toBand(mean); the rubric that produced the criteria is untouched.
+    evaluation.bandScore = scoreComponentFromSubskills('ielts', 'writing', {
+      task_response: evaluation.taskResponseScore,
+      coherence_cohesion: evaluation.coherenceScore,
+      lexical_resource: evaluation.vocabularyScore,
+      grammatical_range_accuracy: evaluation.grammarScore,
+    }).value;
 
     return evaluation;
   } catch (error: any) {
