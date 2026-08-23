@@ -27,31 +27,65 @@ export function readConfigFile(): EngineConfig {
  * fail startup — a server that boots with an invalid exam config is worse than
  * one that refuses to boot.
  */
-export async function loadExamEngine(): Promise<void> {
-  const cfg = readConfigFile();
+/** Active per-exam configs from the DB, keyed by exam_id (A4 — DB-backed read path). */
+async function loadActiveExamConfigs(): Promise<Record<string, ExamConfigEntry>> {
+  const rows = await prisma.examConfig.findMany({
+    where: { is_active: true },
+    select: { exam_id: true, config: true },
+  });
+  const out: Record<string, ExamConfigEntry> = {};
+  for (const r of rows) {
+    // If duplicate actives ever exist, first wins (A4.2 enforces single-active on save).
+    if (!(r.exam_id in out) && r.config && typeof r.config === 'object') {
+      out[r.exam_id] = r.config as unknown as ExamConfigEntry;
+    }
+  }
+  return out;
+}
 
-  const { errors, warnings } = validateConfig(cfg);
-  warnings.forEach((w) => console.warn(`[exam-engine] ⚠️  ${w}`));
-  if (errors.length) {
+export async function loadExamEngine(): Promise<void> {
+  // JSON is the bootstrap seed + structural source (scales/defaults/meta). It must be valid.
+  const jsonCfg = readConfigFile();
+  const jv = validateConfig(jsonCfg);
+  jv.warnings.forEach((w) => console.warn(`[exam-engine] ⚠️  ${w}`));
+  if (jv.errors.length) {
     throw new Error(
-      `[exam-engine] config invalid — ${errors.length} error(s):\n` +
-        errors.map((e) => `  • ${e}`).join('\n')
+      `[exam-engine] JSON config invalid — ${jv.errors.length} error(s):\n` +
+        jv.errors.map((e) => `  • ${e}`).join('\n')
     );
   }
 
-  CONFIG = cfg;
-
-  // Seeding needs the DB; a blip here must not take down the server, but an
-  // invalid config (above) must. So: fatal validation, best-effort seed.
+  // DB-backed read path: seed the JSON version (idempotent), then read the ACTIVE per-exam
+  // configs from the DB and merge them over the JSON exams (scales/defaults/meta stay JSON).
+  // On a fresh deploy the DB was just seeded from the JSON, so the result is byte-identical
+  // (zero-change). A DB/seed blip falls back to the JSON so the server still serves.
+  let assembled: EngineConfig = jsonCfg;
+  let dbCount = 0;
   try {
-    await seedExamConfigs(cfg);
+    await seedExamConfigs(jsonCfg);
+    const dbExams = await loadActiveExamConfigs();
+    dbCount = Object.keys(dbExams).length;
+    if (dbCount) assembled = { ...jsonCfg, exams: { ...jsonCfg.exams, ...dbExams } };
   } catch (err: any) {
-    console.warn(`[exam-engine] ⚠️  could not seed exam_configs (engine still runs from cache): ${err?.message ?? err}`);
+    console.warn(`[exam-engine] ⚠️  DB-backed config load failed (${err?.message ?? err}); serving JSON seed`);
+    assembled = jsonCfg;
+    dbCount = 0;
   }
 
+  // Fail loud if what we're about to serve is invalid — a bad DB edit must refuse to boot,
+  // not silently mis-score.
+  const av = validateConfig(assembled);
+  if (av.errors.length) {
+    throw new Error(
+      `[exam-engine] assembled (DB-backed) config invalid — ${av.errors.length} error(s):\n` +
+        av.errors.map((e) => `  • ${e}`).join('\n')
+    );
+  }
+
+  CONFIG = assembled;
   console.log(
-    `[exam-engine] loaded config v${cfg.config_version} (engine v${cfg.engine_version}) — ` +
-      `${Object.keys(cfg.exams).length} exams, ${warnings.length} warning(s)`
+    `[exam-engine] loaded config v${assembled.config_version} (engine v${assembled.engine_version}) — ` +
+      `${Object.keys(assembled.exams).length} exams (${dbCount} from DB, read path DB-backed)`
   );
 }
 
