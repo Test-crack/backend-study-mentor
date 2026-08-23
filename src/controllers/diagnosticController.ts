@@ -19,13 +19,15 @@ function resolveLevel(targetBand: number): DiagnosticLevel {
 }
 
 /** Pick one random set_id for the given level + skill. */
-async function pickRandomSetId(level: string, skill: string): Promise<string | null> {
-    // GROUP BY deduplicates set_ids without the DISTINCT+ORDER BY restriction
+async function pickRandomSetId(level: string, skill: string, examId: string): Promise<string | null> {
+    // GROUP BY deduplicates set_ids without the DISTINCT+ORDER BY restriction.
+    // exam_id scopes to the student's exam (A3): an OET student gets OET sets, not IELTS.
     const rows: any[] = await prisma.$queryRaw`
         SELECT   set_id
         FROM     diagnostic_questions
         WHERE    level     = ${level}
         AND      skill     = ${skill}::"SkillType"
+        AND      exam_id   = ${examId}
         AND      is_active = TRUE
         GROUP BY set_id
         ORDER BY RANDOM()
@@ -160,7 +162,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // â”€â”€ LISTENING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'LISTENING') {
-            const setId = await resolveServedId(student, 'LISTENING', () => pickRandomSetId(level, 'LISTENING'));
+            const setId = await resolveServedId(student, 'LISTENING', () => pickRandomSetId(level, 'LISTENING', student?.exam_id ?? 'ielts'));
             if (!setId) return res.status(404).json({ error: 'No listening questions found for this level.' });
 
             const rows = await prisma.diagnosticQuestion.findMany({
@@ -179,7 +181,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // â”€â”€ READING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'READING') {
-            const setId = await resolveServedId(student, 'READING', () => pickRandomSetId(level, 'READING'));
+            const setId = await resolveServedId(student, 'READING', () => pickRandomSetId(level, 'READING', student?.exam_id ?? 'ielts'));
             if (!setId) return res.status(404).json({ error: 'No reading questions found for this level.' });
 
             const rows = await prisma.diagnosticQuestion.findMany({

@@ -218,12 +218,19 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
 
         const QUESTIONS_PER_SESSION = 5;
 
+        // Scope questions to the student's exam (A3) — zero-change for IELTS students.
+        const drillStudent = await prisma.instituteStudent.findUnique({
+            where: { user_id: (req as any).appUserId as string }, select: { exam_id: true },
+        });
+        const examId = drillStudent?.exam_id ?? 'ielts';
+
         const questions = await prisma.$queryRaw`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
             WHERE skill = ${skill}::"SkillType"
               AND sub_skill = ${subskill}::"SubSkillType"
               AND level = ${level}::"RecommendationLevel"
+              AND exam_id = ${examId}
               AND is_active = true
               AND drill_type = 'MCQ'
             ORDER BY RANDOM()

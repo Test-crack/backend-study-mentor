@@ -78,14 +78,15 @@ function scaleToIELTS(score1to10: number): number {
     return internalToBand(score1to10);
 }
 
-async function fetchMockSectionQuestions(skill: string): Promise<{
+async function fetchMockSectionQuestions(skill: string, examId: string): Promise<{
     section_type: string;
     audio_url:    string | null;
     passage_text: string | null;
     passage_id:   string | null;
     questions:    any[];
 }> {
-    const base = { skill, is_active: true } as any;
+    // exam_id scopes the question pool to the student's exam (A3) — zero-change for IELTS.
+    const base = { skill, is_active: true, exam_id: examId } as any;
 
     if (skill === 'LISTENING') {
         const pool = await prisma.mockQuestion.findMany({
@@ -122,11 +123,11 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
     const subSkillData = await Promise.all(subSkills.map(async ss => {
         const [mcqs, prompts] = await Promise.all([
             prisma.mockQuestion.findMany({
-                where:  { skill: skill as any, sub_skill: ss as any, question_type: 'MCQ', is_active: true },
+                where:  { skill: skill as any, sub_skill: ss as any, question_type: 'MCQ', is_active: true, exam_id: examId },
                 select: { id: true, sub_skill: true, question_type: true, prompt_text: true, options: true }
             }),
             prisma.mockQuestion.findMany({
-                where:  { skill: skill as any, sub_skill: ss as any, question_type: promptType, is_active: true },
+                where:  { skill: skill as any, sub_skill: ss as any, question_type: promptType, is_active: true, exam_id: examId },
                 select: { id: true, sub_skill: true, question_type: true, prompt_text: true, options: true }
             })
         ]);
@@ -445,10 +446,10 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
 
         // â”€â”€ 5. Pre-fetch all 4 sections' question pools (validate before creating session) â”€â”€
         const [rawL, rawR, rawW, rawS] = await Promise.all([
-            fetchMockSectionQuestions('LISTENING'),
-            fetchMockSectionQuestions('READING'),
-            fetchMockSectionQuestions('WRITING'),
-            fetchMockSectionQuestions('SPEAKING'),
+            fetchMockSectionQuestions('LISTENING', student.exam_id),
+            fetchMockSectionQuestions('READING', student.exam_id),
+            fetchMockSectionQuestions('WRITING', student.exam_id),
+            fetchMockSectionQuestions('SPEAKING', student.exam_id),
         ]);
         const rawSections = [rawL, rawR, rawW, rawS];
         const emptySections = MOCK_SKILL_ORDER.filter((_, i) => (rawSections[i]?.questions?.length ?? 0) === 0);
