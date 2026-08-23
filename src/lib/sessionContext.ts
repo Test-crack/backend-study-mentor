@@ -3,6 +3,7 @@
 // active". Centralising it here means a later move to JWT + Redis sessions is an
 // adapter in this file, not a change at every controller/middleware call site.
 import prisma from './prisma';
+import { isSubscriptionAccessible } from './examAccess';
 
 export interface InstituteMembership {
   instituteId: string;
@@ -29,4 +30,39 @@ export async function resolveInstitute(
     return row?.institutes ? { instituteId: row.institutes.id, isActive: row.institutes.is_active } : null;
   }
   return null;
+}
+
+/** Exam ids an institute may currently use (ACTIVE/TRIAL subscriptions). */
+export async function resolveAccessibleExamIds(instituteId: string): Promise<string[]> {
+  const subs = await prisma.instituteExamSubscription.findMany({
+    where: { institute_id: instituteId },
+    select: { exam_id: true, billing_status: true },
+  });
+  return subs.filter((s) => isSubscriptionAccessible(s.billing_status)).map((s) => s.exam_id);
+}
+
+export interface ExamContext {
+  instituteId: string;
+  examId: string | null; // null = no exam selected → unscoped (backward-compatible)
+}
+
+/**
+ * Resolve the owner/admin exam context (Track A · A1). If requestedExamId is given it
+ * MUST be an accessible subscription of the caller's institute (else ok:false → 403).
+ * Absent → examId null so exam scoping can roll out incrementally without breaking
+ * current (all-exam) views. This is the single authority for "may this user view this
+ * exam's data" — the swap-point when auth moves to JWT+Redis.
+ */
+export async function resolveExamContext(
+  appUserId: string,
+  role: string | null | undefined,
+  requestedExamId?: string | null
+): Promise<{ ok: true; ctx: ExamContext } | { ok: false; reason: string }> {
+  const membership = await resolveInstitute(appUserId, role);
+  if (!membership) return { ok: false, reason: 'no-institute' };
+  if (!membership.isActive) return { ok: false, reason: 'inactive-institute' };
+  if (!requestedExamId) return { ok: true, ctx: { instituteId: membership.instituteId, examId: null } };
+  const accessible = await resolveAccessibleExamIds(membership.instituteId);
+  if (!accessible.includes(requestedExamId)) return { ok: false, reason: 'exam-not-subscribed' };
+  return { ok: true, ctx: { instituteId: membership.instituteId, examId: requestedExamId } };
 }
