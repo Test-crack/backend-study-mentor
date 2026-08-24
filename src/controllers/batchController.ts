@@ -332,6 +332,15 @@ export async function addStudentToBatch(req: AuthRequest, res: Response) {
         });
         if (!isStudent) return res.status(400).json({ error: 'User is not a student in your institute.' });
 
+        // A student is enrolled for one exam (InstituteStudent.exam_id); they can only join
+        // batches of that exam. Guard against a silent cross-exam mismatch (a student enrolled
+        // for exam Y being added to an exam-X batch).
+        if (batch.exam_id !== isStudent.exam_id) {
+            return res.status(400).json({
+                error: `This student is enrolled for '${isStudent.exam_id}', but this batch is for '${batch.exam_id}'. A student can only join batches of their enrolled exam.`,
+            });
+        }
+
         await prisma.batchStudent.create({
             data: { batch_id: batchId, user_id: userId },
         });
