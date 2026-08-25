@@ -8,7 +8,7 @@ import { BAND_MIN, toBand } from '../lib/bandScale';
 import { scoreComponent, examProficiencyLevel, provenance, getExamConfig, getScale } from '../exam-engine';
 import fs from 'fs';
 import { paramStr } from '../utils/httpParams';
-import { getVivaRubric, getVivaPrompts as getVivaPromptSet, getVivaPrompt } from '../services/viva/registry';
+import { getVivaRubric } from '../services/viva/registry';
 import { gradeResponse, PromptResponseInput } from '../services/viva/pipeline';
 import { aggregateViva } from '../services/viva/scoring';
 import { CEFR_ORDINAL, CefrLevel, GradedResponse } from '../services/viva/types';
@@ -32,6 +32,25 @@ async function pickRandomSetId(level: string, skill: string, examId: string): Pr
         WHERE    level     = ${level}
         AND      skill     = ${skill}::"SkillType"
         AND      exam_id   = ${examId}
+        AND      is_active = TRUE
+        GROUP BY set_id
+        ORDER BY RANDOM()
+        LIMIT    1
+    `;
+    return rows[0]?.set_id ?? null;
+}
+
+/**
+ * Pick one random viva form (set_id) for an exam. Viva prompts aren't level-tagged, so
+ * this groups every active SPEAKING set for the exam and picks one — each set_id is one
+ * alternate form (e.g. se_spoken_v1 / se_spoken_v2), so a student gets one coherent form.
+ */
+async function pickRandomVivaSet(examId: string): Promise<string | null> {
+    const rows: any[] = await prisma.$queryRaw`
+        SELECT   set_id
+        FROM     diagnostic_questions
+        WHERE    exam_id   = ${examId}
+        AND      skill     = 'SPEAKING'::"SkillType"
         AND      is_active = TRUE
         GROUP BY set_id
         ORDER BY RANDOM()
@@ -86,15 +105,17 @@ async function saveDiagnosticAssessment(
     skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING',
     bandScore: number,
     answers: any,
-    subScores: any
+    subScores: any,
+    examId?: string          // stamp the exam so non-IELTS results aren't left on the 'ielts' default
 ) {
+    const examData = examId ? { exam_id: examId } : {};
     await tx.assessmentHistory.create({
-        data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores, ...provenance() }
+        data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores, ...examData, ...provenance() }
     });
     await tx.studentCompetencyMatrix.upsert({
         where:  { student_id_skill: { student_id: studentId, skill } },
-        update: { band_score: bandScore, sub_scores: subScores, assessments_count: { increment: 1 }, last_updated: new Date() },
-        create: { student_id: studentId, skill, band_score: bandScore, sub_scores: subScores, assessments_count: 1 }
+        update: { band_score: bandScore, sub_scores: subScores, assessments_count: { increment: 1 }, last_updated: new Date(), ...examData },
+        create: { student_id: studentId, skill, band_score: bandScore, sub_scores: subScores, assessments_count: 1, ...examData }
     });
 }
 
@@ -568,21 +589,44 @@ export const getDiagnosticVivaPrompts = async (req: AuthRequest & { appUserId?: 
         const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         if (!student) return res.status(404).json({ error: 'Student not found.' });
 
-        const prompts = getVivaPromptSet(student.exam_id);
-        if (prompts.length === 0) {
-            return res.status(400).json({ error: 'viva_not_configured', message: `No viva diagnostic configured for exam ${student.exam_id}.` });
-        }
         const rubric = getVivaRubric(student.exam_id);
+        if (!rubric) {
+            return res.status(400).json({ error: 'viva_not_configured', message: `No viva rubric configured for exam ${student.exam_id}.` });
+        }
+
+        // Prompts are content in diagnostic_questions (skill=SPEAKING). Pin one form
+        // (set_id) per student in diagnostic_sessions so re-fetches are stable and submit
+        // grades against exactly what we served. Per-prompt timing/type/warm-up live in
+        // the row's `options` JSON; the stimulus (read-aloud / voice message) is audio_url.
+        const setId = await resolveServedId(student, 'SPEAKING', () => pickRandomVivaSet(student.exam_id));
+        if (!setId) {
+            return res.status(400).json({ error: 'viva_not_seeded', message: `No viva prompts seeded for exam ${student.exam_id}.` });
+        }
+
+        const rows = await prisma.diagnosticQuestion.findMany({
+            where:   { set_id: setId, exam_id: student.exam_id, skill: 'SPEAKING', is_active: true },
+            orderBy: { sequence: 'asc' },
+        });
 
         res.json({
             examId: student.exam_id,
+            setId,
             alreadyDiagnosed: student.isDiagnosed,
-            minWords: rubric?.guardrails.minWords ?? null,
-            prompts: prompts.map((p) => ({
-                id: p.id, order: p.order, type: p.type, isWarmup: !!p.isWarmup,
-                text: p.text, prepSeconds: p.prepSeconds, speakSeconds: p.speakSeconds,
-                listenAssetUrl: p.listenAssetUrl || null,
-            })),
+            minWords: rubric.guardrails.minWords,
+            prompts: rows.map((q) => {
+                const o = (q.options ?? {}) as any;
+                return {
+                    id: q.id,
+                    order: q.sequence,
+                    type: o.task_type ?? o.type ?? q.question_type,
+                    isWarmup: !!o.is_warmup,
+                    text: q.prompt_text,
+                    passage: q.passage_text ?? null,        // read-aloud passage, when present
+                    prepSeconds: Number(o.prep_seconds ?? 0),
+                    speakSeconds: Number(o.speak_seconds ?? 90),
+                    listenAssetUrl: q.audio_url || null,    // stimulus the student hears before answering
+                };
+            }),
         });
     } catch (err) {
         console.error('[getDiagnosticVivaPrompts]', err);
@@ -616,19 +660,31 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
 
         if (files.length === 0) return res.status(400).json({ error: 'No audio submitted.', can_retry: true });
 
-        // Each file's fieldname is its promptId. Prompt text is resolved server-side
-        // from the registry — a submitted id only selects the canonical prompt, it is
-        // never trusted as grading content.
+        // Grade only against the form we actually served (pinned in diagnostic_sessions).
+        const session = await prisma.diagnosticSession.findUnique({
+            where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'SPEAKING' } },
+        });
+        if (!session) { cleanup(); return res.status(409).json({ error: 'no_active_viva', can_retry: true, message: 'Load the diagnostic prompts before submitting.' }); }
+
+        const rows = await prisma.diagnosticQuestion.findMany({
+            where: { set_id: session.set_id, exam_id: student.exam_id, skill: 'SPEAKING', is_active: true },
+        });
+        const byId = new Map(rows.map((r) => [r.id, r]));
+
+        // Each file's fieldname is a served promptId (diagnostic_question id). Prompt text
+        // is resolved server-side from the served row — the client id only selects it, it
+        // is never trusted as grading content.
         const inputs: PromptResponseInput[] = [];
         for (const f of files) {
-            const prompt = getVivaPrompt(student.exam_id, f.fieldname);
-            if (!prompt) continue; // ignore unknown field names
+            const row = byId.get(f.fieldname);
+            if (!row) continue; // ignore files not matching a served prompt
+            const o = (row.options ?? {}) as any;
             inputs.push({
-                promptId: prompt.id,
-                isWarmup: prompt.isWarmup,
+                promptId: row.id,
+                isWarmup: !!o.is_warmup,
                 audioPath: f.path,
                 mimeType: f.mimetype || 'audio/webm',
-                promptText: prompt.text,
+                promptText: row.prompt_text,
             });
         }
         if (inputs.length === 0) { cleanup(); return res.status(400).json({ error: 'No recognised prompt audio submitted.', can_retry: true }); }
@@ -672,7 +728,7 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
         await prisma.$transaction(async (tx) => {
             await lockDiagnosticSkill(tx, student.id, 'SPEAKING');
             if (await isSkillAlreadyScored(student.id, 'SPEAKING')) throw new DiagnosticAlreadyScoredError();
-            await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, answers, subScores);
+            await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, answers, subScores, student.exam_id);
         });
         const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
 
