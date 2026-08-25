@@ -74,6 +74,13 @@ check('1/8 no-response → scored (excluded from mean)', oneEmpty.status, 'score
 check('1/8 no-response → still b1', oneEmpty.cefrLevel, 'b1');
 check('1/8 no-response → noResponseCount 1', oneEmpty.noResponseCount, 1);
 
+// §E' feedback flows through aggregation
+const withFb = aggregateViva(
+  [resp(uniform('b1'), { promptId: 'p1' }), { ...resp(uniform('b1'), { promptId: 'p2' }), feedback: { strengths: 'clear structure', improvements: 'use more varied vocabulary' } }],
+  R, CEFR);
+check('feedback surfaced in result', withFb.feedback!.length, 1);
+check('feedback keyed by promptId', withFb.feedback![0].promptId, 'p2');
+
 // §E delivery metrics (deterministic, from word timings)
 head('§E  delivery metrics');
 const d = computeDelivery([

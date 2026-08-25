@@ -30,6 +30,7 @@ export async function gradeResponse(
     wordCount: g.wordCount,
     flags: g.flags,
     levels: g.levels,
+    feedback: g.feedback,
   };
 }
 

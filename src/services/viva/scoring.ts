@@ -72,6 +72,9 @@ export function aggregateViva(responses: GradedResponse[], rubric: VivaRubric, s
       level: p.value,
       score: p.percent,
     })),
+    feedback: responses
+      .filter((r) => r.feedback && (r.feedback.strengths || r.feedback.improvements))
+      .map((r) => ({ promptId: r.promptId, strengths: r.feedback!.strengths, improvements: r.feedback!.improvements })),
     scoredPromptCount: scoredCount,
     noResponseCount,
   };

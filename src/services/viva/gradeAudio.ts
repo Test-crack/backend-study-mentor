@@ -38,10 +38,13 @@ const EXT_MIME: Record<string, string> = {
   for (const ss of SPOKEN_ENGLISH_RUBRIC.subskills) {
     console.log(`   ${ss.label.padEnd(22)} ${g.levels[ss.id] ?? '—'}`);
   }
+  console.log('feedback:');
+  console.log('   strengths   :', g.feedback?.strengths);
+  console.log('   improvements:', g.feedback?.improvements);
 
   const cfg: any = JSON.parse(fs.readFileSync(path.join(__dirname, '../../exam-engine/exam-engine-config.v2.json'), 'utf8'));
   const result = aggregateViva(
-    [{ promptId: 'smoke', wordCount: g.wordCount, flags: g.flags, levels: g.levels }],
+    [{ promptId: 'smoke', wordCount: g.wordCount, flags: g.flags, levels: g.levels, feedback: g.feedback }],
     SPOKEN_ENGLISH_RUBRIC, cfg.scales.cefr_6,
   );
   console.log('\n── Aggregated (this one response) ─────────────');

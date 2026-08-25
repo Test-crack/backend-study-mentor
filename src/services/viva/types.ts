@@ -36,12 +36,19 @@ export interface VivaRubric {
 }
 
 /** One prompt's outcome: the grader's per-subskill levels + any flags + length. */
+/** Short AI-generated feedback for a spoken answer. */
+export interface VivaFeedback {
+  strengths: string;      // what the speaker did well (1–2 sentences, specific to what they said)
+  improvements: string;   // the most useful next step to move up a level
+}
+
 export interface GradedResponse {
   promptId: string;
   isWarmup?: boolean;
   wordCount: number;
   flags?: { noResponse?: boolean; offTopic?: boolean; inaudible?: boolean; nonEnglish?: boolean };
   levels?: Partial<Record<string, CefrLevel>>;  // subskillId → level (absent/empty when no usable response)
+  feedback?: VivaFeedback;
 }
 
 export interface VivaResult {
@@ -51,6 +58,7 @@ export interface VivaResult {
   cefrLabel?: string;                           // e.g. 'B1'
   meanScore?: number;                           // mean of the 6 subskill scores
   subskillProfile?: { id: string; label: string; level: string; score: number }[];
+  feedback?: Array<{ promptId: string } & VivaFeedback>;  // per-prompt AI feedback
   scoredPromptCount?: number;
   noResponseCount?: number;
 }
@@ -81,6 +89,7 @@ export interface CompetenceGrader {
     transcript: string;
     wordCount: number;
     flags?: GradedResponse['flags'];
+    feedback?: VivaFeedback;
     rationale?: string;
   }>;
 }

@@ -42,12 +42,15 @@ ${rubricText}
 
 Notes: ${SPOKEN_ENGLISH_GRADER_NOTES}
 
+STEP 4 — FEEDBACK for the learner: one specific strength (reference what they actually said) and the single most useful next step to move up a level. Encouraging, concrete, plain language. Never comment on accent.
+
 Return ONLY this JSON (no prose):
 {
   "content_assessment": "<one of the STEP 1 values>",
   "transcript": "<verbatim English transcript>",
   "word_count": <integer>,
-  "levels": { ${subskillIds} }
+  "levels": { ${subskillIds} },
+  "feedback": { "strengths": "<1–2 sentences>", "improvements": "<1–2 sentences, one concrete next step>" }
 }`;
 }
 
@@ -70,11 +73,13 @@ export const geminiCompetenceGrader: CompetenceGrader = {
     if (ca === 'non_english') flags.nonEnglish = true;
     if (ca === 'off_topic') flags.offTopic = true;
 
+    const fb = parsed.feedback ?? {};
     return {
       levels: (parsed.levels ?? {}) as Record<string, CefrLevel>,
       transcript: String(parsed.transcript ?? ''),
       wordCount: Number(parsed.word_count ?? 0),
       flags,
+      feedback: { strengths: String(fb.strengths ?? ''), improvements: String(fb.improvements ?? '') },
       rationale: ca,
     };
   },
