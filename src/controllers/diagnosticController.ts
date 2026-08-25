@@ -41,22 +41,43 @@ async function pickRandomSetId(level: string, skill: string, examId: string): Pr
 }
 
 /**
- * Pick one random viva form (set_id) for an exam. Viva prompts aren't level-tagged, so
- * this groups every active SPEAKING set for the exam and picks one — each set_id is one
- * alternate form (e.g. se_spoken_v1 / se_spoken_v2), so a student gets one coherent form.
+ * Viva prompts come in versions per prompt (sequence). We serve ONE version of each
+ * prompt — a randomly-mixed set of N questions — and pin the choice as a compact
+ * "version vector" in diagnostic_sessions.set_id, e.g. "v|1:2,2:1,3:1,...". serve and
+ * submit both re-read the vector so they agree on exactly what was served.
  */
-async function pickRandomVivaSet(examId: string): Promise<string | null> {
-    const rows: any[] = await prisma.$queryRaw`
-        SELECT   set_id
-        FROM     diagnostic_questions
-        WHERE    exam_id   = ${examId}
-        AND      skill     = 'SPEAKING'::"SkillType"
-        AND      is_active = TRUE
-        GROUP BY set_id
-        ORDER BY RANDOM()
-        LIMIT    1
-    `;
-    return rows[0]?.set_id ?? null;
+async function pickVivaVersionVector(examId: string): Promise<string | null> {
+    const rows = await prisma.diagnosticQuestion.findMany({
+        where: { exam_id: examId, skill: 'SPEAKING', is_active: true },
+        select: { sequence: true, options: true },
+    });
+    if (rows.length === 0) return null;
+
+    const bySeq = new Map<number, number[]>();
+    for (const r of rows) {
+        const v = Number((r.options as any)?.version ?? 1);
+        bySeq.set(r.sequence, [...(bySeq.get(r.sequence) ?? []), v]);
+    }
+    const picks = [...bySeq.keys()].sort((a, b) => a - b).map((seq) => {
+        const versions = bySeq.get(seq)!;
+        return `${seq}:${versions[Math.floor(Math.random() * versions.length)]}`;
+    });
+    return `v|${picks.join(',')}`;
+}
+
+/** Resolve the served prompt rows (ordered by sequence) from a pinned version vector. */
+async function loadVivaServedRows(examId: string, vector: string) {
+    const picks = vector.replace(/^v\|/, '').split(',').filter(Boolean).map((s) => {
+        const [seq, ver] = s.split(':').map(Number);
+        return { seq, ver };
+    });
+    const rows = await prisma.diagnosticQuestion.findMany({
+        where: { exam_id: examId, skill: 'SPEAKING', is_active: true },
+    });
+    return picks
+        .map((p) => rows.find((r) => r.sequence === p.seq && Number((r.options as any)?.version ?? 1) === p.ver))
+        .filter((r): r is NonNullable<typeof r> => !!r)
+        .sort((a, b) => a.sequence - b.sequence);
 }
 
 /**
@@ -594,37 +615,34 @@ export const getDiagnosticVivaPrompts = async (req: AuthRequest & { appUserId?: 
             return res.status(400).json({ error: 'viva_not_configured', message: `No viva rubric configured for exam ${student.exam_id}.` });
         }
 
-        // Prompts are content in diagnostic_questions (skill=SPEAKING). Pin one form
-        // (set_id) per student in diagnostic_sessions so re-fetches are stable and submit
-        // grades against exactly what we served. Per-prompt timing/type/warm-up live in
-        // the row's `options` JSON; the stimulus (read-aloud / voice message) is audio_url.
-        const setId = await resolveServedId(student, 'SPEAKING', () => pickRandomVivaSet(student.exam_id));
-        if (!setId) {
+        // Prompts are content in diagnostic_questions (skill=SPEAKING), versioned per
+        // prompt. Pin one version-per-prompt vector in diagnostic_sessions so re-fetches
+        // are stable and submit grades against exactly what we served.
+        const vector = await resolveServedId(student, 'SPEAKING', () => pickVivaVersionVector(student.exam_id));
+        if (!vector) {
             return res.status(400).json({ error: 'viva_not_seeded', message: `No viva prompts seeded for exam ${student.exam_id}.` });
         }
-
-        const rows = await prisma.diagnosticQuestion.findMany({
-            where:   { set_id: setId, exam_id: student.exam_id, skill: 'SPEAKING', is_active: true },
-            orderBy: { sequence: 'asc' },
-        });
+        const rows = await loadVivaServedRows(student.exam_id, vector);
 
         res.json({
             examId: student.exam_id,
-            setId,
             alreadyDiagnosed: student.isDiagnosed,
             minWords: rubric.guardrails.minWords,
+            // Note: the question wording (prompt_text) is deliberately NOT sent for audio
+            // prompts — the student only hears the audio. It's the grader's context only.
             prompts: rows.map((q) => {
                 const o = (q.options ?? {}) as any;
+                const display = o.display === 'text' ? 'text' : 'audio';
                 return {
                     id: q.id,
                     order: q.sequence,
                     type: o.task_type ?? o.type ?? q.question_type,
                     isWarmup: !!o.is_warmup,
-                    text: q.prompt_text,
-                    passage: q.passage_text ?? null,        // read-aloud passage, when present
+                    display,                                            // 'audio' (listen) | 'text' (read aloud)
+                    audioUrl: display === 'audio' ? (q.audio_url || null) : null,
+                    passage: display === 'text' ? (q.passage_text ?? null) : null,
                     prepSeconds: Number(o.prep_seconds ?? 0),
                     speakSeconds: Number(o.speak_seconds ?? 90),
-                    listenAssetUrl: q.audio_url || null,    // stimulus the student hears before answering
                 };
             }),
         });
@@ -666,9 +684,7 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
         });
         if (!session) { cleanup(); return res.status(409).json({ error: 'no_active_viva', can_retry: true, message: 'Load the diagnostic prompts before submitting.' }); }
 
-        const rows = await prisma.diagnosticQuestion.findMany({
-            where: { set_id: session.set_id, exam_id: student.exam_id, skill: 'SPEAKING', is_active: true },
-        });
+        const rows = await loadVivaServedRows(student.exam_id, session.set_id);
         const byId = new Map(rows.map((r) => [r.id, r]));
 
         // Each file's fieldname is a served promptId (diagnostic_question id). Prompt text
