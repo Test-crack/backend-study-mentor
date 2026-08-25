@@ -695,12 +695,18 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
             const row = byId.get(f.fieldname);
             if (!row) continue; // ignore files not matching a served prompt
             const o = (row.options ?? {}) as any;
+            // For read-aloud, the grader needs the TARGET passage (to judge pronunciation
+            // against it), not the instruction. For everything else, prompt_text is the
+            // question (or, for the reply task, the framed voice-message transcript).
+            const graderContext = row.passage_text
+                ? `The student was asked to read this sentence aloud: "${row.passage_text}"`
+                : row.prompt_text;
             inputs.push({
                 promptId: row.id,
                 isWarmup: !!o.is_warmup,
                 audioPath: f.path,
                 mimeType: f.mimetype || 'audio/webm',
-                promptText: row.prompt_text,
+                promptText: graderContext,
                 // e.g. read-aloud rows set options.scored_subskills = ["phonology","fluency"]
                 scoredSubskills: Array.isArray(o.scored_subskills) ? o.scored_subskills : undefined,
             });
