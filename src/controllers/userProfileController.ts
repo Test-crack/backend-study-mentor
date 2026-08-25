@@ -1,6 +1,7 @@
 ﻿import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth';
+import { isVivaExam } from '../services/viva/registry';
 
 const prisma = new PrismaClient();
 
@@ -62,7 +63,8 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
             recommendationSeeded: true,
             target_band: true,
             date_of_birth: true,
-            is_minor: true
+            is_minor: true,
+            exam_id: true
           }
         },
         Instructor: {
@@ -101,12 +103,30 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
     let targetBand = null;
     let dateOfBirth: Date | null = null;
     let isMinor = false;
+    let examId: string | null = null;
+    let examLabel: string | null = null;
+    let batchName: string | null = null;
+    let vivaDiagnostic = false;
     if (user.role === 'STUDENT' && user.institute_students) {
       isDiagnosed = user.institute_students.isDiagnosed;
       recommendationSeeded = user.institute_students.recommendationSeeded;
       targetBand = user.institute_students.target_band;
       dateOfBirth = user.institute_students.date_of_birth;
       isMinor = user.institute_students.is_minor;
+      // Current exam + batch context for the student dashboard header. The batch is
+      // scoped to the student's current exam so a multi-exam future stays correct.
+      examId = user.institute_students.exam_id;
+      const [exam, membership] = await Promise.all([
+        prisma.exam.findUnique({ where: { id: examId }, select: { label: true } }),
+        prisma.batchStudent.findFirst({
+          where: { user_id: userId, batch: { exam_id: examId } },
+          select: { batch: { select: { name: true } } },
+          orderBy: { enrolled_at: 'desc' },
+        }),
+      ]);
+      examLabel = exam?.label ?? examId;
+      batchName = membership?.batch?.name ?? null;
+      vivaDiagnostic = isVivaExam(examId); // config-driven: does this exam's diagnostic use a viva?
     }
 
     delete (user as any).institute_owners;
@@ -115,7 +135,7 @@ export const getUserProfile = async (req: AuthRequest & { appUserId?: string }, 
 
     // Note: exam_date is served by GET /api/student/competency-scores (the profile
     // page's source).
-    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand, dateOfBirth, isMinor, isEnrolled } });
+    res.json({ user: { ...user, instituteIsActive, isDiagnosed, recommendationSeeded, targetBand, dateOfBirth, isMinor, isEnrolled, examId, examLabel, batchName, vivaDiagnostic } });
   } catch (error) {
     console.error('[getUserProfile] Error:', error);
     res.status(500).json({ error: 'Failed to fetch user profile' });

@@ -11,6 +11,31 @@ export const LEVEL_ORDER: CefrLevel[] = [
   'below_a1', 'a1', 'a2', 'a2+', 'b1', 'b1+', 'b2', 'b2+', 'c1', 'c2',
 ];
 
+/**
+ * CEFR level → compact ordinal (0–6, half-steps at .5). Stored in
+ * AssessmentHistory.band_score (a Decimal(2,1)) so a viva result fits the same
+ * numeric column IELTS bands use; the rich level/label/profile live in sub_scores.
+ */
+export const CEFR_ORDINAL: Record<CefrLevel, number> = {
+  below_a1: 0, a1: 1, a2: 2, 'a2+': 2.5, b1: 3, 'b1+': 3.5, b2: 4, 'b2+': 4.5, c1: 5, c2: 6,
+};
+
+/**
+ * One diagnostic viva prompt (content). Config/content data, not code — a new exam
+ * ships a new prompt set, no controller change. `listenAssetUrl` is set only for
+ * reply-to-a-voice-message tasks that play audio before the student answers.
+ */
+export interface VivaPrompt {
+  id: string;
+  order: number;
+  type: string;                 // 'Warm-up' | 'Routine' | 'Opinion' | 'Reply task' | …  (display only)
+  isWarmup?: boolean;
+  text: string;
+  prepSeconds: number;
+  speakSeconds: number;
+  listenAssetUrl?: string;      // audio the student hears before answering (Prompt 6)
+}
+
 export interface SubskillRubric {
   id: string;                                   // internal id — matches the exam config's component subskill id
   label: string;                                // student-facing label (e.g. 'Responsiveness' for `interaction`)
