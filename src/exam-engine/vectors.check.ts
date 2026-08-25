@@ -57,11 +57,11 @@ const clampRow = bandMean({ l: 3.0, r: 4.0, w: 3.5, sp: 3.5 }, BAND);
 check('  clamp row reports clamped=true', clampRow.clamped, true);
 check('  clamp row keeps raw 3.5 for improvement maths', clampRow.value_raw, 3.5);
 
-// §3 CEFR level mapping
-head('§3  pctToLevel — corrected GSE-derived thresholds');
-([[0, 'below_a1'], [14, 'below_a1'], [14.99, 'below_a1'], [15, 'a1'], [24, 'a1'], [25, 'a2'],
-  [41, 'a2'], [41.25, 'b1'], [55, 'b1'], [61, 'b1'], [61.25, 'b2'], [82.49, 'b2'], [82.5, 'c1'],
-  [93.74, 'c1'], [93.75, 'c2'], [100, 'c2']] as [number, string][]).forEach(([p, l]) =>
+// §3 CEFR level mapping — Spoken English launch cut-offs (GSE minimums, no rescale)
+head('§3  pctToLevel — Spoken English cut-offs (22/30/43/59/76/85)');
+([[0, 'below_a1'], [21.99, 'below_a1'], [22, 'a1'], [29, 'a1'], [30, 'a2'],
+  [42, 'a2'], [43, 'b1'], [58, 'b1'], [59, 'b2'], [75, 'b2'], [76, 'c1'],
+  [84, 'c1'], [85, 'c2'], [100, 'c2']] as [number, string][]).forEach(([p, l]) =>
   check(`  ${p}%`, pctToLevel(p, CEFR), l));
 
 // §4 cefr_hybrid overall + profile
@@ -70,7 +70,7 @@ const sub = { range: 60, accuracy: 55, fluency: 62, interaction: 50, coherence: 
 const cef = cefrHybrid(sub, CEFR);
 check('  average pct', cef.average_pct, 55);
 check('  overall level', cef.value, 'b1');
-check('  within-level progress', cef.within_level_progress, 0.6875);
+check('  within-level progress', cef.within_level_progress, 0.75);
 check('  profile length (never dropped)', cef.profile.length, 6);
 check('  phonology 45% maps to', cef.profile.find((p) => p.id === 'phonology')!.value, 'b1');
 
@@ -87,11 +87,11 @@ check('  mean 5.90 -> progress 0.30', mid.progress_to_next, 0.3);
 head('§5b  CEFR momentum');
 const m55 = ordinalMomentum(55, 'b1', CEFR);
 check('  avg 55 -> next', m55.next_rung, 'b2');
-check('  avg 55 -> progress', m55.progress_to_next, 0.6875);
+check('  avg 55 -> progress', m55.progress_to_next, 0.75);
 const m95 = ordinalMomentum(95, 'c2', CEFR);
 check('  avg 95 at c2 -> next is null', m95.next_rung, null);
 check('  avg 95 at c2 -> progress_to_next is null', m95.progress_to_next, null);
-check('  avg 95 at c2 -> within_level_progress still shown', m95.within_level_progress, 0.2);
+check('  avg 95 at c2 -> within_level_progress still shown', m95.within_level_progress, 0.666667);
 
 head('§5c  Trend (window 3, within one instrument)');
 ([[[5.0, 5.5, 6.0], 'up'], [[6.0, 6.0, 6.0], 'flat'], [[6.5, 6.0, 5.5], 'down'],
