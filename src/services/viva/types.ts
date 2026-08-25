@@ -71,9 +71,16 @@ export interface DeliveryMetrics {
 }
 
 export interface CompetenceGrader {
-  // audio + transcript + rubric → a CEFR level per subskill (with a short rationale).
+  // audio (+ rubric) → CEFR level per subskill, plus the transcript, meaningful word count,
+  // content flags, and a short rationale. In v1 Gemini transcribes AND grades in one call.
   grade(input: {
-    audioPath: string; mimeType: string; transcript: string;
+    audioPath: string; mimeType: string;
     promptText: string; rubric: VivaRubric; delivery?: DeliveryMetrics;
-  }): Promise<{ levels: Record<string, CefrLevel>; flags?: GradedResponse['flags']; rationale?: string }>;
+  }): Promise<{
+    levels: Record<string, CefrLevel>;
+    transcript: string;
+    wordCount: number;
+    flags?: GradedResponse['flags'];
+    rationale?: string;
+  }>;
 }

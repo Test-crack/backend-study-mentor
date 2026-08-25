@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { SPOKEN_ENGLISH_RUBRIC as R } from './rubrics/spokenEnglish';
 import { capLevel, applyGuardrails, aggregateViva } from './scoring';
+import { computeDelivery } from './delivery';
 import { CefrLevel, GradedResponse } from './types';
 
 const cfg: any = JSON.parse(
@@ -72,6 +73,18 @@ const oneEmpty = aggregateViva(
 check('1/8 no-response → scored (excluded from mean)', oneEmpty.status, 'scored');
 check('1/8 no-response → still b1', oneEmpty.cefrLevel, 'b1');
 check('1/8 no-response → noResponseCount 1', oneEmpty.noResponseCount, 1);
+
+// §E delivery metrics (deterministic, from word timings)
+head('§E  delivery metrics');
+const d = computeDelivery([
+  { word: 'a', startMs: 0, endMs: 300 },
+  { word: 'b', startMs: 500, endMs: 800 },   // 200ms pause before
+  { word: 'c', startMs: 800, endMs: 1100 },  // no pause before
+]);
+check('word count', d.wordCount, 3);
+check('wpm (3 words / 1.1s)', d.wpm, 164);
+check('mean pause ms', d.meanPauseMs, 200);
+check('empty input → zeros', computeDelivery([]).wpm, 0);
 
 console.log(`\n${'='.repeat(64)}\n  ${pass} passed, ${fail} failed\n${'='.repeat(64)}`);
 process.exit(fail ? 1 : 0);
