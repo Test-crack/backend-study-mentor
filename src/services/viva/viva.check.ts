@@ -81,6 +81,19 @@ const withFb = aggregateViva(
 check('feedback surfaced in result', withFb.feedback!.length, 1);
 check('feedback keyed by promptId', withFb.feedback![0].promptId, 'p2');
 
+// §F  per-prompt subskill scoping (read-aloud contributes phonology/fluency only)
+head('§F  read-aloud subskill masking');
+const masked = aggregateViva([
+  resp(uniform('b1'), { promptId: 'free' }),                                            // free prompt → all at b1
+  { ...resp(uniform('c2'), { promptId: 'readaloud' }), scoredSubskills: ['phonology', 'fluency'] }, // c2 phon/flu only
+], R, CEFR);
+const prof = (id: string) => masked.subskillProfile!.find(s => s.id === id)!;
+check('range ignores read-aloud (b1 only)', prof('range').level, 'b1');
+check('coherence ignores read-aloud (b1 only)', prof('coherence').level, 'b1');
+// phonology mean of b1(46)+c2(87)=66.5 → b2; fluency same
+check('phonology counts read-aloud (b1+c2 → b2)', prof('phonology').level, 'b2');
+check('fluency counts read-aloud (b1+c2 → b2)', prof('fluency').level, 'b2');
+
 // §E delivery metrics (deterministic, from word timings)
 head('§E  delivery metrics');
 const d = computeDelivery([

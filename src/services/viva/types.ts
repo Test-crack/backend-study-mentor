@@ -74,6 +74,10 @@ export interface GradedResponse {
   flags?: { noResponse?: boolean; offTopic?: boolean; inaudible?: boolean; nonEnglish?: boolean };
   levels?: Partial<Record<string, CefrLevel>>;  // subskillId → level (absent/empty when no usable response)
   feedback?: VivaFeedback;
+  // If set, this response only contributes to these subskills in aggregation (the rest are
+  // masked). Used for tasks where some subskills aren't the student's own work — e.g. a
+  // read-aloud contributes ['phonology','fluency'] only, since the words are given.
+  scoredSubskills?: string[];
 }
 
 export interface VivaResult {

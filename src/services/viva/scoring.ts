@@ -38,9 +38,11 @@ export function applyGuardrails(r: GradedResponse, rubric: VivaRubric): Record<s
  * `scale` is the cefr_6 scale object (injected for testability; at runtime pass getScale(rubric.scaleId)).
  */
 export function aggregateViva(responses: GradedResponse[], rubric: VivaRubric, scale: any): VivaResult {
-  const graded = responses.map((r) => applyGuardrails(r, rubric));
-  const noResponseCount = graded.filter((g) => g === null).length;
-  const scoredCount = graded.length - noResponseCount;
+  // Keep each response paired with its guarded levels so we can honour per-prompt
+  // subskill scoping (e.g. a read-aloud contributes phonology/fluency only).
+  const guarded = responses.map((r) => ({ r, levels: applyGuardrails(r, rubric) }));
+  const noResponseCount = guarded.filter((g) => g.levels === null).length;
+  const scoredCount = guarded.length - noResponseCount;
 
   if (noResponseCount >= rubric.guardrails.withholdNoResponseCount) {
     return {
@@ -50,11 +52,13 @@ export function aggregateViva(responses: GradedResponse[], rubric: VivaRubric, s
     };
   }
 
-  // Per-subskill mean of level→scores across the scored responses.
+  // Per-subskill mean of level→scores across the scored responses. A response only
+  // counts toward a subskill when it has no scope, or its scope includes that subskill.
   const subskillPercents: Record<string, number> = {};
   for (const ss of rubric.subskills) {
-    const vals = graded.filter((g): g is Record<string, CefrLevel> => g !== null)
-      .map((g) => rubric.levelToScore[g[ss.id]]);
+    const vals = guarded
+      .filter((g) => g.levels !== null && (!g.r.scoredSubskills || g.r.scoredSubskills.includes(ss.id)))
+      .map((g) => rubric.levelToScore[(g.levels as Record<string, CefrLevel>)[ss.id]]);
     subskillPercents[ss.id] = vals.length
       ? vals.reduce((a, b) => a + b, 0) / vals.length
       : rubric.levelToScore.below_a1;

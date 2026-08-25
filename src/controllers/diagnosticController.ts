@@ -685,6 +685,8 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
                 audioPath: f.path,
                 mimeType: f.mimetype || 'audio/webm',
                 promptText: row.prompt_text,
+                // e.g. read-aloud rows set options.scored_subskills = ["phonology","fluency"]
+                scoredSubskills: Array.isArray(o.scored_subskills) ? o.scored_subskills : undefined,
             });
         }
         if (inputs.length === 0) { cleanup(); return res.status(400).json({ error: 'No recognised prompt audio submitted.', can_retry: true }); }

@@ -12,6 +12,7 @@ export interface PromptResponseInput {
   audioPath: string;
   mimeType: string;
   promptText: string;
+  scoredSubskills?: string[];   // restrict which subskills this prompt contributes to (e.g. read-aloud)
 }
 
 /** Grade a single prompt's audio → a GradedResponse (levels + flags + word count). */
@@ -31,6 +32,7 @@ export async function gradeResponse(
     flags: g.flags,
     levels: g.levels,
     feedback: g.feedback,
+    scoredSubskills: input.scoredSubskills,
   };
 }
 

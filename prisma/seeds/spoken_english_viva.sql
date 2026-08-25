@@ -35,7 +35,7 @@ VALUES
     '[[REPLACE: the exact passage the Prompt-2 (v1) audio reads aloud]]',
     '/diagnostics/spoken-english/Prompt_2_ReadAloud/se_diag_v1_p2_stimulus.wav',
     'Read the following passage aloud, clearly and at a natural pace.',
-    '{"prep_seconds":20,"speak_seconds":60,"is_warmup":false,"task_type":"Read aloud"}'::jsonb, 20, 2, TRUE, 'spoken_english'),
+    '{"prep_seconds":20,"speak_seconds":60,"is_warmup":false,"task_type":"Read aloud","scored_subskills":["phonology","fluency"]}'::jsonb, 20, 2, TRUE, 'spoken_english'),
 
   ('5efab1e0-0000-4000-8000-000000000103', 'A', 'SPEAKING', 'VIVA_PROMPT', 'se_spoken_v1',
     NULL,
@@ -78,7 +78,7 @@ VALUES
     '[[REPLACE: the exact passage the Prompt-2 (v2) audio reads aloud]]',
     '/diagnostics/spoken-english/Prompt_2_ReadAloud/se_diag_v2_p2_stimulus.wav',
     'Read the following passage aloud, clearly and at a natural pace.',
-    '{"prep_seconds":20,"speak_seconds":60,"is_warmup":false,"task_type":"Read aloud"}'::jsonb, 20, 2, TRUE, 'spoken_english'),
+    '{"prep_seconds":20,"speak_seconds":60,"is_warmup":false,"task_type":"Read aloud","scored_subskills":["phonology","fluency"]}'::jsonb, 20, 2, TRUE, 'spoken_english'),
 
   ('5efab1e0-0000-4000-8000-000000000203', 'A', 'SPEAKING', 'VIVA_PROMPT', 'se_spoken_v2',
     NULL,
