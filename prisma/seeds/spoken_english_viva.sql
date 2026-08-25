@@ -32,9 +32,9 @@ VALUES
     '{"prep_seconds":0,"speak_seconds":45,"is_warmup":true,"task_type":"Warm-up"}'::jsonb, 5, 1, TRUE, 'spoken_english'),
 
   ('5efab1e0-0000-4000-8000-000000000102', 'A', 'SPEAKING', 'VIVA_PROMPT', 'se_spoken_v1',
-    '[[REPLACE: the exact passage the Prompt-2 (v1) audio reads aloud]]',
+    'Effective communication requires not only speaking fluently, but also listening attentively and adapting your message to your audience.',
     '/diagnostics/spoken-english/Prompt_2_ReadAloud/se_diag_v1_p2_stimulus.wav',
-    'Read the following passage aloud, clearly and at a natural pace.',
+    'Please listen carefully to the sentence on your screen, then read it aloud clearly.',
     '{"prep_seconds":20,"speak_seconds":60,"is_warmup":false,"task_type":"Read aloud","scored_subskills":["phonology","fluency"]}'::jsonb, 20, 2, TRUE, 'spoken_english'),
 
   ('5efab1e0-0000-4000-8000-000000000103', 'A', 'SPEAKING', 'VIVA_PROMPT', 'se_spoken_v1',
