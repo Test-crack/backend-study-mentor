@@ -265,6 +265,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     SELECT id FROM diagnostic_questions
                     WHERE  level = ${level} AND skill = 'WRITING'::"SkillType"
                     AND    question_type = 'WRITING_PROMPT' AND is_active = TRUE
+                    AND    exam_id = ${student?.exam_id ?? 'ielts'}
                     ORDER  BY RANDOM() LIMIT 1
                 `;
                 return rows[0]?.id ?? null;
@@ -288,6 +289,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     SELECT id FROM diagnostic_questions
                     WHERE  level = ${level} AND skill = 'SPEAKING'::"SkillType"
                     AND    question_type = 'SPEAKING_PROMPT' AND is_active = TRUE
+                    AND    exam_id = ${student?.exam_id ?? 'ielts'}
                     ORDER  BY RANDOM() LIMIT 1
                 `;
                 return rows[0]?.id ?? null;
