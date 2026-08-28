@@ -4,33 +4,80 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
-import { BAND_MIN, toBand, fractionToBand, bandToLevel } from '../lib/bandScale';
+import { BAND_MIN, toBand } from '../lib/bandScale';
+import { scoreComponent, examProficiencyLevel, provenance, getExamConfig, getScale } from '../exam-engine';
 import fs from 'fs';
 import { paramStr } from '../utils/httpParams';
+import { getVivaRubric } from '../services/viva/registry';
+import { gradeResponse, PromptResponseInput } from '../services/viva/pipeline';
+import { aggregateViva } from '../services/viva/scoring';
+import { CEFR_ORDINAL, CefrLevel, GradedResponse } from '../services/viva/types';
 
 // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 type DiagnosticLevel = 'A' | 'B' | 'C';
 
-// Even thirds of the [4,9] band domain (D3): A 4.0â€“5.5, B 5.5â€“7.0, C 7.0â€“9.0.
+// Proficiency level from the exam's config-declared cuts (Phase 6 Part 4a).
 function resolveLevel(targetBand: number): DiagnosticLevel {
-    return bandToLevel(targetBand);
+    return examProficiencyLevel('ielts', targetBand) as DiagnosticLevel;
 }
 
 /** Pick one random set_id for the given level + skill. */
-async function pickRandomSetId(level: string, skill: string): Promise<string | null> {
-    // GROUP BY deduplicates set_ids without the DISTINCT+ORDER BY restriction
+async function pickRandomSetId(level: string, skill: string, examId: string): Promise<string | null> {
+    // GROUP BY deduplicates set_ids without the DISTINCT+ORDER BY restriction.
+    // exam_id scopes to the student's exam (A3): an OET student gets OET sets, not IELTS.
     const rows: any[] = await prisma.$queryRaw`
         SELECT   set_id
         FROM     diagnostic_questions
         WHERE    level     = ${level}
         AND      skill     = ${skill}::"SkillType"
+        AND      exam_id   = ${examId}
         AND      is_active = TRUE
         GROUP BY set_id
         ORDER BY RANDOM()
         LIMIT    1
     `;
     return rows[0]?.set_id ?? null;
+}
+
+/**
+ * Viva prompts come in versions per prompt (sequence). We serve ONE version of each
+ * prompt — a randomly-mixed set of N questions — and pin the choice as a compact
+ * "version vector" in diagnostic_sessions.set_id, e.g. "v|1:2,2:1,3:1,...". serve and
+ * submit both re-read the vector so they agree on exactly what was served.
+ */
+async function pickVivaVersionVector(examId: string): Promise<string | null> {
+    const rows = await prisma.diagnosticQuestion.findMany({
+        where: { exam_id: examId, skill: 'SPEAKING', is_active: true },
+        select: { sequence: true, options: true },
+    });
+    if (rows.length === 0) return null;
+
+    const bySeq = new Map<number, number[]>();
+    for (const r of rows) {
+        const v = Number((r.options as any)?.version ?? 1);
+        bySeq.set(r.sequence, [...(bySeq.get(r.sequence) ?? []), v]);
+    }
+    const picks = [...bySeq.keys()].sort((a, b) => a - b).map((seq) => {
+        const versions = bySeq.get(seq)!;
+        return `${seq}:${versions[Math.floor(Math.random() * versions.length)]}`;
+    });
+    return `v|${picks.join(',')}`;
+}
+
+/** Resolve the served prompt rows (ordered by sequence) from a pinned version vector. */
+async function loadVivaServedRows(examId: string, vector: string) {
+    const picks = vector.replace(/^v\|/, '').split(',').filter(Boolean).map((s) => {
+        const [seq, ver] = s.split(':').map(Number);
+        return { seq, ver };
+    });
+    const rows = await prisma.diagnosticQuestion.findMany({
+        where: { exam_id: examId, skill: 'SPEAKING', is_active: true },
+    });
+    return picks
+        .map((p) => rows.find((r) => r.sequence === p.seq && Number((r.options as any)?.version ?? 1) === p.ver))
+        .filter((r): r is NonNullable<typeof r> => !!r)
+        .sort((a, b) => a.sequence - b.sequence);
 }
 
 /**
@@ -79,15 +126,17 @@ async function saveDiagnosticAssessment(
     skill: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING',
     bandScore: number,
     answers: any,
-    subScores: any
+    subScores: any,
+    examId?: string          // stamp the exam so non-IELTS results aren't left on the 'ielts' default
 ) {
+    const examData = examId ? { exam_id: examId } : {};
     await tx.assessmentHistory.create({
-        data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores }
+        data: { student_id: studentId, skill, mode: 'DIAGNOSTIC', band_score: bandScore, raw_answers: answers, sub_scores: subScores, ...examData, ...provenance() }
     });
     await tx.studentCompetencyMatrix.upsert({
         where:  { student_id_skill: { student_id: studentId, skill } },
-        update: { band_score: bandScore, sub_scores: subScores, assessments_count: { increment: 1 }, last_updated: new Date() },
-        create: { student_id: studentId, skill, band_score: bandScore, sub_scores: subScores, assessments_count: 1 }
+        update: { band_score: bandScore, sub_scores: subScores, assessments_count: { increment: 1 }, last_updated: new Date(), ...examData },
+        create: { student_id: studentId, skill, band_score: bandScore, sub_scores: subScores, assessments_count: 1, ...examData }
     });
 }
 
@@ -106,12 +155,26 @@ async function isSkillAlreadyScored(
     return !!existing;
 }
 
-/** Mark diagnosed once all 4 skills are done. */
-async function checkAndMarkDiagnosed(studentId: string): Promise<boolean> {
-    const statusResult: any[] = await prisma.$queryRaw`
-        SELECT * FROM "diagnostic_status" WHERE "student_id" = ${studentId}::uuid
-    `;
-    if (statusResult[0]?.overall_complete) {
+/**
+ * Mark diagnosed once the exam's OWN assessed components are all scored (config-driven).
+ * IELTS → [listening, reading, writing, speaking] (4 skills, unchanged). Spoken English →
+ * [speaking] only. This replaces the hard-coded 4-skill diagnostic_status view so a
+ * speaking-only (or any-shape) exam completes correctly. Exam-aware; is_diagnosed lives
+ * on the per-exam InstituteStudent row, so it's already scoped to this student's exam.
+ */
+async function checkAndMarkDiagnosed(studentId: string, examId: string): Promise<boolean> {
+    const cfg: any = getExamConfig(examId);
+    const components: string[] = cfg?.overall?.components ?? ['listening', 'reading', 'writing', 'speaking'];
+    const requiredSkills = components.map((c) => c.toUpperCase());
+
+    const scored = await prisma.assessmentHistory.findMany({
+        where: { student_id: studentId, mode: 'DIAGNOSTIC', skill: { in: requiredSkills as any } },
+        select: { skill: true },
+        distinct: ['skill'],
+    });
+    const have = new Set(scored.map((s) => String(s.skill)));
+
+    if (requiredSkills.every((s) => have.has(s))) {
         await prisma.instituteStudent.update({ where: { id: studentId }, data: { isDiagnosed: true } });
         return true;
     }
@@ -159,7 +222,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // â”€â”€ LISTENING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'LISTENING') {
-            const setId = await resolveServedId(student, 'LISTENING', () => pickRandomSetId(level, 'LISTENING'));
+            const setId = await resolveServedId(student, 'LISTENING', () => pickRandomSetId(level, 'LISTENING', student?.exam_id ?? 'ielts'));
             if (!setId) return res.status(404).json({ error: 'No listening questions found for this level.' });
 
             const rows = await prisma.diagnosticQuestion.findMany({
@@ -178,7 +241,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
 
         // â”€â”€ READING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'READING') {
-            const setId = await resolveServedId(student, 'READING', () => pickRandomSetId(level, 'READING'));
+            const setId = await resolveServedId(student, 'READING', () => pickRandomSetId(level, 'READING', student?.exam_id ?? 'ielts'));
             if (!setId) return res.status(404).json({ error: 'No reading questions found for this level.' });
 
             const rows = await prisma.diagnosticQuestion.findMany({
@@ -202,6 +265,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     SELECT id FROM diagnostic_questions
                     WHERE  level = ${level} AND skill = 'WRITING'::"SkillType"
                     AND    question_type = 'WRITING_PROMPT' AND is_active = TRUE
+                    AND    exam_id = ${student?.exam_id ?? 'ielts'}
                     ORDER  BY RANDOM() LIMIT 1
                 `;
                 return rows[0]?.id ?? null;
@@ -225,6 +289,7 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
                     SELECT id FROM diagnostic_questions
                     WHERE  level = ${level} AND skill = 'SPEAKING'::"SkillType"
                     AND    question_type = 'SPEAKING_PROMPT' AND is_active = TRUE
+                    AND    exam_id = ${student?.exam_id ?? 'ielts'}
                     ORDER  BY RANDOM() LIMIT 1
                 `;
                 return rows[0]?.id ?? null;
@@ -341,8 +406,8 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 bandScore = BAND_MIN;
                 subScores = { total_questions: 0, correct_answers: 0, accuracy_percentage: 0, by_question_type: {} };
             } else {
-                // Mastery fraction → [4,9]: 0 correct = 4.0 floor, all correct = 9.0.
-                bandScore = fractionToBand(correct / total);
+                // Mastery fraction → band, via the engine (config-driven scale for this component).
+                bandScore = scoreComponent('ielts', skillUpper.toLowerCase(), { unit: 'raw', correct, total }).value;
                 subScores = {
                     total_questions:     total,
                     correct_answers:     correct,
@@ -426,7 +491,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             if (await isSkillAlreadyScored(student.id, skillUpper)) throw new DiagnosticAlreadyScoredError();
             await saveDiagnosticAssessment(tx, student.id, skillUpper, bandScore, parsedAnswers, subScores);
         });
-        const overallComplete = await checkAndMarkDiagnosed(student.id);
+        const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
 
         res.json({ message: `${skillUpper} diagnostic submitted successfully`, bandScore, overallComplete, sub_scores: subScores, feedback: subScores?.feedback });
 
@@ -519,7 +584,7 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
             if (await isSkillAlreadyScored(student.id, 'SPEAKING')) throw new DiagnosticAlreadyScoredError();
             await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, { prompt: topic, transcript }, subScores);
         });
-        const overallComplete = await checkAndMarkDiagnosed(student.id);
+        const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
 
         res.json({ message: 'SPEAKING diagnostic submitted successfully', bandScore, overallComplete, sub_scores: subScores, transcript, feedback: subScores?.feedback });
 
@@ -530,5 +595,177 @@ export const submitDiagnosticSpeaking = async (req: AuthRequest & { appUserId?: 
         }
         console.error('[submitDiagnosticSpeaking]', err);
         res.status(500).json({ error: 'Failed to submit speaking assessment' });
+    }
+};
+
+// ─── Config-driven diagnostic VIVA (Spoken English & future viva exams) ──────────
+// The viva diagnostic is a multi-prompt, record-and-submit speaking test scored on
+// the exam's CEFR scale via the generic viva pipeline. Exam shape (prompts, rubric,
+// scale) comes entirely from the viva registry — this controller is exam-agnostic.
+
+/** GET the ordered diagnostic prompt set for the student's current exam. */
+export const getDiagnosticVivaPrompts = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+    try {
+        const userId = req.appUserId;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
+        if (!student) return res.status(404).json({ error: 'Student not found.' });
+
+        const rubric = getVivaRubric(student.exam_id);
+        if (!rubric) {
+            return res.status(400).json({ error: 'viva_not_configured', message: `No viva rubric configured for exam ${student.exam_id}.` });
+        }
+
+        // Prompts are content in diagnostic_questions (skill=SPEAKING), versioned per
+        // prompt. Pin one version-per-prompt vector in diagnostic_sessions so re-fetches
+        // are stable and submit grades against exactly what we served.
+        const vector = await resolveServedId(student, 'SPEAKING', () => pickVivaVersionVector(student.exam_id));
+        if (!vector) {
+            return res.status(400).json({ error: 'viva_not_seeded', message: `No viva prompts seeded for exam ${student.exam_id}.` });
+        }
+        const rows = await loadVivaServedRows(student.exam_id, vector);
+
+        res.json({
+            examId: student.exam_id,
+            alreadyDiagnosed: student.isDiagnosed,
+            minWords: rubric.guardrails.minWords,
+            // Note: the question wording (prompt_text) is deliberately NOT sent for audio
+            // prompts — the student only hears the audio. It's the grader's context only.
+            prompts: rows.map((q) => {
+                const o = (q.options ?? {}) as any;
+                const display = o.display === 'text' ? 'text' : 'audio';
+                return {
+                    id: q.id,
+                    order: q.sequence,
+                    type: o.task_type ?? o.type ?? q.question_type,
+                    isWarmup: !!o.is_warmup,
+                    display,                                            // 'audio' (listen) | 'text' (read aloud)
+                    audioUrl: display === 'audio' ? (q.audio_url || null) : null,
+                    passage: display === 'text' ? (q.passage_text ?? null) : null,
+                    prepSeconds: Number(o.prep_seconds ?? 0),
+                    speakSeconds: Number(o.speak_seconds ?? 90),
+                };
+            }),
+        });
+    } catch (err) {
+        console.error('[getDiagnosticVivaPrompts]', err);
+        res.status(500).json({ error: 'Failed to load viva prompts' });
+    }
+};
+
+/**
+ * POST all recorded viva answers (multipart; one audio file per prompt, each file's
+ * fieldname = its promptId). Grades every response, aggregates to a CEFR result,
+ * stores a DIAGNOSTIC SPEAKING assessment, and marks the student diagnosed for THIS
+ * exam. One-time, like the IELTS diagnostic.
+ */
+export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    const cleanup = () => { for (const f of files) { try { fs.unlinkSync(f.path); } catch { /* already removed */ } } };
+
+    try {
+        const userId = req.appUserId;
+        if (!userId) { cleanup(); return res.status(401).json({ error: 'Unauthorized' }); }
+
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
+        if (!student) { cleanup(); return res.status(404).json({ error: 'Student not found.' }); }
+
+        const rubric = getVivaRubric(student.exam_id);
+        if (!rubric) { cleanup(); return res.status(400).json({ error: 'viva_not_configured', message: `No viva diagnostic configured for exam ${student.exam_id}.` }); }
+
+        // Diagnostic is one-time: reject resubmission or submission after completion.
+        if (student.isDiagnosed) { cleanup(); return res.status(409).json({ error: 'Diagnostic already completed and cannot be retaken.' }); }
+        if (await isSkillAlreadyScored(student.id, 'SPEAKING')) { cleanup(); return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' }); }
+
+        if (files.length === 0) return res.status(400).json({ error: 'No audio submitted.', can_retry: true });
+
+        // Grade only against the form we actually served (pinned in diagnostic_sessions).
+        const session = await prisma.diagnosticSession.findUnique({
+            where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'SPEAKING' } },
+        });
+        if (!session) { cleanup(); return res.status(409).json({ error: 'no_active_viva', can_retry: true, message: 'Load the diagnostic prompts before submitting.' }); }
+
+        const rows = await loadVivaServedRows(student.exam_id, session.set_id);
+        const byId = new Map(rows.map((r) => [r.id, r]));
+
+        // Each file's fieldname is a served promptId (diagnostic_question id). Prompt text
+        // is resolved server-side from the served row — the client id only selects it, it
+        // is never trusted as grading content.
+        const inputs: PromptResponseInput[] = [];
+        for (const f of files) {
+            const row = byId.get(f.fieldname);
+            if (!row) continue; // ignore files not matching a served prompt
+            const o = (row.options ?? {}) as any;
+            // For read-aloud, the grader needs the TARGET passage (to judge pronunciation
+            // against it), not the instruction. For everything else, prompt_text is the
+            // question (or, for the reply task, the framed voice-message transcript).
+            const graderContext = row.passage_text
+                ? `The student was asked to read this sentence aloud: "${row.passage_text}"`
+                : row.prompt_text;
+            inputs.push({
+                promptId: row.id,
+                isWarmup: !!o.is_warmup,
+                audioPath: f.path,
+                mimeType: f.mimetype || 'audio/webm',
+                promptText: graderContext,
+                // e.g. read-aloud rows set options.scored_subskills = ["phonology","fluency"]
+                scoredSubskills: Array.isArray(o.scored_subskills) ? o.scored_subskills : undefined,
+            });
+        }
+        if (inputs.length === 0) { cleanup(); return res.status(400).json({ error: 'No recognised prompt audio submitted.', can_retry: true }); }
+
+        // Grade each prompt, then aggregate over the exam's CEFR scale.
+        let result;
+        try {
+            const responses: GradedResponse[] = [];
+            for (const input of inputs) responses.push(await gradeResponse(input, rubric));
+            const scale = getScale(rubric.scaleId);
+            result = aggregateViva(responses, rubric, scale);
+        } catch (aiErr) {
+            console.error('[submitDiagnosticViva] grading failed:', aiErr);
+            cleanup();
+            return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
+        } finally {
+            cleanup();
+        }
+
+        // Withheld (≥ guardrail count of no-response prompts) — don't store, ask to retake.
+        if (result.status === 'withheld') {
+            return res.status(422).json({
+                error: 'diagnostic_incomplete', can_retry: true,
+                message: 'Diagnostic incomplete — please retake.',
+                withholdReason: result.withholdReason, noResponseCount: result.noResponseCount,
+            });
+        }
+
+        const bandScore = CEFR_ORDINAL[result.cefrLevel as CefrLevel] ?? 0;
+        const subScores = {
+            cefrLevel: result.cefrLevel,
+            cefrLabel: result.cefrLabel,
+            meanScore: result.meanScore,
+            subskillProfile: result.subskillProfile,
+            feedback: result.feedback,
+            scoredPromptCount: result.scoredPromptCount,
+            noResponseCount: result.noResponseCount,
+        };
+        const answers = { prompts: inputs.map((i) => ({ promptId: i.promptId, promptText: i.promptText })) };
+
+        await prisma.$transaction(async (tx) => {
+            await lockDiagnosticSkill(tx, student.id, 'SPEAKING');
+            if (await isSkillAlreadyScored(student.id, 'SPEAKING')) throw new DiagnosticAlreadyScoredError();
+            await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', bandScore, answers, subScores, student.exam_id);
+        });
+        const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
+
+        res.json({ message: 'Viva diagnostic submitted successfully', overallComplete, result });
+
+    } catch (err) {
+        cleanup();
+        if (err instanceof DiagnosticAlreadyScoredError) {
+            return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' });
+        }
+        console.error('[submitDiagnosticViva]', err);
+        res.status(500).json({ error: 'Failed to submit viva diagnostic' });
     }
 };

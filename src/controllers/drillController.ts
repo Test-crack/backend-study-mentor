@@ -9,7 +9,8 @@ const VALID_SUB_SKILLS = Object.values(SubSkillType) as string[];
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 import { paramStr } from '../utils/httpParams';
-import { BAND_MIN, bandGap } from '../lib/bandScale';
+import { BAND_MIN } from '../lib/bandScale';
+import { examWeaknessGap } from '../exam-engine';
 
 interface DrillItem {
     skill: string;
@@ -75,7 +76,7 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         // normalized on the [4,9] domain â€” band 4 = fully weak). Higher = weaker.
         const weaknessOf = (skill: string, sub: string, band: number) => {
             const acc = accuracyByKey.get(`${skill}::${sub}`) ?? 0;
-            return 0.6 * (1 - acc) + 0.4 * bandGap(band);
+            return 0.6 * (1 - acc) + 0.4 * examWeaknessGap('ielts', band);
         };
 
         const items: DrillItem[] = [];
@@ -217,12 +218,19 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
 
         const QUESTIONS_PER_SESSION = 5;
 
+        // Scope questions to the student's exam (A3) — zero-change for IELTS students.
+        const drillStudent = await prisma.instituteStudent.findUnique({
+            where: { user_id: (req as any).appUserId as string }, select: { exam_id: true },
+        });
+        const examId = drillStudent?.exam_id ?? 'ielts';
+
         const questions = await prisma.$queryRaw`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
             WHERE skill = ${skill}::"SkillType"
               AND sub_skill = ${subskill}::"SubSkillType"
               AND level = ${level}::"RecommendationLevel"
+              AND exam_id = ${examId}
               AND is_active = true
               AND drill_type = 'MCQ'
             ORDER BY RANDOM()

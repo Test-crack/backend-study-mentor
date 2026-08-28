@@ -28,7 +28,7 @@ export async function getBatches(req: AuthRequest, res: Response) {
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
         const batches = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             orderBy: { created_at: 'desc' },
             include: {
                 _count: {
@@ -83,6 +83,9 @@ export async function createBatch(req: AuthRequest, res: Response) {
         const instituteId = await resolveInstituteId(appUserId);
         if (!instituteId) return res.status(403).json({ error: 'Not part of any institute.' });
 
+        // A new batch belongs to the selected exam context; absent context falls back to
+        // the schema default ('ielts') so pre-A1c behavior is unchanged (bug fix #3).
+        const examId = (req as any).ctx?.examId as string | undefined;
         const batch = await prisma.batch.create({
             data: {
                 institute_id: instituteId,
@@ -91,6 +94,7 @@ export async function createBatch(req: AuthRequest, res: Response) {
                 max_students: maxStudents ?? null,
                 status: status ?? 'ACTIVE',
                 created_by: appUserId,
+                ...(examId ? { exam_id: examId } : {}),
             },
         });
 
@@ -327,6 +331,15 @@ export async function addStudentToBatch(req: AuthRequest, res: Response) {
             where: { user_id: userId, institute_id: instituteId },
         });
         if (!isStudent) return res.status(400).json({ error: 'User is not a student in your institute.' });
+
+        // A student is enrolled for one exam (InstituteStudent.exam_id); they can only join
+        // batches of that exam. Guard against a silent cross-exam mismatch (a student enrolled
+        // for exam Y being added to an exam-X batch).
+        if (batch.exam_id !== isStudent.exam_id) {
+            return res.status(400).json({
+                error: `This student is enrolled for '${isStudent.exam_id}', but this batch is for '${batch.exam_id}'. A student can only join batches of their enrolled exam.`,
+            });
+        }
 
         await prisma.batchStudent.create({
             data: { batch_id: batchId, user_id: userId },

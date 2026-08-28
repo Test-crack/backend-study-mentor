@@ -16,6 +16,30 @@ import {
     avgBandFromScores,
 } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
+import { resolveAccessibleExamIds } from '../lib/sessionContext';
+import { getExamConfig } from '../exam-engine';
+
+// ─── GET /api/institute-{owner,admin}/my-exams ───────────────────────────────
+// The exams this institute may currently use (ACTIVE/TRIAL subscriptions), with
+// labels — populates the owner/admin exam-context selector (Track A A1c). Not
+// exam-scoped itself; it IS the list of exams to choose from.
+export async function getMyExams(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getCallerInstitute(appUserId);
+        if (!instituteId) return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
+
+        const examIds = await resolveAccessibleExamIds(instituteId);
+        const data = examIds.map((id) => {
+            const ex: any = getExamConfig(id);
+            return { exam_id: id, label: ex?.naming?.public_display_name ?? id };
+        });
+        return res.json({ success: true, data });
+    } catch (err) {
+        console.error('[InstituteOwner] getMyExams error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
 
 // â”€â”€â”€ Helper: get institute for owner OR admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -44,7 +68,7 @@ async function getOwnedInstitute(appUserId: string): Promise<string | null> {
 
 // â”€â”€â”€ Helper: resolve all institute_students for an institute â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-async function resolveInstituteStudents(instituteId: string): Promise<{
+async function resolveInstituteStudents(instituteId: string, examId?: string | null): Promise<{
     instStudents: Array<{
         id: string;
         user_id: string;
@@ -57,7 +81,7 @@ async function resolveInstituteStudents(instituteId: string): Promise<{
     instStudentIds: string[];
 }> {
     const instStudents = await prisma.instituteStudent.findMany({
-        where: { institute_id: instituteId, is_active: true },
+        where: { institute_id: instituteId, is_active: true, ...(examId ? { exam_id: examId } : {}) },
         select: {
             id: true,
             user_id: true,
@@ -294,12 +318,19 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
     const batchId = paramStr(req.params.batchId);
 
     try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getCallerInstitute(appUserId);
+        if (!instituteId) return res.status(403).json({ error: 'No institute is associated with this account.' });
+        // Scope to the caller's institute (security fix) + the selected exam context if any.
+        const examId = (req as any).ctx?.examId as string | null | undefined;
+        const scope = { institute_id: instituteId, ...(examId ? { exam_id: examId } : {}) };
+
         const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(batchId);
         let batch: any = null;
 
         if (isUuid) {
             batch = await prisma.batch.findFirst({
-                where: { id: batchId },
+                where: { id: batchId, ...scope },
                 include: {
                     batch_students: {
                         include: {
@@ -312,6 +343,7 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
             });
         } else {
             const allBatches = await prisma.batch.findMany({
+                where: scope,
                 include: {
                     batch_students: {
                         include: {
@@ -620,16 +652,21 @@ export async function getSummary(req: AuthRequest, res: Response) {
         if (!instituteId) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
+        // Exam context (Track A A1): when an exam is selected, scope batches + students to it.
+        const examId = (req as any).ctx?.examId as string | undefined;
+        const examScope = examId ? { exam_id: examId } : {};
 
         const [institute, batches, allStudents, adminsCount, instructorRows, invitedNotStarted] = await Promise.all([
             prisma.institute.findUnique({ where: { id: instituteId }, select: { name: true } }),
             prisma.batch.findMany({
-                where: { institute_id: instituteId },
+                where: { institute_id: instituteId, ...examScope },
                 select: { id: true, name: true, status: true },
             }),
-            resolveInstituteStudents(instituteId),
+            resolveInstituteStudents(instituteId, examId),
             prisma.instituteAdmin.count({ where: { institute_id: instituteId } }),
-            // Tutors of this institute + their batch assignments (for unassigned count)
+            // Tutors of this institute + their batch assignments (for unassigned count).
+            // Instructors are institute-level; the exam view derives their relevance from
+            // assignment to this exam's batches (batchIdSet below is already exam-scoped).
             prisma.instituteInstructor.findMany({
                 where:  { institute_id: instituteId },
                 select: { user_id: true, User: { select: { batch_instructors: { select: { batch_id: true } } } } },
@@ -637,7 +674,7 @@ export async function getSummary(req: AuthRequest, res: Response) {
             // Students invited but who never started (no diagnostic yet) â€” the honest
             // "needs attention" number that replaced the fictional approve/reject queue.
             prisma.instituteStudent.count({
-                where: { institute_id: instituteId, isDiagnosed: false, is_active: true },
+                where: { institute_id: instituteId, isDiagnosed: false, is_active: true, ...examScope },
             }),
         ]);
 
@@ -744,10 +781,12 @@ export async function getInstituteBatches(req: AuthRequest, res: Response) {
         if (!instituteId) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
+        const examId = (req as any).ctx?.examId as string | undefined;
 
         const batches: any[] = await prisma.batch.findMany({
             where: {
                 institute_id: instituteId,
+                ...(examId ? { exam_id: examId } : {}),
             },
             include: {
                 batch_students: { select: { user_id: true } },
@@ -968,6 +1007,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
             where: {
                 institute_id: instituteId,
                 ...(batchIdFilter ? { id: batchIdFilter } : {}),
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
             },
             select: { id: true, name: true },
         });
@@ -1136,9 +1176,9 @@ export async function getOwnerStudentFullProgress(req: AuthRequest, res: Respons
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        // Verify student belongs to the institute via any batch
+        // Verify student belongs to the institute (+ the selected exam's enrollment when set)
         const instStudent = await prisma.instituteStudent.findFirst({
-            where: { user_id: studentId, institute_id: instituteId },
+            where: { user_id: studentId, institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
         });
         if (!instStudent) {
@@ -1186,8 +1226,11 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
+        // Disambiguate by exam context: with multi-exam students there is one
+        // InstituteStudent row per exam; scope to the selected exam's enrollment so the
+        // reset (deletes are keyed on this instStudent.id) can't touch another exam's data.
         const instStudent = await prisma.instituteStudent.findFirst({
-            where:  { user_id: studentId, institute_id: instituteId },
+            where:  { user_id: studentId, institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true },
         });
         if (!instStudent) {
@@ -1231,7 +1274,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true, name: true },
         });
 
@@ -1360,7 +1403,7 @@ export async function getInstituteInstructors(req: AuthRequest, res: Response) {
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: {
                 batch_instructors: {
                     include: { User: { select: { id: true, name: true, profileImage: true, email: true } } },
@@ -1435,6 +1478,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             where: {
                 institute_id: instituteId,
                 ...(batchIdFilter ? { id: batchIdFilter } : {}),
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
             },
             select: { id: true, name: true },
         });
@@ -1689,7 +1733,7 @@ export async function getAnalyticsCohortProgress(req: AuthRequest, res: Response
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const { instStudentIds } = await resolveInstituteStudents(instituteId);
+        const { instStudentIds } = await resolveInstituteStudents(instituteId, (req as any).ctx?.examId);
         if (instStudentIds.length === 0) {
             return res.json({ success: true, data: { monthly_points: [] } });
         }
@@ -1774,7 +1818,7 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: {
                 batch_students: { select: { user_id: true } },
             },
@@ -1896,7 +1940,7 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: {
                 batch_instructors: {
                     include: { User: { select: { id: true, name: true, profileImage: true } } },
@@ -2018,7 +2062,7 @@ export async function getAnalyticsEngagementTrends(req: AuthRequest, res: Respon
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const { instStudents, instStudentIds } = await resolveInstituteStudents(instituteId);
+        const { instStudents, instStudentIds } = await resolveInstituteStudents(instituteId, (req as any).ctx?.examId);
         if (instStudentIds.length === 0) {
             return res.json({ success: true, data: [] });
         }
@@ -2092,7 +2136,7 @@ export async function getAnalyticsGoalAchievement(req: AuthRequest, res: Respons
         }
 
         const batches: any[] = await prisma.batch.findMany({
-            where: { institute_id: instituteId },
+            where: { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             include: { batch_students: { select: { user_id: true } } },
         });
 
@@ -2186,7 +2230,7 @@ export async function getAnalyticsSubskillHeatmap(req: AuthRequest, res: Respons
             return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
         }
 
-        const { instStudentIds } = await resolveInstituteStudents(instituteId);
+        const { instStudentIds } = await resolveInstituteStudents(instituteId, (req as any).ctx?.examId);
         if (instStudentIds.length === 0) {
             return res.json({ success: true, data: [] });
         }

@@ -44,6 +44,33 @@ export function validateConfig(cfg: EngineConfig): ValidationResult {
           errors.push(`scale ${id}: step ${s.step} does not divide the scale evenly`);
         }
       }
+      if (s.proficiency_bands) {
+        const pb = s.proficiency_bands as any[];
+        if (!Array.isArray(pb) || !pb.length) {
+          errors.push(`scale ${id}: proficiency_bands must be a non-empty array`);
+        } else {
+          for (const b of pb) {
+            if (b.level == null || b.difficulty == null || typeof b.max_exclusive !== 'number') {
+              errors.push(`scale ${id}: each proficiency band needs level, difficulty and a numeric max_exclusive`);
+            }
+          }
+          const asc = pb.every((b: any, i: number) => i === 0 || b.max_exclusive > pb[i - 1].max_exclusive);
+          if (!asc) errors.push(`scale ${id}: proficiency_bands.max_exclusive must be strictly ascending`);
+          if (pb[pb.length - 1].max_exclusive < s.max) {
+            errors.push(`scale ${id}: top proficiency band (max_exclusive ${pb[pb.length - 1].max_exclusive}) must cover the scale max ${s.max}`);
+          }
+        }
+      }
+
+      if (s.weakness_gap) {
+        const w = s.weakness_gap;
+        if (typeof w.from !== 'number' || typeof w.to !== 'number') {
+          errors.push(`scale ${id}: weakness_gap needs numeric from and to`);
+        } else if (!(w.from < w.to)) {
+          errors.push(`scale ${id}: weakness_gap.from (${w.from}) must be < to (${w.to})`);
+        }
+      }
+
       if (s.grade_bands) {
         // Bands must tile the scale AT THE SCALE STEP, not at 1.
         const sorted = [...s.grade_bands].sort((a: any, b: any) => a.min - b.min);
@@ -111,6 +138,15 @@ export function validateConfig(cfg: EngineConfig): ValidationResult {
 
       if (c.variant_scoped && !ex.variants) {
         errors.push(`${id}.${c.id}: variant_scoped:true but the exam declares no variants`);
+      }
+
+      if (c.raw_input) {
+        const ri = c.raw_input;
+        const kinds = new Set(['fraction', 'internal', 'percent', 'band']);
+        if (!kinds.has(ri.kind)) errors.push(`${id}.${c.id}: unknown raw_input.kind '${ri.kind}'`);
+        if (ri.kind === 'internal' && !(typeof ri.min === 'number' && typeof ri.max === 'number' && ri.min < ri.max)) {
+          errors.push(`${id}.${c.id}: raw_input.kind='internal' needs numeric min < max`);
+        }
       }
     }
 

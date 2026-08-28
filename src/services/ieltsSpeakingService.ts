@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as fs from 'fs';
 import { BAND_MIN, toBand } from '../lib/bandScale';
+import { scoreComponentFromSubskills } from '../exam-engine';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const genAI          = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -60,13 +61,13 @@ function enforceScores(evaluation: any): any {
   evaluation.grammarScore       = toBand(Number(evaluation.grammarScore));
   evaluation.pronunciationScore = toBand(Number(evaluation.pronunciationScore));
 
-  const criteria = [
-    evaluation.fluencyScore,
-    evaluation.vocabularyScore,
-    evaluation.grammarScore,
-    evaluation.pronunciationScore,
-  ];
-  evaluation.bandScore = toBand(criteria.reduce((a, b) => a + b, 0) / 4);
+  // Component band = mean of the 4 criteria, via the engine (band_mean on ielts_band).
+  evaluation.bandScore = scoreComponentFromSubskills('ielts', 'speaking', {
+    fluency_coherence: evaluation.fluencyScore,
+    lexical_resource: evaluation.vocabularyScore,
+    grammatical_range_accuracy: evaluation.grammarScore,
+    pronunciation: evaluation.pronunciationScore,
+  }).value;
 
   return evaluation;
 }

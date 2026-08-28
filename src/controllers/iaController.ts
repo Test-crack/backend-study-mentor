@@ -6,7 +6,7 @@ import { selectPrioritySubSkills } from '../lib/subskillSelector';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { detectAndMarkMissedIAs } from '../lib/iaMissDetector';
 import { processIASession, AlreadyCompletedError, applySmoothing, SUB_SCORE_KEY_MAP, type SectionScore } from '../lib/iaProcessor';
-import { bandToDifficulty } from '../lib/bandScale';
+import { examDifficulty } from '../exam-engine';
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const IA_DRILL_THRESHOLD = 6;   // total sessions required before any IA
@@ -260,9 +260,9 @@ function todayEndIST(): Date {
     return new Date(todayStartISTLocal().getTime() + 24 * 60 * 60 * 1000);
 }
 
-// Even thirds of the [4,9] band domain (D3), via the canonical helper.
+// Difficulty from the exam's config-declared proficiency cuts (Phase 6 Part 2).
 function getDifficulty(band: number): 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED' {
-    return bandToDifficulty(band);
+    return examDifficulty('ielts', band) as 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
 }
 
 function getBandForSubSkill(
@@ -307,10 +307,12 @@ function shuffle<T>(arr: T[]): T[] {
 async function fetchSectionQuestions(
     skill: string,
     subSkill: string,
-    difficulty: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED'
+    difficulty: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED',
+    examId: string
 ): Promise<{ section_type: string; audio_url: string | null; passage_text: string | null; passage_id: string | null; questions: any[] }> {
 
-    const base = { skill, sub_skill: subSkill, difficulty, is_active: true } as any;
+    // exam_id scopes the question pool to the student's exam (A3) — zero-change for IELTS.
+    const base = { skill, sub_skill: subSkill, difficulty, is_active: true, exam_id: examId } as any;
 
     // â”€â”€ LISTENING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (subSkill === 'LISTENING') {
@@ -321,7 +323,7 @@ async function fetchSectionQuestions(
         if (pool.length === 0) {
             // Cross-difficulty fallback
             const fallback = await prisma.iAQuestion.findMany({
-                where: { skill: 'LISTENING' as any, sub_skill: 'LISTENING' as any, is_active: true, audio_url: { not: null } },
+                where: { skill: 'LISTENING' as any, sub_skill: 'LISTENING' as any, is_active: true, exam_id: examId, audio_url: { not: null } },
                 select: { id: true, audio_url: true, question_type: true, prompt_text: true, options: true }
             });
             if (fallback.length === 0) return { section_type: 'AUDIO', audio_url: null, passage_text: null, passage_id: null, questions: [] };
@@ -344,7 +346,7 @@ async function fetchSectionQuestions(
         });
         if (pool.length === 0) {
             const fallback = await prisma.iAQuestion.findMany({
-                where: { skill: 'READING' as any, sub_skill: 'READING' as any, is_active: true, passage_id: { not: null } },
+                where: { skill: 'READING' as any, sub_skill: 'READING' as any, is_active: true, exam_id: examId, passage_id: { not: null } },
                 select: { id: true, passage_id: true, passage_text: true, question_type: true, prompt_text: true, options: true }
             });
             if (fallback.length === 0) return { section_type: 'PASSAGE', audio_url: null, passage_text: null, passage_id: null, questions: [] };
@@ -611,8 +613,8 @@ export async function getIAQuestions(req: AuthRequest, res: Response) {
         const diff2 = getDifficulty(getBandForSubSkill(secondary.skill, secondary.sub_skill, competencyPlain));
 
         const [rawSection1, rawSection2] = await Promise.all([
-            fetchSectionQuestions(primary.skill, primary.sub_skill, diff1),
-            fetchSectionQuestions(secondary.skill, secondary.sub_skill, diff2)
+            fetchSectionQuestions(primary.skill, primary.sub_skill, diff1, student.exam_id),
+            fetchSectionQuestions(secondary.skill, secondary.sub_skill, diff2, student.exam_id)
         ]);
 
         // Build structured question_ids for session persistence

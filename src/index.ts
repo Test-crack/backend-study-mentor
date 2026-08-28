@@ -63,7 +63,7 @@ const corsOptions: cors.CorsOptions = {
     }
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Exam-Id'], // X-Exam-Id: owner/admin exam context (A1c)
   credentials: true, // enable if you plan to use cookies or JWT via headers
 };
 

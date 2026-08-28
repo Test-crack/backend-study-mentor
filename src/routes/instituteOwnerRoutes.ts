@@ -2,6 +2,8 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { ensureUser } from '../middleware/ensureUser';
+import { requireActiveInstitute } from '../middleware/requireActiveInstitute';
+import { attachExamContext } from '../middleware/attachExamContext';
 import { authorize } from '../middleware/rbac';
 import { UserRoleType } from '@prisma/client';
 import * as C from '../controllers/instituteOwnerController';
@@ -11,9 +13,11 @@ const router = Router();
 const IO = UserRoleType.INSTITUTE_OWNER;
 const IA = UserRoleType.INSTITUTE_ADMIN;
 
-// All routes require authentication + user resolution
+// All routes require authentication + user resolution + an active institute
 router.use(requireAuth);
 router.use(ensureUser);
+router.use(requireActiveInstitute);
+router.use(attachExamContext);
 
 // ── Owner-only routes (admin management) ─────────────────────────────────────
 router.get('/admins',              authorize(IO), C.getAdmins);
@@ -23,6 +27,7 @@ router.delete('/admins/:userId',   authorize(IO), C.removeAdmin);
 // ── Shared operational routes (owner OR admin) ────────────────────────────────
 const shared = authorize(IO, IA);
 
+router.get('/my-exams',                                 shared, C.getMyExams);
 router.get('/summary',                                  shared, C.getSummary);
 router.get('/batches',                                  shared, C.getInstituteBatches);
 router.get('/batches/:batchId/dashboard-summary',       shared, C.getOwnerBatchDashboardSummary);

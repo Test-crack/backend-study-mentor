@@ -40,6 +40,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
         const students = await prisma.instituteStudent.findMany({
             where: {
                 institute_id: instituteId,
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
                 ...(search?.trim()
                     ? {
                         User: {
@@ -142,7 +143,9 @@ export async function addStudent(req: AuthRequest, res: Response) {
             }
 
             await tx.instituteStudent.create({
-                data: { user_id: user.id, institute_id: instituteId, is_active: true },
+                // Enroll into the selected exam context; absent context falls back to the
+                // schema default ('ielts') so pre-A1c behavior is unchanged.
+                data: { user_id: user.id, institute_id: instituteId, is_active: true, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             });
 
             return user;
@@ -490,7 +493,7 @@ export async function getOnboardingStatus(req: AuthRequest, res: Response) {
         const [pendingStudents, tutors, batches] = await Promise.all([
             // Students who never completed the diagnostic â€” invited but not started.
             prisma.instituteStudent.findMany({
-                where:   { institute_id: instituteId, isDiagnosed: false, is_active: true },
+                where:   { institute_id: instituteId, isDiagnosed: false, is_active: true, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
                 orderBy: { created_at: 'desc' },
                 take:    50,
                 include: { User: { select: { id: true, name: true, email: true, profileImage: true } } },
@@ -507,7 +510,7 @@ export async function getOnboardingStatus(req: AuthRequest, res: Response) {
                 },
             }),
             prisma.batch.findMany({
-                where:  { institute_id: instituteId },
+                where:  { institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
                 select: { id: true },
             }),
         ]);

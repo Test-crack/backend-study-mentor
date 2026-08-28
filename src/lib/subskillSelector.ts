@@ -22,7 +22,7 @@
  */
 
 import prisma from './prisma';
-import { bandGap } from './bandScale';
+import { examWeaknessGap } from '../exam-engine';
 
 // ─── Static maps ─────────────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ interface ScoredPair extends SubSkillPair {
 function weaknessScore(drillAccuracy: number, bandScore: number): number {
     const accuracyComponent = (1 - Math.min(1, Math.max(0, drillAccuracy))) * 0.6;
     // D4: gap normalized on the [4,9] domain — band 4 = fully weak, band 9 = no gap.
-    const bandComponent     = bandGap(bandScore) * 0.4;
+    const bandComponent     = examWeaknessGap('ielts', bandScore) * 0.4;
     return accuracyComponent + bandComponent;
 }
 
