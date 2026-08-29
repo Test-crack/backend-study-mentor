@@ -28,6 +28,7 @@ router.use(ensureUser);
 const shared = authorize(IA, IO);
 
 // ─── Read-only analytics (owner controller, shared) ───────────────────────────
+router.get('/my-exams',                             shared, Owner.getMyExams);
 router.get('/summary',                              shared, Owner.getSummary);
 router.get('/at-risk',                              shared, Owner.getInstituteAtRisk);
 router.get('/instructors',                          shared, Owner.getInstituteInstructors);
@@ -35,6 +36,11 @@ router.get('/assessment-overview',                  shared, Owner.getInstituteAs
 router.get('/students/:studentId/full-progress',    shared, Owner.getOwnerStudentFullProgress);
 router.post('/students/:studentId/diagnostic/reset', shared, Owner.resetStudentDiagnostic);
 router.get('/batches/:batchId/dashboard-summary',   shared, Owner.getOwnerBatchDashboardSummary);
+
+// Practice history — shared computations, institute-scoped authorisation.
+router.get('/students/:studentId/reading-history',  shared, Owner.getOwnerStudentReadingHistory);
+router.get('/students/:studentId/speaking-history', shared, Owner.getOwnerStudentSpeakingHistory);
+router.get('/students/:studentId/writing-history',  shared, Owner.getOwnerStudentWritingHistory);
 
 router.get('/analytics/cohort-progress',            shared, Owner.getAnalyticsCohortProgress);
 router.get('/analytics/batch-comparison',           shared, Owner.getAnalyticsBatchComparison);
