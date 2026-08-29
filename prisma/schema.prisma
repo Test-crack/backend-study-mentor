@@ -1122,6 +1122,7 @@ enum SubSkillType {
   TASK_RESPONSE
   FLUENCY
   PRONUNCIATION
+  INTERACTION // Spoken English 'interaction' (Responsiveness) — its own value, not TASK_RESPONSE
 }
 
 enum ContentType {
