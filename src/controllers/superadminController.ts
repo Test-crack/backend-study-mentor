@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 import { paramStr } from '../utils/httpParams';
+import { listExamConfigs, getExamConfig } from '../exam-engine';
 
 const VALID_ROLES = Object.values(UserRoleType);
 const VALID_BILLING_STATUSES = ['TRIAL', 'ACTIVE', 'CANCELLED'] as const;
@@ -12,6 +13,38 @@ type BillingStatus = (typeof VALID_BILLING_STATUSES)[number];
 
 const TRIAL_DAYS = 30;
 const trialEndDate = () => new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+
+// ─── Exam config (A4 — VIEW-ONLY; drafting happens client-side, edits go via a dev) ──
+// Scoring config stays file-sourced + code-reviewed. These endpoints only READ it, so a
+// live UI can never change how real students are scored.
+
+/** GET /api/superadmin/exams — list exams with status/label for the config explorer. */
+export async function listExamsForConfig(_req: AuthRequest, res: Response) {
+    try {
+        const data = listExamConfigs().map((e: any) => ({
+            exam_id: e.exam_id,
+            status:  e.status,
+            label:   e?.naming?.public_display_name ?? e.exam_id,
+        }));
+        return res.json({ data });
+    } catch (err: any) {
+        console.error('[superadmin] listExamsForConfig error:', err);
+        return res.status(500).json({ error: 'Failed to list exams' });
+    }
+}
+
+/** GET /api/superadmin/exams/:id/config — the full config entry (read-only) for viewing/drafting. */
+export async function getExamConfigForView(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const cfg = getExamConfig(examId);
+        if (!cfg) return res.status(404).json({ error: `Unknown exam '${examId}'` });
+        return res.json({ data: cfg });
+    } catch (err: any) {
+        console.error('[superadmin] getExamConfigForView error:', err);
+        return res.status(500).json({ error: 'Failed to fetch exam config' });
+    }
+}
 
 /** Valid exam ids come from the Exam registry table (data) — no hardcoded enum. */
 async function validExamIds(): Promise<Set<string>> {
