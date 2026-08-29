@@ -622,8 +622,9 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
                     capError = { status: 409, error: 'You have used your free drills for today. Unlock an extra drill to continue.' };
                     return null;
                 }
-                // LexiGrid gate: the 2nd drill of the day requires LexiGrid done first.
-                if (drillsTodayBefore === 1) {
+                // LexiGrid gate: IELTS's 2nd drill of the day requires LexiGrid done first.
+                // Other exams (e.g. Spoken English: 3 drills, LexiGrid standalone) skip it.
+                if (drillsTodayBefore === 1 && student.exam_id === 'ielts') {
                     const lexiToday = await t.studentGameScore.findFirst({
                         where:  { student_id: student.id, game_type: 'LEXIGRID', session_date: currentISTDate() },
                         select: { id: true },
