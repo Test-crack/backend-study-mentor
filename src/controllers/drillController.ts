@@ -79,6 +79,21 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             return 0.6 * (1 - acc) + 0.4 * examWeaknessGap('ielts', band);
         };
 
+        // CEFR / viva exams (Spoken English & future) drive drills off the speaking subskill
+        // profile, not the IELTS 4-skill band shape. Only recommend subskills that actually
+        // have drills seeded (so, e.g., 'interaction' surfaces once its drills are imported).
+        const isViva = student.exam_id !== 'ielts';
+        const seAvailable = isViva
+            ? new Set((await prisma.drillQuestion.findMany({
+                where: { exam_id: student.exam_id, is_active: true }, distinct: ['sub_skill'], select: { sub_skill: true },
+              })).map((r) => r.sub_skill as string))
+            : null;
+        // CEFR subskill id → SubSkillType enum (mirrors the frontend spokenEnglishSubskills config).
+        const SE_SUBSKILL_ENUM: Record<string, string> = {
+            range: 'VOCABULARY', accuracy: 'GRAMMAR', fluency: 'FLUENCY',
+            interaction: 'INTERACTION', coherence: 'COHERENCE', phonology: 'PRONUNCIATION',
+        };
+
         const items: DrillItem[] = [];
 
         for (const matrix of matrices) {
@@ -86,6 +101,21 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             // below the valid domain and distort the weakness ranking.
             const skillBandScore = Number(matrix.band_score || BAND_MIN);
             const subScores = (matrix.sub_scores as Record<string, any>) || {};
+
+            // CEFR exams: one assessed skill (speaking) with subskills in sub_scores.subskillProfile.
+            // Weakness = 60% recent drill-accuracy gap + 40% subskill-score gap (percent domain).
+            if (isViva) {
+                const profile: any[] = Array.isArray(subScores.subskillProfile) ? subScores.subskillProfile : [];
+                for (const p of profile) {
+                    const sub = SE_SUBSKILL_ENUM[p.id];
+                    if (!sub || (seAvailable && !seAvailable.has(sub))) continue; // skip undrillable / unseeded
+                    const scorePct = Number(p.score ?? 0);
+                    const acc = accuracyByKey.get(`${matrix.skill}::${sub}`) ?? 0;
+                    const weakness = 0.6 * (1 - acc) + 0.4 * (1 - Math.min(1, scorePct / 100));
+                    items.push({ skill: matrix.skill, sub_skill: sub, skill_band_score: skillBandScore, sub_skill_score: scorePct, weakness });
+                }
+                continue;
+            }
 
             // Use DB enum values (uppercase) for sub_skill.
             // *Score-suffixed keys match what IA/diagnostic stores in sub_scores JSONB.
