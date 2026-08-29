@@ -162,7 +162,11 @@ Verification/drills/results/
 Verification/drills/cache/
 Verification/diagnostic/results/
 Verification/diagnostic/cache/
+Verification/diagnostic/question-banks/reading-content-all.pdf
 Verification/diagnostic/question-banks/staging-audio/
+Verification/drills/question-banks/cache/
+Verification/spoken-english/results/
+Verification/spoken-english/cache/
 # CSV files are local-only, never push to origin
 *.csv
 

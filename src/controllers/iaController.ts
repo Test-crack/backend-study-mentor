@@ -846,6 +846,11 @@ export async function saveIAAnswer(req: AuthRequest, res: Response) {
         if (!question_id || answer === undefined) {
             return res.status(400).json({ success: false, error: 'question_id and answer are required.' });
         }
+        // Generous cap so a real essay/transcript never gets close, but a pasted
+        // multi-MB blob can't reach the Gemini prompt.
+        if (String(answer).length > 5000) {
+            return res.status(400).json({ success: false, error: 'Answer exceeds maximum allowed length.' });
+        }
 
         // Reject question ids that aren't part of this session â€” stops unbounded JSON
         // growth and keeps realAnswerCount honest for the miss detector.
