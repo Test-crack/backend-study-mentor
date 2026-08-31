@@ -13,6 +13,7 @@ function strip(v: any): any {
     for (const [k, val] of Object.entries(v)) {
       if (k.startsWith('_')) continue;              // _status, _note, _threshold_provenance, …
       if (k === 'thresholds_min_pct') continue;     // the CEFR cut scores — scoring, never shipped
+      if (k === 'proficiency_bands' || k === 'weakness_gap') continue; // numeric cut scores — scoring, never shipped
       out[k] = strip(val);
     }
     return out;

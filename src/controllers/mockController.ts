@@ -3,7 +3,8 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { applySmoothing } from '../lib/iaProcessor';
-import { BAND_MIN, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
+import { BAND_MIN, toBand, internalToBand } from '../lib/bandScale';
+import { scoreComponent, scoreOverall, provenance } from '../exam-engine';
 import { paramStr } from '../utils/httpParams';
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -77,14 +78,15 @@ function scaleToIELTS(score1to10: number): number {
     return internalToBand(score1to10);
 }
 
-async function fetchMockSectionQuestions(skill: string): Promise<{
+async function fetchMockSectionQuestions(skill: string, examId: string): Promise<{
     section_type: string;
     audio_url:    string | null;
     passage_text: string | null;
     passage_id:   string | null;
     questions:    any[];
 }> {
-    const base = { skill, is_active: true } as any;
+    // exam_id scopes the question pool to the student's exam (A3) — zero-change for IELTS.
+    const base = { skill, is_active: true, exam_id: examId } as any;
 
     if (skill === 'LISTENING') {
         const pool = await prisma.mockQuestion.findMany({
@@ -121,11 +123,11 @@ async function fetchMockSectionQuestions(skill: string): Promise<{
     const subSkillData = await Promise.all(subSkills.map(async ss => {
         const [mcqs, prompts] = await Promise.all([
             prisma.mockQuestion.findMany({
-                where:  { skill: skill as any, sub_skill: ss as any, question_type: 'MCQ', is_active: true },
+                where:  { skill: skill as any, sub_skill: ss as any, question_type: 'MCQ', is_active: true, exam_id: examId },
                 select: { id: true, sub_skill: true, question_type: true, prompt_text: true, options: true }
             }),
             prisma.mockQuestion.findMany({
-                where:  { skill: skill as any, sub_skill: ss as any, question_type: promptType, is_active: true },
+                where:  { skill: skill as any, sub_skill: ss as any, question_type: promptType, is_active: true, exam_id: examId },
                 select: { id: true, sub_skill: true, question_type: true, prompt_text: true, options: true }
             })
         ]);
@@ -444,10 +446,10 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
 
         // â”€â”€ 5. Pre-fetch all 4 sections' question pools (validate before creating session) â”€â”€
         const [rawL, rawR, rawW, rawS] = await Promise.all([
-            fetchMockSectionQuestions('LISTENING'),
-            fetchMockSectionQuestions('READING'),
-            fetchMockSectionQuestions('WRITING'),
-            fetchMockSectionQuestions('SPEAKING'),
+            fetchMockSectionQuestions('LISTENING', student.exam_id),
+            fetchMockSectionQuestions('READING', student.exam_id),
+            fetchMockSectionQuestions('WRITING', student.exam_id),
+            fetchMockSectionQuestions('SPEAKING', student.exam_id),
         ]);
         const rawSections = [rawL, rawR, rawW, rawS];
         const emptySections = MOCK_SKILL_ORDER.filter((_, i) => (rawSections[i]?.questions?.length ?? 0) === 0);
@@ -886,7 +888,9 @@ async function processMockSession(
                 const ca = String(q.correct_answer ?? '').trim().toUpperCase().replace(/^["']|["']$/g, '');
                 if (sa && ca && sa === ca) correct++;
             }
-            const band = mcqQs.length > 0 ? fractionToBand(correct / mcqQs.length) : BAND_MIN;
+            const band = mcqQs.length > 0
+                ? scoreComponent('ielts', cfg.skill.toLowerCase(), { unit: 'raw', correct, total: mcqQs.length }).value
+                : BAND_MIN;
             skillScores.push({ skill: cfg.skill, band, correct, total: mcqQs.length, ai_graded: false });
         } else {
             const subSkills = cfg.skill === 'WRITING' ? WRITING_SUB_SKILLS : SPEAKING_SUB_SKILLS;
@@ -990,10 +994,10 @@ async function processMockSession(
         return { ...s, new_matrix_band: newMatrixBand, prev_matrix_band: prevBand, diagnostic_band: diagBand, delta_from_diag: deltaFromDiag };
     });
 
-    // Real Band + momentum
-    const allNewBands   = skillScoresResponse.map(s => s.new_matrix_band);
-    const realBandRaw   = allNewBands.reduce((a, b) => a + b, 0) / allNewBands.length;
-    const realBandScore = toBand(realBandRaw);
+    // Real Band + momentum — headline via the engine (band_mean over the skill bands).
+    const realBandScore = Number(
+        scoreOverall('ielts', Object.fromEntries(skillScoresResponse.map(s => [s.skill, s.new_matrix_band]))).value
+    );
 
     const prevOverall = Math.round(
         (MOCK_SKILL_ORDER.reduce((sum, sk) => sum + (prevMatrixBands.get(sk) ?? BAND_MIN), 0) / MOCK_SKILL_ORDER.length) * 2
@@ -1017,7 +1021,7 @@ async function processMockSession(
 
         for (const s of skillScoresResponse) {
             await tx.assessmentHistory.create({
-                data: { student_id: student.id, skill: s.skill as any, mode: 'MOCK' as any, band_score: s.new_matrix_band }
+                data: { student_id: student.id, skill: s.skill as any, mode: 'MOCK' as any, band_score: s.new_matrix_band, ...provenance() }
             });
             if (s.skill === 'WRITING' || s.skill === 'SPEAKING') {
                 const { updatedSS } = wsUpdates.get(s.skill)!;

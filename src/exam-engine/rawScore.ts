@@ -36,15 +36,22 @@ export function asFraction(raw: RawScore): number {
   return r.total > 0 ? r.correct / r.total : 0;
 }
 
+/** Reduce a RawScore to the plain number a strategy/component consumes. Exhaustive on unit. */
+function rawToNumber(raw: RawScore): number {
+  switch (raw.unit) {
+    case 'percent':  return raw.value;
+    case 'band':     return raw.value;
+    case 'internal': return raw.value;
+    case 'raw':      return raw.total > 0 ? raw.correct / raw.total : 0;
+  }
+}
+
 /** Map a batch of RawScores (all the expected unit) to plain numbers by component id. */
 export function readAll(inputs: Record<string, RawScore>, expected: RawScoreUnit): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [id, raw] of Object.entries(inputs)) {
     assertUnit(raw, expected);
-    out[id] =
-      raw.unit === 'percent' ? raw.value :
-      raw.unit === 'band'    ? raw.value :
-      raw.total > 0          ? raw.correct / raw.total : 0;
+    out[id] = rawToNumber(raw);
   }
   return out;
 }

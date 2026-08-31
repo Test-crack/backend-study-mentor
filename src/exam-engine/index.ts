@@ -5,10 +5,14 @@ export {
   roundHalfUpToStep, clamp, tidy,
   pctToLevel, withinLevelProgress, nextLevel, levelIndex,
   bandMean, cefrHybrid,
+  proficiencyLevel, difficulty, weaknessGap,
 } from './scoring';
 export { numericMomentum, ordinalMomentum, trend, buildEnvelope } from './progression';
 export { getStrategy, hasStrategy, knownStrategies } from './registry';
 export type { ScoringStrategy } from './registry';
+export { examProficiencyLevel, examDifficulty, examWeaknessGap } from './proficiency';
+export { componentBand, scoreComponent, scoreComponentFromSubskills, scoreOverall } from './component';
+export type { ComponentResult } from './component';
 export { assertUnit, asPercent, asBand, asFraction, readAll, RawScoreUnitError } from './rawScore';
 export {
   toPublicConfig, toPublicExamSummary, listPublicConfigs, listPublicSummaries,

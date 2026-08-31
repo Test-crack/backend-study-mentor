@@ -116,7 +116,8 @@ export interface EngineConfig {
 export type RawScore =
   | { unit: 'percent'; value: number }               // 0–100
   | { unit: 'band'; value: number; scale: string }   // scale-native
-  | { unit: 'raw'; correct: number; total: number };
+  | { unit: 'raw'; correct: number; total: number }  // objective MCQ
+  | { unit: 'internal'; value: number; min: number; max: number }; // AI internal scale (IELTS 1–10)
 
 export type RawScoreUnit = RawScore['unit'];
 

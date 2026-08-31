@@ -9,9 +9,11 @@ import path from 'path';
 import { validateConfig } from './validator';
 import {
   roundHalfUpToStep, tidy, pctToLevel, withinLevelProgress,
-  bandMean, cefrHybrid,
+  bandMean, cefrHybrid, proficiencyLevel, difficulty, weaknessGap,
 } from './scoring';
 import { numericMomentum, ordinalMomentum, trend, buildEnvelope } from './progression';
+import { bandToLevel, bandToDifficulty, bandGap, toBand, fractionToBand, internalToBand } from '../lib/bandScale';
+import { componentBand } from './component';
 
 const cfg: any = JSON.parse(fs.readFileSync(path.join(__dirname, 'exam-engine-config.v2.json'), 'utf8'));
 const BAND = cfg.scales.ielts_band;
@@ -55,11 +57,11 @@ const clampRow = bandMean({ l: 3.0, r: 4.0, w: 3.5, sp: 3.5 }, BAND);
 check('  clamp row reports clamped=true', clampRow.clamped, true);
 check('  clamp row keeps raw 3.5 for improvement maths', clampRow.value_raw, 3.5);
 
-// §3 CEFR level mapping
-head('§3  pctToLevel — corrected GSE-derived thresholds');
-([[0, 'below_a1'], [14, 'below_a1'], [14.99, 'below_a1'], [15, 'a1'], [24, 'a1'], [25, 'a2'],
-  [41, 'a2'], [41.25, 'b1'], [55, 'b1'], [61, 'b1'], [61.25, 'b2'], [82.49, 'b2'], [82.5, 'c1'],
-  [93.74, 'c1'], [93.75, 'c2'], [100, 'c2']] as [number, string][]).forEach(([p, l]) =>
+// §3 CEFR level mapping — Spoken English launch cut-offs (GSE minimums, no rescale)
+head('§3  pctToLevel — Spoken English cut-offs (22/30/43/59/76/85)');
+([[0, 'below_a1'], [21.99, 'below_a1'], [22, 'a1'], [29, 'a1'], [30, 'a2'],
+  [42, 'a2'], [43, 'b1'], [58, 'b1'], [59, 'b2'], [75, 'b2'], [76, 'c1'],
+  [84, 'c1'], [85, 'c2'], [100, 'c2']] as [number, string][]).forEach(([p, l]) =>
   check(`  ${p}%`, pctToLevel(p, CEFR), l));
 
 // §4 cefr_hybrid overall + profile
@@ -68,7 +70,7 @@ const sub = { range: 60, accuracy: 55, fluency: 62, interaction: 50, coherence: 
 const cef = cefrHybrid(sub, CEFR);
 check('  average pct', cef.average_pct, 55);
 check('  overall level', cef.value, 'b1');
-check('  within-level progress', cef.within_level_progress, 0.6875);
+check('  within-level progress', cef.within_level_progress, 0.75);
 check('  profile length (never dropped)', cef.profile.length, 6);
 check('  phonology 45% maps to', cef.profile.find((p) => p.id === 'phonology')!.value, 'b1');
 
@@ -85,11 +87,11 @@ check('  mean 5.90 -> progress 0.30', mid.progress_to_next, 0.3);
 head('§5b  CEFR momentum');
 const m55 = ordinalMomentum(55, 'b1', CEFR);
 check('  avg 55 -> next', m55.next_rung, 'b2');
-check('  avg 55 -> progress', m55.progress_to_next, 0.6875);
+check('  avg 55 -> progress', m55.progress_to_next, 0.75);
 const m95 = ordinalMomentum(95, 'c2', CEFR);
 check('  avg 95 at c2 -> next is null', m95.next_rung, null);
 check('  avg 95 at c2 -> progress_to_next is null', m95.progress_to_next, null);
-check('  avg 95 at c2 -> within_level_progress still shown', m95.within_level_progress, 0.2);
+check('  avg 95 at c2 -> within_level_progress still shown', m95.within_level_progress, 0.666667);
 
 head('§5c  Trend (window 3, within one instrument)');
 ([[[5.0, 5.5, 6.0], 'up'], [[6.0, 6.0, 6.0], 'flat'], [[6.5, 6.0, 5.5], 'down'],
@@ -147,6 +149,82 @@ function oetGrade(score: number): string | null {
 const sortedBands = [...oet.grade_bands].sort((a: any, b: any) => a.min - b.min);
 check('  bands tile the scale at step 10',
   sortedBands.every((b: any, i: number) => i === 0 || b.min - sortedBands[i - 1].max === oet.step), true);
+
+// §9 proficiency / difficulty / weakness-gap parity vs bandScale (Phase 6 extraction gate)
+head('§9  Proficiency + weakness-gap — engine == bandScale across the grid');
+{
+  const grid: number[] = [];
+  for (let b = 0; b <= 10.0001; b += 0.1) grid.push(tidy(b, 1));
+  grid.push(5.5, 7.0, 4.0, 9.0, 3.0, 9.5);   // exact cut edges + out-of-range
+  let mism = 0;
+  for (const b of grid) {
+    const ok = proficiencyLevel(b, BAND) === bandToLevel(b)
+      && difficulty(b, BAND) === bandToDifficulty(b)
+      && weaknessGap(b, BAND) === bandGap(b);
+    if (!ok) {
+      mism++;
+      console.log(`  FAIL band ${b}  lvl ${proficiencyLevel(b, BAND)}/${bandToLevel(b)}  diff ${difficulty(b, BAND)}/${bandToDifficulty(b)}  gap ${weaknessGap(b, BAND)}/${bandGap(b)}`);
+    }
+  }
+  check(`  ${grid.length} bands: engine level+difficulty+gap identical to bandScale`, mism, 0);
+  // spot-check the exact cut boundaries read from config
+  check('  5.5 -> B (cut boundary)', proficiencyLevel(5.5, BAND), 'B');
+  check('  7.0 -> C (cut boundary)', proficiencyLevel(7.0, BAND), 'C');
+  check('  gap at 4.0 is fully weak', weaknessGap(4.0, BAND), 1);
+  check('  gap at 9.0 is zero', weaknessGap(9.0, BAND), 0);
+
+  // facade resolution: the exam's overall scale is the one carrying the new cuts,
+  // so examDifficulty('ielts', b) resolves to this BAND and matches bandScale.
+  const ieltsScaleId = cfg.exams.ielts.overall.scale;
+  check('  ielts overall scale id', ieltsScaleId, 'ielts_band');
+  check('  resolved scale has proficiency_bands', Array.isArray(cfg.scales[ieltsScaleId].proficiency_bands), true);
+  check('  resolved scale has weakness_gap.from', typeof cfg.scales[ieltsScaleId].weakness_gap.from, 'number');
+}
+
+// §10 scoreComponent parity vs bandScale (Phase 6 Part 1b — component production)
+head('§10  componentBand — engine == bandScale across the grid');
+{
+  let mism = 0, n = 0;
+  // objective raw (correct/total) — Listening/Reading MCQ
+  for (let total = 1; total <= 40; total++) {
+    for (let correct = 0; correct <= total; correct++) {
+      n++;
+      const eng = componentBand({ unit: 'raw', correct, total }, BAND).value;
+      const old = fractionToBand(correct / total);
+      if (eng !== old) { mism++; console.log(`  FAIL raw ${correct}/${total} eng=${eng} old=${old}`); }
+    }
+  }
+  // AI internal 1..10 (0.1 steps) — blend result
+  for (let s = 1; s <= 10.0001; s = tidy(s + 0.1, 1)) {
+    n++;
+    const eng = componentBand({ unit: 'internal', value: s, min: 1, max: 10 }, BAND).value;
+    const old = internalToBand(s);
+    if (eng !== old) { mism++; console.log(`  FAIL internal ${s} eng=${eng} old=${old}`); }
+  }
+  // band pass-through (mean-of-criteria) — 0.25 steps across [3,10]
+  for (let b = 3.0; b <= 10.0001; b = tidy(b + 0.25, 2)) {
+    n++;
+    const eng = componentBand({ unit: 'band', value: b, scale: 'ielts_band' }, BAND).value;
+    const old = toBand(b);
+    if (eng !== old) { mism++; console.log(`  FAIL band ${b} eng=${eng} old=${old}`); }
+  }
+  check(`  ${n} component inputs identical to bandScale (raw/internal/band)`, mism, 0);
+}
+
+// §11 AI-service aggregation parity: band_mean(4 criteria) == toBand(mean) (Phase 6 Part 3)
+head('§11  AI mean-of-criteria — band_mean == toBand(avg) across all 0.5-step quads');
+{
+  const vals: number[] = [];
+  for (let b = 4.0; b <= 9.0001; b = tidy(b + 0.5, 1)) vals.push(b);
+  let mism = 0, n = 0;
+  for (const a of vals) for (const b of vals) for (const c of vals) for (const d of vals) {
+    n++;
+    const eng = bandMean({ a, b, c, d }, BAND).value;
+    const old = toBand((a + b + c + d) / 4);
+    if (eng !== old) { mism++; if (mism <= 5) console.log(`  FAIL [${a},${b},${c},${d}] eng=${eng} old=${old}`); }
+  }
+  check(`  ${n} criterion quads: band_mean identical to toBand(avg)`, mism, 0);
+}
 
 // summary
 console.log(`\n${'='.repeat(70)}`);

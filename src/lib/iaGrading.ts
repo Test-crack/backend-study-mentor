@@ -116,9 +116,19 @@ Band 1 — Unintelligible. Cannot be understood.`,
 
 // ── Shared Gemini call ────────────────────────────────────────────────────────
 
+const GEMINI_TIMEOUT_MS = 30_000;
+
 async function callGemini(prompt: string): Promise<IAGradeResult> {
-    const model  = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
+    const model  = genAI.getGenerativeModel({
+        model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+        generationConfig: { temperature: 0 },
+    });
+    const result = await Promise.race([
+        model.generateContent(prompt),
+        new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Gemini request timed out')), GEMINI_TIMEOUT_MS)
+        ),
+    ]);
     let raw = result.response.text().trim();
 
     // Remove markdown code fences if present
@@ -134,6 +144,7 @@ async function callGemini(prompt: string): Promise<IAGradeResult> {
     
     // Allow 0.5-increment values (e.g. 6.5) so submitIA can produce proper IELTS half-bands
     let band = Number(parsed.band);
+    if (!Number.isFinite(band)) throw new Error('AI returned a non-numeric band.');
     band = Math.round(band * 2) / 2;       // round to nearest 0.5
     band = Math.min(10, Math.max(1, band)); // clamp to 1–10
     
@@ -215,7 +226,7 @@ GRADING INSTRUCTIONS:
 Step 1: Check relevance — Does this answer the question asked?
 Step 2: Check length — Is there enough content to fairly assess the skill?
 Step 3: Evaluate the "${criterion}" criterion using the band descriptors
-Step 4: Assign a band from 1-10 (whole numbers only, no decimals)
+Step 4: Assign a band from 1-10, in increments of 0.5 (e.g. 6.0, 6.5, 7.0)
 Step 5: Write a clear rationale citing specific evidence from the response
 Step 6: List 2-3 key observations (strengths or weaknesses)
 
@@ -225,7 +236,7 @@ OUTPUT FORMAT:
 Return ONLY valid JSON with NO markdown, NO code fences, NO extra text:
 
 {
-  "band": <integer 1-10>,
+  "band": <number 1-10, in increments of 0.5>,
   "rationale": "<2-3 sentences explaining the band score with specific evidence from the response>",
   "key_observations": [
     "<specific observation 1 with example from text>",
@@ -234,8 +245,8 @@ Return ONLY valid JSON with NO markdown, NO code fences, NO extra text:
   ]
 }
 
-IMPORTANT: 
-- Band must be an integer from 1 to 10
+IMPORTANT:
+- Band must be a number from 1 to 10 in 0.5 increments (whole or half only, e.g. 6.0 or 6.5 — never 6.3)
 - Rationale must cite specific examples from the student's response
 - Key observations must be concrete and evidence-based
 - Be consistent with IELTS standards — strict but fair`;
@@ -248,7 +259,7 @@ export async function gradeIAWritingPrompt(
     questionPrompt: string,
     response:       string,
 ): Promise<IAGradeResult> {
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+    if (!GEMINI_API_KEY) throw new AIGradingError('GEMINI_API_KEY missing');
     if (!response?.trim()) {
         return { 
             band: 1, 
@@ -272,7 +283,7 @@ export async function gradeIASpeakingPrompt(
     questionPrompt: string,
     transcript:     string,
 ): Promise<IAGradeResult> {
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
+    if (!GEMINI_API_KEY) throw new AIGradingError('GEMINI_API_KEY missing');
     if (!transcript?.trim()) {
         return { 
             band: 1, 

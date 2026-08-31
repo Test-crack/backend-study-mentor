@@ -95,6 +95,13 @@
       "report_floor": 4.0,
       "rounding": "half_up_to_step",
       "label_format": "one_decimal",
+      "proficiency_bands": [
+        { "level": "A", "difficulty": "BEGINNER",     "max_exclusive": 5.5 },
+        { "level": "B", "difficulty": "INTERMEDIATE", "max_exclusive": 7.0 },
+        { "level": "C", "difficulty": "ADVANCED",     "max_exclusive": 9.01 }
+      ],
+      "weakness_gap": { "from": 4.0, "to": 9.0 },
+      "_proficiency_note": "A/B/C proficiency level + drill difficulty cuts (even thirds of [4,9], decision D3) and the weakness-gap domain (D4, gap 1.0 at 4.0 → 0.0 at 9.0). Values equal src/lib/bandScale.ts (bandToLevel/bandToDifficulty/bandGap) exactly; parity-asserted in vectors.check.ts §9. These are cut scores — stripped by toPublicConfig, never shipped to the client.",
       "_official_range_note": "The official IELTS scale is 1.0–9.0. report_floor 4.0 is a deliberate product choice: genuine sub-4.0 performances display as 4.0. min is kept at 0.0 internally so the floor can be lowered in config without a code change."
     },
 
@@ -113,15 +120,15 @@
       "score_input": "percent_0_100",
       "thresholds_min_pct": {
         "below_a1": 0,
-        "a1": 15.0,
-        "a2": 25.0,
-        "b1": 41.25,
-        "b2": 61.25,
-        "c1": 82.5,
-        "c2": 93.75
+        "a1": 22.0,
+        "a2": 30.0,
+        "b1": 43.0,
+        "b2": 59.0,
+        "c1": 76.0,
+        "c2": 85.0
       },
       "supports_within_level_progress": true,
-      "_threshold_provenance": "Derived from Pearson's published Global Scale of English -> CEFR mapping (GSE 10–90: below A1 10–21, A1 22–29, A2 30–42, B1 43–58, B2 59–75, C1 76–84, C2 85–90), converted by pct = (GSE - 10) / 80 * 100. Every value here is that formula applied to the level's minimum GSE. PROVISIONAL — see EE-04 calibration protocol.",
+      "_threshold_provenance": "Spoken English launch cut-offs (Paul's rubric pack, 2026-08). GSE band MINIMUMS used DIRECTLY in the 0–100 space with NO (GSE-10)/80*100 rescale: A1 22, A2 30, B1 43, B2 59, C1 76, C2 85. The grader's per-subskill scores also live in the GSE 10–90 space, so nothing scores below ~10 or above ~90 by design (that's expected). PROVISIONAL — recalibrate after ~200 real graded responses (EE-04). Supersedes the earlier rescaled values (15/25/41.25/61.25/82.5/93.75).",
       "_threshold_correction_note": "v1 used 0/14/24/41/59/79/93. Those do not match the stated GSE derivation: B2 was 2.25 points low and C1 was 3.5 points low, which moves a real boundary. Corrected here.",
       "_borrowed_alignment_warning": "These boundaries import Pearson's alignment of GSE to CEFR (itself anchored to North 2000). Using them means borrowing a vendor's alignment claim rather than making our own. Defensible as a starting point, NOT as a calibration. Replace after the study in EE-04.",
       "_calibration_status": "PROVISIONAL_UNCALIBRATED"
@@ -272,6 +279,7 @@
           "modality": "writing",
           "assessed": true,
           "scale": "ielts_band",
+          "raw_input": { "kind": "internal", "min": 1, "max": 10, "_note": "AI grades on an internal 1–10 scale; internalToBand rebases onto [4,9]. Objective components (L/R) imply a 0..1 fraction." },
           "delivery": "essay",
           "weight": 1.0,
           "time_limit_minutes": 60,
@@ -295,6 +303,7 @@
           "modality": "speaking",
           "assessed": true,
           "scale": "ielts_band",
+          "raw_input": { "kind": "internal", "min": 1, "max": 10 },
           "delivery": "ielts_speaking",
           "weight": 1.0,
           "time_limit_minutes": 14,

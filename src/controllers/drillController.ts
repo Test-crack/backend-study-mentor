@@ -9,7 +9,8 @@ const VALID_SUB_SKILLS = Object.values(SubSkillType) as string[];
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 import { paramStr } from '../utils/httpParams';
-import { BAND_MIN, bandGap } from '../lib/bandScale';
+import { BAND_MIN } from '../lib/bandScale';
+import { examWeaknessGap } from '../exam-engine';
 
 interface DrillItem {
     skill: string;
@@ -75,7 +76,22 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         // normalized on the [4,9] domain â€” band 4 = fully weak). Higher = weaker.
         const weaknessOf = (skill: string, sub: string, band: number) => {
             const acc = accuracyByKey.get(`${skill}::${sub}`) ?? 0;
-            return 0.6 * (1 - acc) + 0.4 * bandGap(band);
+            return 0.6 * (1 - acc) + 0.4 * examWeaknessGap('ielts', band);
+        };
+
+        // CEFR / viva exams (Spoken English & future) drive drills off the speaking subskill
+        // profile, not the IELTS 4-skill band shape. Only recommend subskills that actually
+        // have drills seeded (so, e.g., 'interaction' surfaces once its drills are imported).
+        const isViva = student.exam_id !== 'ielts';
+        const seAvailable = isViva
+            ? new Set((await prisma.drillQuestion.findMany({
+                where: { exam_id: student.exam_id, is_active: true }, distinct: ['sub_skill'], select: { sub_skill: true },
+              })).map((r) => r.sub_skill as string))
+            : null;
+        // CEFR subskill id → SubSkillType enum (mirrors the frontend spokenEnglishSubskills config).
+        const SE_SUBSKILL_ENUM: Record<string, string> = {
+            range: 'VOCABULARY', accuracy: 'GRAMMAR', fluency: 'FLUENCY',
+            interaction: 'INTERACTION', coherence: 'COHERENCE', phonology: 'PRONUNCIATION',
         };
 
         const items: DrillItem[] = [];
@@ -85,6 +101,21 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             // below the valid domain and distort the weakness ranking.
             const skillBandScore = Number(matrix.band_score || BAND_MIN);
             const subScores = (matrix.sub_scores as Record<string, any>) || {};
+
+            // CEFR exams: one assessed skill (speaking) with subskills in sub_scores.subskillProfile.
+            // Weakness = 60% recent drill-accuracy gap + 40% subskill-score gap (percent domain).
+            if (isViva) {
+                const profile: any[] = Array.isArray(subScores.subskillProfile) ? subScores.subskillProfile : [];
+                for (const p of profile) {
+                    const sub = SE_SUBSKILL_ENUM[p.id];
+                    if (!sub || (seAvailable && !seAvailable.has(sub))) continue; // skip undrillable / unseeded
+                    const scorePct = Number(p.score ?? 0);
+                    const acc = accuracyByKey.get(`${matrix.skill}::${sub}`) ?? 0;
+                    const weakness = 0.6 * (1 - acc) + 0.4 * (1 - Math.min(1, scorePct / 100));
+                    items.push({ skill: matrix.skill, sub_skill: sub, skill_band_score: skillBandScore, sub_skill_score: scorePct, weakness });
+                }
+                continue;
+            }
 
             // Use DB enum values (uppercase) for sub_skill.
             // *Score-suffixed keys match what IA/diagnostic stores in sub_scores JSONB.
@@ -217,12 +248,19 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
 
         const QUESTIONS_PER_SESSION = 5;
 
+        // Scope questions to the student's exam (A3) — zero-change for IELTS students.
+        const drillStudent = await prisma.instituteStudent.findUnique({
+            where: { user_id: (req as any).appUserId as string }, select: { exam_id: true },
+        });
+        const examId = drillStudent?.exam_id ?? 'ielts';
+
         const questions = await prisma.$queryRaw`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
             WHERE skill = ${skill}::"SkillType"
               AND sub_skill = ${subskill}::"SubSkillType"
               AND level = ${level}::"RecommendationLevel"
+              AND exam_id = ${examId}
               AND is_active = true
               AND drill_type = 'MCQ'
             ORDER BY RANDOM()
@@ -614,8 +652,9 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
                     capError = { status: 409, error: 'You have used your free drills for today. Unlock an extra drill to continue.' };
                     return null;
                 }
-                // LexiGrid gate: the 2nd drill of the day requires LexiGrid done first.
-                if (drillsTodayBefore === 1) {
+                // LexiGrid gate: IELTS's 2nd drill of the day requires LexiGrid done first.
+                // Other exams (e.g. Spoken English: 3 drills, LexiGrid standalone) skip it.
+                if (drillsTodayBefore === 1 && student.exam_id === 'ielts') {
                     const lexiToday = await t.studentGameScore.findFirst({
                         where:  { student_id: student.id, game_type: 'LEXIGRID', session_date: currentISTDate() },
                         select: { id: true },

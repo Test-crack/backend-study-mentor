@@ -678,9 +678,27 @@ model InstituteStudent {
   guardian_consent        GuardianConsent?
   viva_sessions           VivaSession[]
 
+  DiagnosticSessions      DiagnosticSession[]
+
   @@index([is_active], map: "idx_institute_students_active")
   @@index([institute_id], map: "idx_institute_students_institute")
   @@map("institute_students")
+}
+
+/// Which set_id was served to a student, per exam+skill. One row per
+/// student/exam/skill; deleted (not updated) on admin reset.
+model DiagnosticSession {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id String    @db.Uuid
+  exam_id    String    @default("ielts")
+  skill      SkillType
+  set_id     String    @db.VarChar(60)
+  served_at  DateTime  @default(now())
+
+  InstituteStudent InstituteStudent @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([student_id, exam_id, skill])
+  @@map("diagnostic_sessions")
 }
 
 /// DPDP: parental/guardian consent for minor students. Table added in Phase 4;
@@ -1104,6 +1122,7 @@ enum SubSkillType {
   TASK_RESPONSE
   FLUENCY
   PRONUNCIATION
+  INTERACTION // Spoken English 'interaction' (Responsiveness) — its own value, not TASK_RESPONSE
 }
 
 enum ContentType {
