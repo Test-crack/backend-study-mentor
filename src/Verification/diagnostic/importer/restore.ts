@@ -16,7 +16,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { Command } from 'commander';
-import prisma from '../../../src/lib/prisma';
+import prisma from '../../../lib/prisma';
 
 class UsageError extends Error {}
 

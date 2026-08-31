@@ -259,7 +259,7 @@ async function main(): Promise<number> {
   }
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  const mod = (await import('../src/lib/prisma')) as unknown as { default: PrismaLike };
+  const mod = (await import('../lib/prisma.js')) as unknown as { default: PrismaLike };
   const prisma = mod.default;
 
   const reports: FileReport[] = [];

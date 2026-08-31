@@ -133,7 +133,7 @@ async function main(): Promise<number> {
   let prisma: PrismaClientLike | null = null;
   if (opts.db) {
     try {
-      const mod = (await import('../../../../src/lib/prisma')) as unknown as { default: PrismaClientLike };
+      const mod = (await import('../../../../lib/prisma.js')) as unknown as { default: PrismaClientLike };
       prisma = mod.default;
     } catch (err) {
       throw new UsageError(

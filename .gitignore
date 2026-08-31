@@ -157,16 +157,16 @@ cookies/
 credentials/*.json
 
 # Question-bank verification: real CSVs and generated reports are local-only
-Verification/drills/question-banks/drills/**
-Verification/drills/results/
-Verification/drills/cache/
-Verification/diagnostic/results/
-Verification/diagnostic/cache/
-Verification/diagnostic/question-banks/reading-content-all.pdf
-Verification/diagnostic/question-banks/staging-audio/
-Verification/drills/question-banks/cache/
-Verification/spoken-english/results/
-Verification/spoken-english/cache/
+src/Verification/drills/question-banks/drills/**
+src/Verification/drills/results/
+src/Verification/drills/cache/
+src/Verification/diagnostic/results/
+src/Verification/diagnostic/cache/
+src/Verification/diagnostic/question-banks/reading-content-all.pdf
+src/Verification/diagnostic/question-banks/staging-audio/
+src/Verification/drills/question-banks/cache/
+src/Verification/spoken-english/results/
+src/Verification/spoken-english/cache/
 # CSV files are local-only, never push to origin
 *.csv
 

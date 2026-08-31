@@ -36,7 +36,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { Command } from 'commander';
-import prisma from '../../../src/lib/prisma';
+import prisma from '../../../lib/prisma';
 import { loadDiagnosticCsv } from '../question-banks/shared/csvLoader';
 
 const BACKUP_DIR = path.resolve(__dirname, '..', 'results', 'set-backups');

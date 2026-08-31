@@ -84,14 +84,14 @@ const BACKUP_DIR = path.resolve(__dirname, '..', 'Verification', 'drills', 'resu
 const DEFAULT_EXPECTED_ROWS = 200;
 
 interface PrismaLike {
-  $transaction<T>(fn: (tx: any) => Promise<T>): Promise<T>;
+  $transaction<T>(fn: (tx: any) => Promise<T>, options?: { timeout?: number; maxWait?: number }): Promise<T>;
   drillQuestion: { count(args: any): Promise<number>; findMany(args: any): Promise<any[]> };
   $queryRawUnsafe(sql: string, ...args: any[]): Promise<any[]>;
   $disconnect(): Promise<void>;
 }
 
 async function loadPrisma(): Promise<PrismaLike> {
-  const mod = (await import('../src/lib/prisma')) as unknown as { default: PrismaLike };
+  const mod = (await import('../lib/prisma.js')) as unknown as { default: PrismaLike };
   return mod.default;
 }
 

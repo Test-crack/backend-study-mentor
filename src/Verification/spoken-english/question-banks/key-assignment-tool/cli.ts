@@ -184,7 +184,7 @@ async function main(): Promise<number> {
       // Via `unknown`: the generated client's `findMany` is heavily overloaded and does
       // not structurally overlap the narrow reader interface, though it satisfies it at
       // runtime. `fetchBucketRows` is the single place the shape is actually relied on.
-      const mod = (await import('../../../../src/lib/prisma')) as unknown as {
+      const mod = (await import('../../../../lib/prisma.js')) as unknown as {
         default: PrismaClientLike;
       };
       prisma = mod.default;

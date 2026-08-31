@@ -21,7 +21,7 @@ import path from 'path';
 import { Command } from 'commander';
 import { findCsvFiles } from '../shared/csvLoader';
 import { createGeminiClient, createLimiter, resolveApiKey } from '../../../drills/question-banks/shared/llm';
-import { transcribeAudio } from '../../../../src/services/speechToText.service';
+import { transcribeAudio } from '../../../../services/speechToText.service';
 import { clearCache } from './cache';
 import { judgeRun, type JudgeDeps, type JudgeStats } from './judge';
 import { writeJudgeReport } from './report';

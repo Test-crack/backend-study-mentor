@@ -1,7 +1,13 @@
 {
   "watch": ["src"],
   "ext": "ts,json",
-  "ignore": ["src/**/*.spec.ts", "node_modules"],
+  "ignore": [
+    "src/**/*.spec.ts",
+    "node_modules",
+    "src/Verification/**/cache/**",
+    "src/Verification/**/results/**",
+    "src/Verification/drills/question-banks/drills/**"
+  ],
   "exec": "ts-node --project tsconfig.dev.json src/index.ts",
   "env": {
     "NODE_ENV": "development"
