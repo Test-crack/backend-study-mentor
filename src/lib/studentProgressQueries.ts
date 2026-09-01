@@ -28,6 +28,13 @@ export interface InstStudentMinimal {
     momentum_score: number;
     daily_streak: number;
     isDiagnosed: boolean;
+    /**
+     * The student's own declared exam date. Until now this lived only on the
+     * student's surfaces (competency-scores / profile), so no instructor, owner
+     * or admin could see which of their students sits the exam next — the single
+     * most useful piece of triage context the record already held.
+     */
+    exam_date?: Date | null;
 }
 
 export interface StudentUserRow {
@@ -61,6 +68,7 @@ export async function computeStudentFullProgress(
         drills30Days,
         lexiGridScores,
         diagnosticHistory,
+        recentReflections,
     ] = await Promise.all([
         prisma.studentCompetencyMatrix.findMany({
             where: { student_id: instStudent.id },
@@ -107,6 +115,22 @@ export async function computeStudentFullProgress(
             where:   { student_id: instStudent.id, mode: 'DIAGNOSTIC' as any },
             orderBy: { created_at: 'asc' },
             select:  { skill: true, band_score: true, sub_scores: true, feedback_json: true, created_at: true },
+        }),
+        // Most recent written reflections from the drill "apply" step. The student
+        // writes these and, until now, only the student could ever read them —
+        // the one place they say in their own words what they found hard. Capped
+        // at 10 so the payload stays bounded for long-tenured students.
+        prisma.drillSession.findMany({
+            where:   {
+                student_id:      instStudent.id,
+                reflection_text: { not: null },
+            },
+            orderBy: { created_at: 'desc' },
+            take:    10,
+            select:  {
+                id: true, skill: true, sub_skill: true, reflection_text: true,
+                created_at: true, apply_completed_at: true,
+            },
         }),
     ]);
 
@@ -248,6 +272,7 @@ export async function computeStudentFullProgress(
         },
         competency:     competencyRows.map(r => ({ ...r, band_score: parseFloat(String(r.band_score ?? '0')) })),
         target_band:    instStudent.target_band ? parseFloat(String(instStudent.target_band)) : null,
+        exam_date:      instStudent.exam_date ? toISTDateString(instStudent.exam_date) : null,
         current_band,
         momentum_score: instStudent.momentum_score,
         daily_streak:   instStudent.daily_streak,
@@ -263,6 +288,14 @@ export async function computeStudentFullProgress(
             avg_dcs_lifetime:      avgDcsLifetime,
         },
         lexigrid_stats: lexiStats,
+        recent_reflections: (recentReflections as any[]).map(r => ({
+            id:              r.id,
+            skill:           String(r.skill),
+            sub_skill:       String(r.sub_skill),
+            reflection_text: r.reflection_text as string,
+            created_at:      r.created_at.toISOString(),
+            apply_completed_at: r.apply_completed_at ? r.apply_completed_at.toISOString() : null,
+        })),
         ia_eligibility: {
             prerequisites_met: prerequisitesMet,
             avg_dcs:           avgDcsLifetime,

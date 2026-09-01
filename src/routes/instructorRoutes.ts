@@ -85,7 +85,9 @@ router.delete('/courses/:id/thumbnail', instructorController.removeCourseThumbna
 
 // Batch view — read only (legacy + new system)
 router.get('/batches', getInstructorBatches);
-router.get('/batches/:batchId/analytics', instructorController.getBatchAnalytics);           // legacy
+// /batches/:batchId/analytics is REMOVED — it fabricated its output (synthetic
+// rising trend curve, Math.random() listening scores) and had no caller. Real
+// batch data: /batches/:batchId/dashboard-summary + /assessment-overview.
 router.get('/batches/:batchId/reading-analytics', getBatchReadingAnalytics);                 // legacy
 
 // ── New system endpoints (pilot dashboard) ────────────────────────────────────

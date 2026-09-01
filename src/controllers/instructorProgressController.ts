@@ -148,7 +148,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         // Resolve institute_students record
         const instStudent = await prisma.instituteStudent.findUnique({
             where:  { user_id: studentId },
-            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
+            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true },
         });
         if (!instStudent) {
             return res.status(404).json({ success: false, error: 'Student record not found.' });
