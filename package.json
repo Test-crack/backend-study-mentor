@@ -37,7 +37,14 @@
         "se:drills:assign-keys": "ts-node --project tsconfig.dev.json src/Verification/spoken-english/question-banks/key-assignment-tool/cli.ts",
         "se:drills:assign-keys:test": "ts-node --project tsconfig.dev.json src/Verification/spoken-english/question-banks/key-assignment-tool/keyAssignment.spec.ts",
         "se:drills:import": "ts-node --project tsconfig.dev.json src/Verification/spoken-english/Import/cli.ts",
-        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test && npm run ia:verify:test && npm run ia:judge:test && npm run ia:assign-keys:test && npm run ia:import:test && npm run se:drills:verify:test && npm run se:drills:judge:test && npm run se:drills:assign-keys:test"
+        "mock:verify": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/layer1-verifier/cli.ts",
+        "mock:verify:test": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/layer1-verifier/layer1.spec.ts",
+        "mock:judge": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/layer2-content-judge/cli.ts",
+        "mock:judge:test": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/layer2-content-judge/layer2.spec.ts",
+        "mock:assign-keys": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/key-assignment-tool/cli.ts",
+        "mock:assign-keys:test": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/key-assignment-tool/keyAssignment.spec.ts",
+        "mock:import": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/importer/cli.ts",
+        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test && npm run ia:verify:test && npm run ia:judge:test && npm run ia:assign-keys:test && npm run ia:import:test && npm run se:drills:verify:test && npm run se:drills:judge:test && npm run se:drills:assign-keys:test && npm run mock:verify:test && npm run mock:judge:test && npm run mock:assign-keys:test"
     },
     "prisma": {
         "seed": "tsx prisma/seed.ts"

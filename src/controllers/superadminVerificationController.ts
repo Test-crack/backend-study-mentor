@@ -87,6 +87,21 @@ import { assignKeys as assignSEKeys, toTaggedRows as toSETaggedRows, TAGGED_HEAD
 import { fetchBucketRows as fetchSEBucketRows, indexFromDbRows as indexFromSEDbRows } from '../Verification/spoken-english/question-banks/key-assignment-tool/dbIndex';
 import { planImport as planSEImport, countActions as countSEActions, type ExistingRow as SEExistingRow } from '../Verification/spoken-english/Import/importer';
 
+import {
+    verifyFile as verifyMockFile,
+    fileFindingsFlat as mockFileFindingsFlat,
+    verifyRun as verifyMockRun,
+} from '../Verification/mock/question-banks/layer1-verifier/verify';
+import { determineBucket as determineMockBucket } from '../Verification/mock/question-banks/layer1-verifier/checks';
+import { writeRunReport as writeMockRunReport } from '../Verification/mock/question-banks/shared/excelReport';
+import { judgeRun as judgeMockRun } from '../Verification/mock/question-banks/layer2-content-judge/judge';
+import type { JudgeStats as MockJudgeStats } from '../Verification/mock/question-banks/layer2-content-judge/judge';
+import { writeJudgeReport as writeMockJudgeReport } from '../Verification/mock/question-banks/layer2-content-judge/report';
+import { loadMockCsv } from '../Verification/mock/question-banks/shared/csvLoader';
+import { assignKeys as assignMockKeys, toTaggedRows as toMockTaggedRows, TAGGED_HEADER as MOCK_TAGGED_HEADER } from '../Verification/mock/question-banks/key-assignment-tool/assignKeys';
+import { fetchBucketRows as fetchMockBucketRows, indexFromDbRows as indexFromMockDbRows } from '../Verification/mock/question-banks/key-assignment-tool/dbIndex';
+import { planImport as planMockImport, countActions as countMockActions, type ExistingRow as MockExistingRow } from '../Verification/mock/question-banks/importer/importer';
+
 const DIAGNOSTIC_BACKUP_DIR = path.resolve(__dirname, '..', 'Verification', 'diagnostic', 'results', 'set-backups');
 
 /** Mirrors `ExistingRow` in ia/question-banks/importer/importer.ts. */
@@ -130,6 +145,28 @@ function toSEExistingRows(rows: Array<Omit<SEExistingRow, 'source_key'> & { sour
     return rows.filter((r): r is SEExistingRow => r.source_key !== null);
 }
 
+/** Mirrors `ExistingRow` in mock/question-banks/importer/importer.ts. */
+const MOCK_EXISTING_SELECT = {
+    source_key: true,
+    skill: true,
+    sub_skill: true,
+    question_type: true,
+    task_type: true,
+    passage_id: true,
+    passage_text: true,
+    audio_url: true,
+    prompt_text: true,
+    options: true,
+    correct_answer: true,
+    explanation: true,
+    exam_id: true,
+} as const;
+
+/** Same nullable-source_key hedge as toSEExistingRows, for Mock's ExistingRow shape. */
+function toMockExistingRows(rows: Array<Omit<MockExistingRow, 'source_key'> & { source_key: string | null }>): MockExistingRow[] {
+    return rows.filter((r): r is MockExistingRow => r.source_key !== null);
+}
+
 /** Explicit `select` — same schema-drift hedge as the CLI (see importer/cli.ts). */
 const DIAGNOSTIC_EXISTING_SELECT = {
     id: true,
@@ -165,7 +202,7 @@ function forkKey(examId: string, bankType: string): ForkKey {
     return `${examId}:${bankType}`;
 }
 
-const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic', 'ielts:ia', 'spoken_english:drill']);
+const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic', 'ielts:ia', 'spoken_english:drill', 'ielts:mock']);
 
 function assertSupportedFork(examId: string, bankType: string): void {
     if (!SUPPORTED_FORKS.has(forkKey(examId, bankType))) {
@@ -300,6 +337,11 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
             where: { exam_id: 'spoken_english' } as any,
             _count: { _all: true },
         });
+        const mockRows = await prisma.mockQuestion.groupBy({
+            by: ['skill'],
+            where: { exam_id: 'ielts' } as any,
+            _count: { _all: true },
+        });
 
         return res.json({
             data: [
@@ -330,6 +372,12 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
                     label: 'Spoken English',
                     bankType: 'drill',
                     skills: seRows.map(r => ({ skill: r.skill, count: r._count._all })),
+                },
+                {
+                    examId: 'ielts',
+                    label: 'IELTS Preparation',
+                    bankType: 'mock',
+                    skills: mockRows.map(r => ({ skill: r.skill, count: r._count._all })),
                 },
             ],
         });
@@ -391,6 +439,20 @@ export async function runLayer1(req: AuthRequest, res: Response) {
                           fileName: uploaded[i].originalname,
                           outcome: verdict.outcome,
                           findings: iaFileFindingsFlat(verdict).map(f => ({
+                              code: f.code,
+                              severity: f.severity,
+                              message: f.message,
+                              line: (f as any).line ?? null,
+                          })),
+                      };
+                  })
+                : bankType === 'mock'
+                ? tempPaths.map((filePath, i) => {
+                      const verdict = verifyMockFile(filePath, { expectedRowCount, requireSourceKey: false });
+                      return {
+                          fileName: uploaded[i].originalname,
+                          outcome: verdict.outcome,
+                          findings: mockFileFindingsFlat(verdict).map(f => ({
                               code: f.code,
                               severity: f.severity,
                               message: f.message,
@@ -470,6 +532,9 @@ export async function runLayer1Report(req: AuthRequest, res: Response) {
         } else if (bankType === 'ia') {
             const run = verifyIARun(tempPaths, { fallback: expectedRowCount, byDifficulty: {} }, { requireSourceKey: false });
             await writeIARunReport(run, outPath);
+        } else if (bankType === 'mock') {
+            const run = verifyMockRun(tempPaths, { fallback: expectedRowCount, byBucket: {} }, { requireSourceKey: false });
+            await writeMockRunReport(run, outPath);
         } else if (examId === 'spoken_english') {
             const run = verifySERun(tempPaths, { fallback: expectedRowCount, byLevel: {} }, { requireSourceKey: false });
             await writeSERunReport(run, outPath);
@@ -536,6 +601,18 @@ async function runJudge(filePaths: string[], examId: string, bankType: string) {
         const stats: IAJudgeStats = { apiCalls: 0, cacheHits: 0 };
         // Same scoping as diagnostic above: no audioDir/transcribeAudio yet.
         const run = await judgeIARun(filePaths, {
+            client,
+            limit: createLimiter(4),
+            useCache: true,
+            stats,
+        });
+        return { files: run.files, apiCalls: stats.apiCalls, cacheHits: stats.cacheHits };
+    }
+
+    if (bankType === 'mock') {
+        const stats: MockJudgeStats = { apiCalls: 0, cacheHits: 0 };
+        // Same scoping as IA/diagnostic above: no audioDir/transcribeAudio yet.
+        const run = await judgeMockRun(filePaths, {
             client,
             limit: createLimiter(4),
             useCache: true,
@@ -644,6 +721,8 @@ export async function getLayer2Report(req: AuthRequest, res: Response) {
             await writeDiagnosticJudgeReport(job.result as any, outPath);
         } else if (job.bankType === 'ia') {
             await writeIAJudgeReport(job.result as any, outPath);
+        } else if (job.bankType === 'mock') {
+            await writeMockJudgeReport(job.result as any, outPath);
         } else if (job.examId === 'spoken_english') {
             await writeSEJudgeReport(job.result as any, outPath);
         } else {
@@ -791,6 +870,64 @@ async function buildIAImportPlan(filePaths: string[], expectedRowCount: number) 
     return perFile;
 }
 
+async function buildMockImportPlan(filePaths: string[], expectedRowCount: number) {
+    const perFile: Array<{
+        fileName: string;
+        gateBlocked: string | null;
+        toInsert: number;
+        toUpdate: number;
+        unchanged: number;
+        errors: string[];
+        updates: { source_key: string; changed: string[] }[];
+    }> = [];
+
+    for (const filePath of filePaths) {
+        const verdict = verifyMockFile(filePath, { expectedRowCount, requireSourceKey: true });
+        if (verdict.outcome === 'fail') {
+            const codes = [...new Set(mockFileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
+            perFile.push({
+                fileName: path.basename(filePath),
+                gateBlocked: `Layer 1 FAILED: ${codes.join(', ')}.`,
+                toInsert: 0,
+                toUpdate: 0,
+                unchanged: 0,
+                errors: [],
+                updates: [],
+            });
+            continue;
+        }
+
+        const loaded = loadMockCsv(filePath);
+        const keys = loaded.rows.map(r => r.source_key?.trim()).filter((k): k is string => Boolean(k));
+        const existingRows: MockExistingRow[] =
+            keys.length === 0
+                ? []
+                : toMockExistingRows(
+                      await prisma.mockQuestion.findMany({
+                          where: { source_key: { in: keys } },
+                          select: MOCK_EXISTING_SELECT,
+                      }),
+                  );
+        const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+        const plan = planMockImport(loaded.rows, existingByKey);
+        const counts = countMockActions(plan.plans);
+
+        perFile.push({
+            fileName: loaded.fileName,
+            gateBlocked: null,
+            toInsert: counts.insert,
+            toUpdate: counts.update,
+            unchanged: counts.unchanged,
+            errors: plan.errors,
+            updates: plan.plans
+                .filter(p => p.action === 'update')
+                .map(p => ({ source_key: p.row.source_key, changed: p.changed })),
+        });
+    }
+
+    return perFile;
+}
+
 async function buildSEImportPlan(filePaths: string[], expectedRowCount: number) {
     const perFile: Array<{
         fileName: string;
@@ -875,6 +1012,8 @@ export async function planImportEndpoint(req: AuthRequest, res: Response) {
         const perFile =
             bankType === 'ia'
                 ? await buildIAImportPlan(tempPaths, expectedRowCount)
+                : bankType === 'mock'
+                ? await buildMockImportPlan(tempPaths, expectedRowCount)
                 : examId === 'spoken_english'
                 ? await buildSEImportPlan(tempPaths, expectedRowCount)
                 : await buildImportPlan(tempPaths, expectedRowCount);
@@ -1004,6 +1143,87 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
                                 skill: data.skill,
                                 sub_skill: data.sub_skill,
                                 difficulty: data.difficulty,
+                            } as any,
+                        });
+                        if (p.action === 'insert') written.inserted += 1;
+                        else written.updated += 1;
+                    } catch (err) {
+                        written.failed += 1;
+                        errors.push(
+                            `line ${p.row.line} (${p.row.source_key}): write failed — ` +
+                                (err instanceof Error ? err.message.split('\n')[0] : String(err)),
+                        );
+                    }
+                }
+
+                reports.push({
+                    fileName: loaded.fileName,
+                    gateBlocked: null,
+                    ...written,
+                    errors,
+                });
+            }
+
+            return res.json({ data: reports });
+        }
+
+        if (bankType === 'mock') {
+            for (const filePath of tempPaths) {
+                const verdict = verifyMockFile(filePath, { expectedRowCount, requireSourceKey: true });
+                if (verdict.outcome === 'fail') {
+                    const codes = [...new Set(mockFileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
+                    reports.push({
+                        fileName: path.basename(filePath),
+                        gateBlocked: `Layer 1 FAILED: ${codes.join(', ')}.`,
+                        inserted: 0,
+                        updated: 0,
+                        unchanged: 0,
+                        failed: 0,
+                        errors: [],
+                    });
+                    continue;
+                }
+
+                const loaded = loadMockCsv(filePath);
+                const keys = loaded.rows.map(r => r.source_key?.trim()).filter((k): k is string => Boolean(k));
+                const existingRows: MockExistingRow[] =
+                    keys.length === 0
+                        ? []
+                        : toMockExistingRows(
+                              await prisma.mockQuestion.findMany({
+                                  where: { source_key: { in: keys } },
+                                  select: MOCK_EXISTING_SELECT,
+                              }),
+                          );
+                const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+                const plan = planMockImport(loaded.rows, existingByKey);
+
+                const written = { inserted: 0, updated: 0, unchanged: 0, failed: 0 };
+                const errors = [...plan.errors];
+
+                for (const p of plan.plans) {
+                    if (p.action === 'unchanged') {
+                        written.unchanged += 1;
+                        continue;
+                    }
+                    const { line: _line, ...data } = p.row;
+                    try {
+                        await prisma.mockQuestion.upsert({
+                            where: { source_key: p.row.source_key },
+                            create: { ...data, is_active: true } as any,
+                            update: {
+                                prompt_text: data.prompt_text,
+                                options: data.options,
+                                correct_answer: data.correct_answer,
+                                explanation: data.explanation,
+                                passage_id: data.passage_id,
+                                passage_text: data.passage_text,
+                                audio_url: data.audio_url,
+                                task_type: data.task_type,
+                                question_type: data.question_type,
+                                exam_id: data.exam_id,
+                                skill: data.skill,
+                                sub_skill: data.sub_skill,
                             } as any,
                         });
                         if (p.action === 'insert') written.inserted += 1;
@@ -1526,6 +1746,57 @@ export async function tagBatch(req: AuthRequest, res: Response) {
             const descriptor = singleFileBucket
                 ? `${singleFileBucket.skill}-${singleFileBucket.sub_skill}-${singleFileBucket.difficulty}`.toLowerCase()
                 : 'all';
+            const outName = `${descriptor}--${reportTimestamp()}.tagged.csv`;
+
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
+            res.setHeader('X-Tag-Skipped-Rows', String(skippedRowCount));
+            res.setHeader('X-Tag-Dropped-Keys', String(droppedKeyCount));
+            res.setHeader('X-Tag-Blocked-Files', String(blockedFiles.length));
+            return res.send(csv);
+        }
+
+        if (bankType === 'mock') {
+            const taggedRows: string[][] = [];
+            const blockedFiles: string[] = [];
+            let skippedRowCount = 0;
+            let droppedKeyCount = 0;
+            let singleFileBucket: { skill: string; sub_skill: string } | null = null;
+
+            for (let i = 0; i < tempPaths.length; i += 1) {
+                const filePath = tempPaths[i];
+                const verdict = verifyMockFile(filePath, { expectedRowCount, requireSourceKey: false });
+                if (verdict.outcome === 'fail') {
+                    blockedFiles.push(uploaded[i].originalname);
+                    continue;
+                }
+
+                const loaded = loadMockCsv(filePath);
+                const { bucket } = determineMockBucket(loaded.rows);
+                if (!bucket) {
+                    blockedFiles.push(uploaded[i].originalname);
+                    continue;
+                }
+                if (tempPaths.length === 1) singleFileBucket = bucket;
+
+                const dbRows = await fetchMockBucketRows(prisma as any, bucket);
+                const { index } = indexFromMockDbRows(dbRows, bucket);
+                const { assignments, dropped, skippedRows } = assignMockKeys(loaded.rows, bucket, index);
+
+                taggedRows.push(...toMockTaggedRows(assignments));
+                skippedRowCount += skippedRows.length;
+                droppedKeyCount += dropped.length;
+            }
+
+            if (taggedRows.length === 0) {
+                return res.status(400).json({
+                    error: `All ${blockedFiles.length} file(s) failed Layer 1 or have no determinable bucket — nothing to tag.`,
+                    blockedFiles,
+                });
+            }
+
+            const csv = toCsvText(MOCK_TAGGED_HEADER, taggedRows);
+            const descriptor = singleFileBucket ? `${singleFileBucket.skill}-${singleFileBucket.sub_skill}`.toLowerCase() : 'all';
             const outName = `${descriptor}--${reportTimestamp()}.tagged.csv`;
 
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
