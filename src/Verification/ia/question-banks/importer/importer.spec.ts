@@ -73,7 +73,7 @@ test('planRow reports insert when no existing row, unchanged when identical, upd
     options: converted.row.options,
     correct_answer: converted.row.correct_answer,
     explanation: converted.row.explanation,
-    exam_type: 'IELTS',
+    exam_id: 'IELTS',
   };
   assertEqual(planRow(converted.row, existing).action, 'unchanged', 'unchanged when identical');
 

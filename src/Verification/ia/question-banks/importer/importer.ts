@@ -41,7 +41,8 @@ export interface ImportRow {
   options: Record<string, string> | null;
   correct_answer: string | null;
   explanation: string | null;
-  exam_type: string;
+  /** Written to the `exam_id` column — named `exam_type` in the CSV/domain vocabulary, not the DB. */
+  exam_id: string;
   /** Source line, for error messages. Not written to the database. */
   line: number;
 }
@@ -59,7 +60,7 @@ export interface ExistingRow {
   options: unknown;
   correct_answer: unknown;
   explanation: string | null;
-  exam_type: string;
+  exam_id: string;
 }
 
 /**
@@ -164,7 +165,7 @@ export function toImportRow(row: IACsvRow): { row: ImportRow } | { error: string
       options,
       correct_answer: correctAnswer,
       explanation,
-      exam_type: examType,
+      exam_id: examType,
       line: row.line,
     },
   };
@@ -198,7 +199,7 @@ export function planRow(row: ImportRow, existing: ExistingRow | undefined): RowP
   if ((existing.passage_text ?? null) !== row.passage_text) changed.push('passage_text');
   if ((existing.audio_url ?? null) !== row.audio_url) changed.push('audio_url');
   if (existing.question_type !== row.question_type) changed.push('question_type');
-  if (existing.exam_type !== row.exam_type) changed.push('exam_type');
+  if (existing.exam_id !== row.exam_id) changed.push('exam_id');
   if (existing.skill !== row.skill) changed.push('skill');
   if (existing.sub_skill !== row.sub_skill) changed.push('sub_skill');
   if (existing.difficulty !== row.difficulty) changed.push('difficulty');

@@ -243,7 +243,7 @@ async function main(): Promise<number> {
                 options: true,
                 correct_answer: true,
                 explanation: true,
-                exam_type: true,
+                exam_id: true,
               },
             });
       const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
@@ -273,7 +273,7 @@ async function main(): Promise<number> {
                 passage_text: data.passage_text,
                 audio_url: data.audio_url,
                 question_type: data.question_type,
-                exam_type: data.exam_type,
+                exam_id: data.exam_id,
                 skill: data.skill,
                 sub_skill: data.sub_skill,
                 difficulty: data.difficulty,
