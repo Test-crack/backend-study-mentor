@@ -38,6 +38,7 @@ import path from 'path';
 import { Command } from 'commander';
 import prisma from '../../../lib/prisma';
 import { loadDiagnosticCsv } from '../question-banks/shared/csvLoader';
+import { validateBatch, diffRows, ImportPlanError } from './importer';
 
 const BACKUP_DIR = path.resolve(__dirname, '..', 'results', 'set-backups');
 
@@ -81,17 +82,6 @@ async function main(): Promise<void> {
       );
     }
 
-    const sourceRows = opts.sourceSetId ? loaded.rows.filter(r => r.set_id.trim() === opts.sourceSetId) : loaded.rows;
-
-    if (opts.sourceSetId && sourceRows.length === 0) {
-      const found = [...new Set(loaded.rows.map(r => r.set_id.trim()))];
-      throw new UsageError(
-        `No rows found with set_id "${opts.sourceSetId}" in ${opts.file}. Sets actually in this file: ${found.join(', ')}.`,
-      );
-    }
-
-    const stagedRows = [...sourceRows].sort((a, b) => Number(a.sequence) - Number(b.sequence));
-
     // Explicit `select` — not just the fields we happen to use, but a hedge against
     // schema/DB drift from unrelated in-flight work (e.g. a new column added to the
     // Prisma schema before its migration has actually landed on this DB). Letting
@@ -117,22 +107,11 @@ async function main(): Promise<void> {
       },
     });
 
-    if (existing.length === 0) {
-      throw new UsageError(
-        `No existing rows found for set_id "${opts.setId}". This tool only updates existing sets — ` +
-          `it never creates a new set_id. Check the spelling, or use a real existing set_id.`,
-      );
-    }
-
-    if (existing.length !== stagedRows.length) {
-      const hint = opts.sourceSetId
-        ? ''
-        : ` If ${opts.file} bundles more than one set, pass --source-set-id to pick just one out.`;
-      throw new UsageError(
-        `Row count mismatch: staging CSV has ${stagedRows.length} row(s), but existing set "${opts.setId}" ` +
-          `has ${existing.length}. They must match 1:1 by sequence — a set can't grow or shrink through this tool.${hint}`,
-      );
-    }
+    const stagedRows = validateBatch(loaded.rows, existing, {
+      setId: opts.setId,
+      sourceSetId: opts.sourceSetId,
+      fileLabel: opts.file,
+    });
 
     const skill = existing[0].skill;
     const level = existing[0].level;
@@ -147,42 +126,7 @@ async function main(): Promise<void> {
     // as one coherent moment rather than N microseconds apart.
     const importedAt = new Date();
 
-    const updates = existing.map((dbRow: (typeof existing)[number], i: number) => {
-      const staged = stagedRows[i];
-
-      if (Number(staged.sequence) !== dbRow.sequence) {
-        throw new UsageError(
-          `Sequence mismatch at position ${i}: staged row says sequence ${staged.sequence}, ` +
-            `existing DB row at that position is sequence ${dbRow.sequence}. Fix the CSV's ordering.`,
-        );
-      }
-
-      const questionType = staged.question_type.trim().toUpperCase();
-      const options = staged.options.trim() ? JSON.parse(staged.options) : null;
-      const audioUrl = staged.audio_file.trim() ? `${opts.audioUrlPrefix}${staged.audio_file.trim()}` : null;
-
-      return {
-        id: dbRow.id,
-        sequence: dbRow.sequence,
-        before: {
-          question_type: dbRow.question_type,
-          prompt_text: dbRow.prompt_text,
-          correct_answer: dbRow.correct_answer,
-        },
-        after: {
-          question_type: questionType,
-          prompt_text: staged.prompt_text,
-          options,
-          correct_answer: staged.correct_answer.trim() || null,
-          min_words: staged.min_words.trim() ? Number(staged.min_words) : null,
-          passage_text: staged.passage_text.trim() || null,
-          audio_url: audioUrl,
-          // Fresh start: this is a genuinely new question, not an edit of the old
-          // one — created_at is reset to when it actually went live, on request.
-          created_at: importedAt,
-        },
-      };
-    });
+    const updates = diffRows(existing, stagedRows, { audioUrlPrefix: opts.audioUrlPrefix, importedAt });
 
     for (const u of updates) {
       console.log(`  [seq ${u.sequence}] ${u.before.question_type} -> ${u.after.question_type}`);
@@ -209,7 +153,7 @@ async function main(): Promise<void> {
     console.log(`Rollback: re-write the pre-update values from ${backupPath} if this was wrong.`);
     process.exit(0);
   } catch (err) {
-    if (err instanceof UsageError) {
+    if (err instanceof UsageError || err instanceof ImportPlanError) {
       console.error(`Usage error: ${err.message}`);
       process.exit(3);
     }

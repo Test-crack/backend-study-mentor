@@ -58,4 +58,10 @@ router.post('/import/plan', handleBatchUpload, verificationController.planImport
 // POST /api/superadmin/verification/import/confirm       { examId, bankType, layer2Reviewed } + files[]
 router.post('/import/confirm', handleBatchUpload, verificationController.confirmImportEndpoint);
 
+// Diagnostic-only: rollback path for import/confirm's update-in-place writes.
+// GET  /api/superadmin/verification/import/backups?setId=...   -> list backup files for a set
+// POST /api/superadmin/verification/import/restore              { backupFile, confirm? }  (dry run unless confirm=true)
+router.get('/import/backups', verificationController.getDiagnosticImportBackups);
+router.post('/import/restore', verificationController.restoreDiagnosticImport);
+
 export default router;

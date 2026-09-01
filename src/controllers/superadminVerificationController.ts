@@ -31,6 +31,51 @@ import { fetchBucketRows, indexFromDbRows } from '../Verification/drills/questio
 import { timestamp as reportTimestamp } from '../Verification/drills/question-banks/shared/reportNaming';
 import { planImport, countActions, type ExistingRow } from '../Import/importer';
 
+import {
+    verifyFile as verifyDiagnosticFile,
+    fileFindingsFlat as diagnosticFileFindingsFlat,
+    verifyRun as verifyDiagnosticRun,
+} from '../Verification/diagnostic/question-banks/layer1-verifier/verify';
+import { writeRunReport as writeDiagnosticRunReport } from '../Verification/diagnostic/question-banks/shared/excelReport';
+import { judgeRun as judgeDiagnosticRun } from '../Verification/diagnostic/question-banks/layer2-content-judge/judge';
+import type { JudgeStats as DiagnosticJudgeStats } from '../Verification/diagnostic/question-banks/layer2-content-judge/judge';
+import { writeJudgeReport as writeDiagnosticJudgeReport } from '../Verification/diagnostic/question-banks/layer2-content-judge/report';
+// Diagnostic's Layer 2 reuses drills' Gemini client helpers directly — there
+// is no separate copy under diagnostic/question-banks/shared/ (confirmed
+// against diagnostic's own layer2-content-judge/cli.ts).
+import { loadDiagnosticCsv } from '../Verification/diagnostic/question-banks/shared/csvLoader';
+import {
+    validateBatch as validateDiagnosticBatch,
+    diffRows as diffDiagnosticRows,
+    ImportPlanError as DiagnosticImportPlanError,
+    type ExistingDiagnosticRow,
+    type DiagnosticRowUpdate,
+} from '../Verification/diagnostic/importer/importer';
+import {
+    parseBackup as parseDiagnosticBackup,
+    assertRestorable as assertDiagnosticRestorable,
+    RestorePlanError,
+} from '../Verification/diagnostic/importer/restorer';
+
+const DIAGNOSTIC_BACKUP_DIR = path.resolve(__dirname, '..', 'Verification', 'diagnostic', 'results', 'set-backups');
+
+/** Explicit `select` — same schema-drift hedge as the CLI (see importer/cli.ts). */
+const DIAGNOSTIC_EXISTING_SELECT = {
+    id: true,
+    set_id: true,
+    sequence: true,
+    skill: true,
+    level: true,
+    question_type: true,
+    prompt_text: true,
+    options: true,
+    correct_answer: true,
+    min_words: true,
+    passage_text: true,
+    audio_url: true,
+    created_at: true,
+} as const;
+
 /**
  * Prisma types `source_key` as nullable (schema-wide), but every row here was
  * fetched by `source_key: { in: keys }` — it can never be null in this result set.
@@ -49,7 +94,7 @@ function forkKey(examId: string, bankType: string): ForkKey {
     return `${examId}:${bankType}`;
 }
 
-const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill']);
+const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic']);
 
 function assertSupportedFork(examId: string, bankType: string): void {
     if (!SUPPORTED_FORKS.has(forkKey(examId, bankType))) {
@@ -178,11 +223,17 @@ function getUploadedFiles(req: AuthRequest): UploadedFile[] {
 
 export async function getCoverage(_req: AuthRequest, res: Response) {
     try {
-        const rows = await prisma.drillQuestion.groupBy({
+        const drillRows = await prisma.drillQuestion.groupBy({
             by: ['skill'],
             where: { exam_id: 'ielts' } as any,
             _count: { _all: true },
         });
+        const diagnosticRows = await prisma.diagnosticQuestion.groupBy({
+            by: ['skill'],
+            where: { exam_id: 'ielts' } as any,
+            _count: { _all: true },
+        });
+        const diagnosticSetCount = await prisma.diagnosticQuestion.groupBy({ by: ['set_id'] });
 
         return res.json({
             data: [
@@ -190,7 +241,17 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
                     examId: 'ielts',
                     label: 'IELTS Preparation',
                     bankType: 'drill',
-                    skills: rows.map(r => ({ skill: r.skill, count: r._count._all })),
+                    skills: drillRows.map(r => ({ skill: r.skill, count: r._count._all })),
+                },
+                {
+                    examId: 'ielts',
+                    label: 'IELTS Preparation',
+                    bankType: 'diagnostic',
+                    skills: diagnosticRows.map(r => ({ skill: r.skill, count: r._count._all })),
+                    // Diagnostic content lives in fixed sets (import updates an
+                    // existing set in place, never creates new ones) — the set
+                    // count matters at least as much as the row count here.
+                    setCount: diagnosticSetCount.length,
                 },
             ],
         });
@@ -226,19 +287,38 @@ export async function runLayer1(req: AuthRequest, res: Response) {
     const tempPaths = writeTempFiles(uploaded);
 
     try {
-        const results = tempPaths.map((filePath, i) => {
-            const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: false });
-            return {
-                fileName: uploaded[i].originalname,
-                outcome: verdict.outcome,
-                findings: fileFindingsFlat(verdict).map(f => ({
-                    code: f.code,
-                    severity: f.severity,
-                    message: f.message,
-                    line: (f as any).line ?? null,
-                })),
-            };
-        });
+        const results =
+            bankType === 'diagnostic'
+                ? tempPaths.map((filePath, i) => {
+                      // null = "use each file's own row count", since diagnostic
+                      // batches legitimately vary in size (5-row sets, multi-set
+                      // bundles) — there's no single fixed expected count like
+                      // drills' 200-per-bucket.
+                      const verdict = verifyDiagnosticFile(filePath, { expectedRowCount: null });
+                      return {
+                          fileName: uploaded[i].originalname,
+                          outcome: verdict.outcome,
+                          findings: diagnosticFileFindingsFlat(verdict).map(f => ({
+                              code: f.code,
+                              severity: f.severity,
+                              message: f.message,
+                              line: (f as any).line ?? null,
+                          })),
+                      };
+                  })
+                : tempPaths.map((filePath, i) => {
+                      const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: false });
+                      return {
+                          fileName: uploaded[i].originalname,
+                          outcome: verdict.outcome,
+                          findings: fileFindingsFlat(verdict).map(f => ({
+                              code: f.code,
+                              severity: f.severity,
+                              message: f.message,
+                              line: (f as any).line ?? null,
+                          })),
+                      };
+                  });
 
         return res.json({ data: results });
     } catch (err: any) {
@@ -278,8 +358,13 @@ export async function runLayer1Report(req: AuthRequest, res: Response) {
     const outPath = path.join(os.tmpdir(), `layer1-report-${crypto.randomUUID()}.xlsx`);
 
     try {
-        const run = verifyRun(tempPaths, { fallback: expectedRowCount, byLevel: {} }, { requireSourceKey: false });
-        await writeRunReport(run, outPath);
+        if (bankType === 'diagnostic') {
+            const run = verifyDiagnosticRun(tempPaths, null);
+            await writeDiagnosticRunReport(run, outPath);
+        } else {
+            const run = verifyRun(tempPaths, { fallback: expectedRowCount, byLevel: {} }, { requireSourceKey: false });
+            await writeRunReport(run, outPath);
+        }
 
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="layer1-verify-report.xlsx"`);
@@ -306,20 +391,35 @@ type JudgeRunResultLike = Awaited<ReturnType<typeof runJudge>>;
 interface Layer2Job {
     status: 'pending' | 'done' | 'error';
     startedAt: number;
+    bankType: string;
     result?: JudgeRunResultLike;
     error?: string;
 }
 
 const layer2Jobs = new Map<string, Layer2Job>();
 
-async function runJudge(filePaths: string[]) {
+async function runJudge(filePaths: string[], bankType: string) {
     const resolved = resolveApiKey();
     if (resolved === null) {
         throw new Error('No API key configured for Layer 2 (set GEMINI_API_KEY).');
     }
     const client = createGeminiClient({ apiKey: resolved.key });
-    const stats: JudgeStats = { apiCalls: 0, cacheHits: 0 };
 
+    if (bankType === 'diagnostic') {
+        const stats: DiagnosticJudgeStats = { apiCalls: 0, cacheHits: 0 };
+        // No audioDir/transcribeAudio: the Listening audio cross-check is
+        // scoped out of this first pass (needs a whole-batch audio upload,
+        // not just CSV) — it degrades gracefully to "skipped", never crashes.
+        const run = await judgeDiagnosticRun(filePaths, {
+            client,
+            limit: createLimiter(4),
+            useCache: true,
+            stats,
+        });
+        return { files: run.files, apiCalls: stats.apiCalls, cacheHits: stats.cacheHits };
+    }
+
+    const stats: JudgeStats = { apiCalls: 0, cacheHits: 0 };
     const run = await judgeRun(filePaths, {
         client,
         votes: 1,
@@ -354,15 +454,15 @@ export async function startLayer2(req: AuthRequest, res: Response) {
 
     const tempPaths = writeTempFiles(uploaded);
     const jobId = crypto.randomUUID();
-    layer2Jobs.set(jobId, { status: 'pending', startedAt: Date.now() });
+    layer2Jobs.set(jobId, { status: 'pending', startedAt: Date.now(), bankType });
 
-    runJudge(tempPaths)
+    runJudge(tempPaths, bankType)
         .then(result => {
-            layer2Jobs.set(jobId, { status: 'done', startedAt: Date.now(), result });
+            layer2Jobs.set(jobId, { status: 'done', startedAt: Date.now(), bankType, result });
         })
         .catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
-            layer2Jobs.set(jobId, { status: 'error', startedAt: Date.now(), error: message });
+            layer2Jobs.set(jobId, { status: 'error', startedAt: Date.now(), bankType, error: message });
         })
         .finally(() => cleanupTempFiles(tempPaths));
 
@@ -403,7 +503,11 @@ export async function getLayer2Report(req: AuthRequest, res: Response) {
 
     const outPath = path.join(os.tmpdir(), `layer2-report-${crypto.randomUUID()}.xlsx`);
     try {
-        await writeJudgeReport(job.result as any, outPath);
+        if (job.bankType === 'diagnostic') {
+            await writeDiagnosticJudgeReport(job.result as any, outPath);
+        } else {
+            await writeJudgeReport(job.result as any, outPath);
+        }
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="layer2-judge-report.xlsx"`);
         return res.sendFile(outPath, err => {
@@ -501,6 +605,8 @@ export async function planImportEndpoint(req: AuthRequest, res: Response) {
         throw err;
     }
 
+    if (bankType === 'diagnostic') return planDiagnosticImport(req, res);
+
     const uploaded = getUploadedFiles(req);
     if (uploaded.length === 0) {
         return res.status(400).json({ error: 'At least one file is required (field "files").' });
@@ -556,6 +662,8 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
     if (!targetCheck.ok) {
         return res.status(500).json({ error: `Refusing to write — database target check failed: ${targetCheck.message}` });
     }
+
+    if (bankType === 'diagnostic') return confirmDiagnosticImport(req, res);
 
     const uploaded = getUploadedFiles(req);
     if (uploaded.length === 0) {
@@ -668,6 +776,257 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
     }
 }
 
+// ─── Diagnostic import: plan / confirm ──────────────────────────────────────
+// Genuinely different shape from drills — see the plan doc. This is an
+// UPDATE of an EXISTING set_id's rows (matched 1:1 by sequence), never an
+// insert, and there is no source_key/Layer-1-gate concept in the CLI's own
+// importer/cli.ts — it only checks the staging CSV parses cleanly
+// (loadDiagnosticCsv().fatal), not the full structural Layer 1 checks. This
+// mirrors that exactly rather than importing drills' stricter gate pattern.
+
+interface DiagnosticImportRequestBody {
+    setId?: string;
+    sourceSetId?: string;
+    audioUrlPrefix?: string;
+}
+
+async function loadDiagnosticBatchForImport(
+    req: AuthRequest,
+): Promise<
+    | { ok: true; filePath: string; fileName: string; setId: string; sourceSetId?: string; audioUrlPrefix: string }
+    | { ok: false; status: number; error: string }
+> {
+    const { setId, sourceSetId, audioUrlPrefix } = req.body as DiagnosticImportRequestBody;
+    if (!setId) return { ok: false, status: 400, error: 'setId is required for a diagnostic import (the EXISTING set_id to update in place).' };
+
+    const uploaded = getUploadedFiles(req);
+    if (uploaded.length !== 1) {
+        return { ok: false, status: 400, error: 'Diagnostic import takes exactly one staging CSV per request (field "files").' };
+    }
+
+    const [tempPath] = writeTempFiles(uploaded);
+    return {
+        ok: true,
+        filePath: tempPath,
+        fileName: uploaded[0].originalname,
+        setId,
+        sourceSetId: sourceSetId?.trim() || undefined,
+        audioUrlPrefix: audioUrlPrefix?.trim() || '/diagnostics/audio/',
+    };
+}
+
+async function planDiagnosticImport(req: AuthRequest, res: Response) {
+    const loaded = await loadDiagnosticBatchForImport(req);
+    if (!loaded.ok) return res.status(loaded.status).json({ error: loaded.error });
+
+    try {
+        const parsed = loadDiagnosticCsv(loaded.filePath);
+        if (parsed.fatal) {
+            return res.json({
+                data: {
+                    fileName: loaded.fileName,
+                    setId: loaded.setId,
+                    gateBlocked: `Staging CSV could not be read cleanly (${parsed.findings.map(f => f.code).join(', ')}). Run Layer 1 verify on it first.`,
+                    updates: [],
+                },
+            });
+        }
+
+        const existing: ExistingDiagnosticRow[] = (await prisma.diagnosticQuestion.findMany({
+            where: { set_id: loaded.setId },
+            orderBy: { sequence: 'asc' },
+            select: DIAGNOSTIC_EXISTING_SELECT,
+        })) as any;
+
+        const updates = validateDiagnosticBatch(parsed.rows, existing, {
+            setId: loaded.setId,
+            sourceSetId: loaded.sourceSetId,
+            fileLabel: loaded.fileName,
+        });
+        const diffed = diffDiagnosticRows(existing, updates, {
+            audioUrlPrefix: loaded.audioUrlPrefix,
+            importedAt: new Date(),
+        });
+
+        return res.json({
+            data: {
+                fileName: loaded.fileName,
+                setId: loaded.setId,
+                gateBlocked: null,
+                updates: diffed.map(u => ({
+                    sequence: u.sequence,
+                    before: u.before,
+                    after: { ...u.after, created_at: u.after.created_at.toISOString() },
+                })),
+            },
+        });
+    } catch (err: any) {
+        if (err instanceof DiagnosticImportPlanError) {
+            return res.json({
+                data: { fileName: loaded.fileName, setId: loaded.setId, gateBlocked: err.message, updates: [] },
+            });
+        }
+        console.error('[SuperAdminVerification] planDiagnosticImport error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to plan diagnostic import' });
+    } finally {
+        cleanupTempFiles([loaded.filePath]);
+    }
+}
+
+async function confirmDiagnosticImport(req: AuthRequest, res: Response) {
+    const loaded = await loadDiagnosticBatchForImport(req);
+    if (!loaded.ok) return res.status(loaded.status).json({ error: loaded.error });
+
+    try {
+        const parsed = loadDiagnosticCsv(loaded.filePath);
+        if (parsed.fatal) {
+            return res.status(400).json({
+                error: `Staging CSV could not be read cleanly (${parsed.findings.map(f => f.code).join(', ')}). Run Layer 1 verify on it first.`,
+            });
+        }
+
+        const existing: ExistingDiagnosticRow[] = (await prisma.diagnosticQuestion.findMany({
+            where: { set_id: loaded.setId },
+            orderBy: { sequence: 'asc' },
+            select: DIAGNOSTIC_EXISTING_SELECT,
+        })) as any;
+
+        const importedAt = new Date();
+        const stagedRows = validateDiagnosticBatch(parsed.rows, existing, {
+            setId: loaded.setId,
+            sourceSetId: loaded.sourceSetId,
+            fileLabel: loaded.fileName,
+        });
+        const updates = diffDiagnosticRows(existing, stagedRows, { audioUrlPrefix: loaded.audioUrlPrefix, importedAt });
+
+        // Same rollback story as the CLI: back up the pre-update rows before
+        // writing — an update-in-place has no other undo path once committed.
+        fs.mkdirSync(DIAGNOSTIC_BACKUP_DIR, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = path.join(DIAGNOSTIC_BACKUP_DIR, `${loaded.setId}--${stamp}.json`);
+        fs.writeFileSync(backupPath, JSON.stringify(existing, null, 2), 'utf8');
+
+        await prisma.$transaction(
+            updates.map(u => prisma.diagnosticQuestion.update({ where: { id: u.id }, data: u.after as any, select: { id: true } })),
+        );
+
+        return res.json({
+            data: {
+                fileName: loaded.fileName,
+                setId: loaded.setId,
+                updated: updates.length,
+                backupFile: path.basename(backupPath),
+            },
+        });
+    } catch (err: any) {
+        if (err instanceof DiagnosticImportPlanError) {
+            return res.status(400).json({ error: err.message });
+        }
+        console.error('[SuperAdminVerification] confirmDiagnosticImport error:', err);
+        return res.status(500).json({ error: err.message ?? 'Diagnostic import failed' });
+    } finally {
+        cleanupTempFiles([loaded.filePath]);
+    }
+}
+
+// ─── Diagnostic restore: list backups / restore one ─────────────────────────
+
+/** Prevents a `backupFile` request body from escaping DIAGNOSTIC_BACKUP_DIR. */
+function safeBackupPath(backupFile: string): string {
+    return path.join(DIAGNOSTIC_BACKUP_DIR, path.basename(backupFile));
+}
+
+export async function getDiagnosticImportBackups(req: AuthRequest, res: Response) {
+    const setId = String(req.query.setId ?? '').trim();
+    if (!setId) return res.status(400).json({ error: 'setId query param is required.' });
+
+    try {
+        if (!fs.existsSync(DIAGNOSTIC_BACKUP_DIR)) return res.json({ data: [] });
+
+        const files = fs
+            .readdirSync(DIAGNOSTIC_BACKUP_DIR)
+            .filter(f => f.startsWith(`${setId}--`) && f.endsWith('.json'));
+
+        const data = files.map(f => {
+            const full = path.join(DIAGNOSTIC_BACKUP_DIR, f);
+            const stat = fs.statSync(full);
+            let rowCount = 0;
+            try {
+                const parsed = JSON.parse(fs.readFileSync(full, 'utf8'));
+                rowCount = Array.isArray(parsed) ? parsed.length : 0;
+            } catch {
+                // corrupt backup file — still list it, just with rowCount 0
+            }
+            return { fileName: f, modifiedAt: stat.mtime.toISOString(), rowCount };
+        });
+        data.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+
+        return res.json({ data });
+    } catch (err: any) {
+        console.error('[SuperAdminVerification] getDiagnosticImportBackups error:', err);
+        return res.status(500).json({ error: err.message ?? 'Failed to list backups' });
+    }
+}
+
+export async function restoreDiagnosticImport(req: AuthRequest, res: Response) {
+    const { backupFile, confirm: confirmRaw } = req.body as { backupFile?: string; confirm?: boolean | string };
+    if (!backupFile) return res.status(400).json({ error: 'backupFile is required.' });
+    const confirm = confirmRaw === true || confirmRaw === 'true';
+
+    try {
+        const fullPath = safeBackupPath(backupFile);
+        if (!fs.existsSync(fullPath)) {
+            return res.status(404).json({ error: `Backup file not found: ${path.basename(fullPath)}` });
+        }
+
+        const plan = parseDiagnosticBackup(fs.readFileSync(fullPath, 'utf8'), path.basename(fullPath));
+
+        const liveRows = await prisma.diagnosticQuestion.findMany({
+            where: { set_id: plan.setId },
+            select: { id: true },
+        });
+        assertDiagnosticRestorable(plan, new Set(liveRows.map(r => r.id)));
+
+        if (!confirm) {
+            return res.json({
+                data: { setId: plan.setId, rowCount: plan.rows.length, wouldRestore: true, written: false },
+            });
+        }
+
+        const targetCheck = await verifyDatabaseTarget();
+        if (!targetCheck.ok) {
+            return res.status(500).json({ error: `Refusing to write — database target check failed: ${targetCheck.message}` });
+        }
+
+        await prisma.$transaction(
+            plan.rows.map(r =>
+                prisma.diagnosticQuestion.update({
+                    where: { id: r.id },
+                    data: {
+                        question_type: r.question_type,
+                        prompt_text: r.prompt_text,
+                        options: r.options as any,
+                        correct_answer: r.correct_answer,
+                        min_words: r.min_words,
+                        passage_text: r.passage_text,
+                        audio_url: r.audio_url,
+                        created_at: new Date(r.created_at),
+                    },
+                    select: { id: true },
+                }),
+            ),
+        );
+
+        return res.json({ data: { setId: plan.setId, rowCount: plan.rows.length, wouldRestore: false, written: true } });
+    } catch (err: any) {
+        if (err instanceof RestorePlanError) {
+            return res.status(400).json({ error: err.message });
+        }
+        console.error('[SuperAdminVerification] restoreDiagnosticImport error:', err);
+        return res.status(500).json({ error: err.message ?? 'Restore failed' });
+    }
+}
+
 // ─── POST /api/superadmin/verification/tag ──────────────────────────────────
 // Mirrors the CLI's key-assignment-tool: stamps a permanent source_key onto
 // each row (reusing a key already issued in the DB for that exact prompt
@@ -688,6 +1047,10 @@ export async function tagBatch(req: AuthRequest, res: Response) {
     } catch (err) {
         if (err instanceof UnsupportedForkError) return res.status(400).json({ error: err.message });
         throw err;
+    }
+
+    if (bankType === 'diagnostic') {
+        return res.status(400).json({ error: 'Diagnostic content has no source_key/tagging step — nothing to tag.' });
     }
 
     const uploaded = getUploadedFiles(req);
