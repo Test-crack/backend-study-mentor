@@ -167,6 +167,8 @@ src/Verification/diagnostic/question-banks/staging-audio/
 src/Verification/drills/question-banks/cache/
 src/Verification/spoken-english/results/
 src/Verification/spoken-english/cache/
+src/Verification/ia/results/
+src/Verification/ia/cache/
 # CSV files are local-only, never push to origin
 *.csv
 

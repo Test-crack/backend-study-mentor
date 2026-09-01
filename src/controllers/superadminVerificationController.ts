@@ -57,7 +57,46 @@ import {
     RestorePlanError,
 } from '../Verification/diagnostic/importer/restorer';
 
+import {
+    verifyFile as verifyIAFile,
+    fileFindingsFlat as iaFileFindingsFlat,
+    verifyRun as verifyIARun,
+} from '../Verification/ia/question-banks/layer1-verifier/verify';
+import { determineBucket as determineIABucket } from '../Verification/ia/question-banks/layer1-verifier/checks';
+import { writeRunReport as writeIARunReport } from '../Verification/ia/question-banks/shared/excelReport';
+import { judgeRun as judgeIARun } from '../Verification/ia/question-banks/layer2-content-judge/judge';
+import type { JudgeStats as IAJudgeStats } from '../Verification/ia/question-banks/layer2-content-judge/judge';
+import { writeJudgeReport as writeIAJudgeReport } from '../Verification/ia/question-banks/layer2-content-judge/report';
+// IA's csvLoader re-exports drills' toCsvText/findCsvFiles unchanged — only
+// loadIACsv is new; reuse the toCsvText already imported for drills above.
+import { loadIACsv } from '../Verification/ia/question-banks/shared/csvLoader';
+import { assignKeys as assignIAKeys, toTaggedRows as toIATaggedRows, TAGGED_HEADER as IA_TAGGED_HEADER } from '../Verification/ia/question-banks/key-assignment-tool/assignKeys';
+import { fetchBucketRows as fetchIABucketRows, indexFromDbRows as indexFromIADbRows } from '../Verification/ia/question-banks/key-assignment-tool/dbIndex';
+import { planImport as planIAImport, countActions as countIAActions, type ExistingRow as IAExistingRow } from '../Verification/ia/question-banks/importer/importer';
+
 const DIAGNOSTIC_BACKUP_DIR = path.resolve(__dirname, '..', 'Verification', 'diagnostic', 'results', 'set-backups');
+
+/** Mirrors `ExistingRow` in ia/question-banks/importer/importer.ts. */
+const IA_EXISTING_SELECT = {
+    source_key: true,
+    skill: true,
+    sub_skill: true,
+    difficulty: true,
+    question_type: true,
+    passage_id: true,
+    passage_text: true,
+    audio_url: true,
+    prompt_text: true,
+    options: true,
+    correct_answer: true,
+    explanation: true,
+    exam_id: true,
+} as const;
+
+/** Same nullable-source_key hedge as toExistingRows below, for IA's ExistingRow shape. */
+function toIAExistingRows(rows: Array<Omit<IAExistingRow, 'source_key'> & { source_key: string | null }>): IAExistingRow[] {
+    return rows.filter((r): r is IAExistingRow => r.source_key !== null);
+}
 
 /** Explicit `select` — same schema-drift hedge as the CLI (see importer/cli.ts). */
 const DIAGNOSTIC_EXISTING_SELECT = {
@@ -94,7 +133,7 @@ function forkKey(examId: string, bankType: string): ForkKey {
     return `${examId}:${bankType}`;
 }
 
-const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic']);
+const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic', 'ielts:ia']);
 
 function assertSupportedFork(examId: string, bankType: string): void {
     if (!SUPPORTED_FORKS.has(forkKey(examId, bankType))) {
@@ -234,6 +273,11 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
             _count: { _all: true },
         });
         const diagnosticSetCount = await prisma.diagnosticQuestion.groupBy({ by: ['set_id'] });
+        const iaRows = await prisma.iAQuestion.groupBy({
+            by: ['skill'],
+            where: { exam_id: 'ielts' } as any,
+            _count: { _all: true },
+        });
 
         return res.json({
             data: [
@@ -252,6 +296,12 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
                     // existing set in place, never creates new ones) — the set
                     // count matters at least as much as the row count here.
                     setCount: diagnosticSetCount.length,
+                },
+                {
+                    examId: 'ielts',
+                    label: 'IELTS Preparation',
+                    bankType: 'ia',
+                    skills: iaRows.map(r => ({ skill: r.skill, count: r._count._all })),
                 },
             ],
         });
@@ -299,6 +349,20 @@ export async function runLayer1(req: AuthRequest, res: Response) {
                           fileName: uploaded[i].originalname,
                           outcome: verdict.outcome,
                           findings: diagnosticFileFindingsFlat(verdict).map(f => ({
+                              code: f.code,
+                              severity: f.severity,
+                              message: f.message,
+                              line: (f as any).line ?? null,
+                          })),
+                      };
+                  })
+                : bankType === 'ia'
+                ? tempPaths.map((filePath, i) => {
+                      const verdict = verifyIAFile(filePath, { expectedRowCount, requireSourceKey: false });
+                      return {
+                          fileName: uploaded[i].originalname,
+                          outcome: verdict.outcome,
+                          findings: iaFileFindingsFlat(verdict).map(f => ({
                               code: f.code,
                               severity: f.severity,
                               message: f.message,
@@ -361,6 +425,9 @@ export async function runLayer1Report(req: AuthRequest, res: Response) {
         if (bankType === 'diagnostic') {
             const run = verifyDiagnosticRun(tempPaths, null);
             await writeDiagnosticRunReport(run, outPath);
+        } else if (bankType === 'ia') {
+            const run = verifyIARun(tempPaths, { fallback: expectedRowCount, byDifficulty: {} }, { requireSourceKey: false });
+            await writeIARunReport(run, outPath);
         } else {
             const run = verifyRun(tempPaths, { fallback: expectedRowCount, byLevel: {} }, { requireSourceKey: false });
             await writeRunReport(run, outPath);
@@ -411,6 +478,18 @@ async function runJudge(filePaths: string[], bankType: string) {
         // scoped out of this first pass (needs a whole-batch audio upload,
         // not just CSV) — it degrades gracefully to "skipped", never crashes.
         const run = await judgeDiagnosticRun(filePaths, {
+            client,
+            limit: createLimiter(4),
+            useCache: true,
+            stats,
+        });
+        return { files: run.files, apiCalls: stats.apiCalls, cacheHits: stats.cacheHits };
+    }
+
+    if (bankType === 'ia') {
+        const stats: IAJudgeStats = { apiCalls: 0, cacheHits: 0 };
+        // Same scoping as diagnostic above: no audioDir/transcribeAudio yet.
+        const run = await judgeIARun(filePaths, {
             client,
             limit: createLimiter(4),
             useCache: true,
@@ -505,6 +584,8 @@ export async function getLayer2Report(req: AuthRequest, res: Response) {
     try {
         if (job.bankType === 'diagnostic') {
             await writeDiagnosticJudgeReport(job.result as any, outPath);
+        } else if (job.bankType === 'ia') {
+            await writeIAJudgeReport(job.result as any, outPath);
         } else {
             await writeJudgeReport(job.result as any, outPath);
         }
@@ -524,7 +605,7 @@ export async function getLayer2Report(req: AuthRequest, res: Response) {
 // ─── POST /api/superadmin/verification/import/plan ─────────────────────────
 // Dry run only — never writes. Mirrors Import/cli.ts's non-confirm report.
 
-async function buildImportPlan(filePaths: string[]) {
+async function buildImportPlan(filePaths: string[], expectedRowCount: number) {
     const perFile: Array<{
         fileName: string;
         gateBlocked: string | null;
@@ -536,7 +617,7 @@ async function buildImportPlan(filePaths: string[]) {
     }> = [];
 
     for (const filePath of filePaths) {
-        const verdict = verifyFile(filePath, { expectedRowCount: 200, requireSourceKey: true });
+        const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: true });
         if (verdict.outcome === 'fail') {
             const codes = [...new Set(fileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
             perFile.push({
@@ -592,8 +673,66 @@ async function buildImportPlan(filePaths: string[]) {
     return perFile;
 }
 
+async function buildIAImportPlan(filePaths: string[], expectedRowCount: number) {
+    const perFile: Array<{
+        fileName: string;
+        gateBlocked: string | null;
+        toInsert: number;
+        toUpdate: number;
+        unchanged: number;
+        errors: string[];
+        updates: { source_key: string; changed: string[] }[];
+    }> = [];
+
+    for (const filePath of filePaths) {
+        const verdict = verifyIAFile(filePath, { expectedRowCount, requireSourceKey: true });
+        if (verdict.outcome === 'fail') {
+            const codes = [...new Set(iaFileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
+            perFile.push({
+                fileName: path.basename(filePath),
+                gateBlocked: `Layer 1 FAILED: ${codes.join(', ')}.`,
+                toInsert: 0,
+                toUpdate: 0,
+                unchanged: 0,
+                errors: [],
+                updates: [],
+            });
+            continue;
+        }
+
+        const loaded = loadIACsv(filePath);
+        const keys = loaded.rows.map(r => r.source_key?.trim()).filter((k): k is string => Boolean(k));
+        const existingRows: IAExistingRow[] =
+            keys.length === 0
+                ? []
+                : toIAExistingRows(
+                      await prisma.iAQuestion.findMany({
+                          where: { source_key: { in: keys } },
+                          select: IA_EXISTING_SELECT,
+                      }),
+                  );
+        const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+        const plan = planIAImport(loaded.rows, existingByKey);
+        const counts = countIAActions(plan.plans);
+
+        perFile.push({
+            fileName: loaded.fileName,
+            gateBlocked: null,
+            toInsert: counts.insert,
+            toUpdate: counts.update,
+            unchanged: counts.unchanged,
+            errors: plan.errors,
+            updates: plan.plans
+                .filter(p => p.action === 'update')
+                .map(p => ({ source_key: p.row.source_key, changed: p.changed })),
+        });
+    }
+
+    return perFile;
+}
+
 export async function planImportEndpoint(req: AuthRequest, res: Response) {
-    const { examId, bankType } = req.body as { examId?: string; bankType?: string };
+    const { examId, bankType, expected } = req.body as { examId?: string; bankType?: string; expected?: string };
     if (!examId || !bankType) {
         return res.status(400).json({ error: 'examId and bankType are required.' });
     }
@@ -612,9 +751,10 @@ export async function planImportEndpoint(req: AuthRequest, res: Response) {
         return res.status(400).json({ error: 'At least one file is required (field "files").' });
     }
 
+    const expectedRowCount = Number(expected) > 0 ? Number(expected) : 200;
     const tempPaths = writeTempFiles(uploaded);
     try {
-        const perFile = await buildImportPlan(tempPaths);
+        const perFile = bankType === 'ia' ? await buildIAImportPlan(tempPaths, expectedRowCount) : await buildImportPlan(tempPaths, expectedRowCount);
         return res.json({ data: perFile });
     } catch (err: any) {
         console.error('[SuperAdminVerification] planImportEndpoint error:', err);
@@ -630,12 +770,13 @@ export async function planImportEndpoint(req: AuthRequest, res: Response) {
 // mirrors Import/cli.ts:238-293.
 
 export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
-    const { examId, bankType, layer2Reviewed: layer2ReviewedRaw } = req.body as {
+    const { examId, bankType, layer2Reviewed: layer2ReviewedRaw, expected } = req.body as {
         examId?: string;
         bankType?: string;
         // Multipart form fields (multer) arrive as strings, not booleans — a JSON
         // body could send a real boolean, so both shapes must be accepted here.
         layer2Reviewed?: boolean | string;
+        expected?: string;
     };
     if (!examId || !bankType) {
         return res.status(400).json({ error: 'examId and bankType are required.' });
@@ -670,6 +811,7 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
         return res.status(400).json({ error: 'At least one file is required (field "files").' });
     }
 
+    const expectedRowCount = Number(expected) > 0 ? Number(expected) : 200;
     const tempPaths = writeTempFiles(uploaded);
     try {
         const reports: Array<{
@@ -682,8 +824,89 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
             errors: string[];
         }> = [];
 
+        if (bankType === 'ia') {
+            for (const filePath of tempPaths) {
+                const verdict = verifyIAFile(filePath, { expectedRowCount, requireSourceKey: true });
+                if (verdict.outcome === 'fail') {
+                    const codes = [...new Set(iaFileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
+                    reports.push({
+                        fileName: path.basename(filePath),
+                        gateBlocked: `Layer 1 FAILED: ${codes.join(', ')}.`,
+                        inserted: 0,
+                        updated: 0,
+                        unchanged: 0,
+                        failed: 0,
+                        errors: [],
+                    });
+                    continue;
+                }
+
+                const loaded = loadIACsv(filePath);
+                const keys = loaded.rows.map(r => r.source_key?.trim()).filter((k): k is string => Boolean(k));
+                const existingRows: IAExistingRow[] =
+                    keys.length === 0
+                        ? []
+                        : toIAExistingRows(
+                              await prisma.iAQuestion.findMany({
+                                  where: { source_key: { in: keys } },
+                                  select: IA_EXISTING_SELECT,
+                              }),
+                          );
+                const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+                const plan = planIAImport(loaded.rows, existingByKey);
+
+                const written = { inserted: 0, updated: 0, unchanged: 0, failed: 0 };
+                const errors = [...plan.errors];
+
+                for (const p of plan.plans) {
+                    if (p.action === 'unchanged') {
+                        written.unchanged += 1;
+                        continue;
+                    }
+                    const { line: _line, ...data } = p.row;
+                    try {
+                        await prisma.iAQuestion.upsert({
+                            where: { source_key: p.row.source_key },
+                            create: { ...data, is_active: true } as any,
+                            update: {
+                                prompt_text: data.prompt_text,
+                                options: data.options,
+                                correct_answer: data.correct_answer,
+                                explanation: data.explanation,
+                                passage_id: data.passage_id,
+                                passage_text: data.passage_text,
+                                audio_url: data.audio_url,
+                                question_type: data.question_type,
+                                exam_id: data.exam_id,
+                                skill: data.skill,
+                                sub_skill: data.sub_skill,
+                                difficulty: data.difficulty,
+                            } as any,
+                        });
+                        if (p.action === 'insert') written.inserted += 1;
+                        else written.updated += 1;
+                    } catch (err) {
+                        written.failed += 1;
+                        errors.push(
+                            `line ${p.row.line} (${p.row.source_key}): write failed — ` +
+                                (err instanceof Error ? err.message.split('\n')[0] : String(err)),
+                        );
+                    }
+                }
+
+                reports.push({
+                    fileName: loaded.fileName,
+                    gateBlocked: null,
+                    ...written,
+                    errors,
+                });
+            }
+
+            return res.json({ data: reports });
+        }
+
         for (const filePath of tempPaths) {
-            const verdict = verifyFile(filePath, { expectedRowCount: 200, requireSourceKey: true });
+            const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: true });
             if (verdict.outcome === 'fail') {
                 const codes = [...new Set(fileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
                 reports.push({
@@ -1037,10 +1260,11 @@ export async function restoreDiagnosticImport(req: AuthRequest, res: Response) {
 // for already-issued keys, since a web request has no local cache to merge.
 
 export async function tagBatch(req: AuthRequest, res: Response) {
-    const { examId, bankType } = req.body as { examId?: string; bankType?: string };
+    const { examId, bankType, expected } = req.body as { examId?: string; bankType?: string; expected?: string };
     if (!examId || !bankType) {
         return res.status(400).json({ error: 'examId and bankType are required.' });
     }
+    const expectedRowCount = Number(expected) > 0 ? Number(expected) : 200;
 
     try {
         assertSupportedFork(examId, bankType);
@@ -1060,6 +1284,59 @@ export async function tagBatch(req: AuthRequest, res: Response) {
 
     const tempPaths = writeTempFiles(uploaded);
     try {
+        if (bankType === 'ia') {
+            const taggedRows: string[][] = [];
+            const blockedFiles: string[] = [];
+            let skippedRowCount = 0;
+            let droppedKeyCount = 0;
+            let singleFileBucket: { skill: string; sub_skill: string; difficulty: string } | null = null;
+
+            for (let i = 0; i < tempPaths.length; i += 1) {
+                const filePath = tempPaths[i];
+                const verdict = verifyIAFile(filePath, { expectedRowCount, requireSourceKey: false });
+                if (verdict.outcome === 'fail') {
+                    blockedFiles.push(uploaded[i].originalname);
+                    continue;
+                }
+
+                const loaded = loadIACsv(filePath);
+                const { bucket } = determineIABucket(loaded.rows);
+                if (!bucket) {
+                    blockedFiles.push(uploaded[i].originalname);
+                    continue;
+                }
+                if (tempPaths.length === 1) singleFileBucket = bucket;
+
+                const dbRows = await fetchIABucketRows(prisma as any, bucket);
+                const { index } = indexFromIADbRows(dbRows, bucket);
+                const { assignments, dropped, skippedRows } = assignIAKeys(loaded.rows, bucket, index);
+
+                taggedRows.push(...toIATaggedRows(assignments));
+                skippedRowCount += skippedRows.length;
+                droppedKeyCount += dropped.length;
+            }
+
+            if (taggedRows.length === 0) {
+                return res.status(400).json({
+                    error: `All ${blockedFiles.length} file(s) failed Layer 1 or have no determinable bucket — nothing to tag.`,
+                    blockedFiles,
+                });
+            }
+
+            const csv = toCsvText(IA_TAGGED_HEADER, taggedRows);
+            const descriptor = singleFileBucket
+                ? `${singleFileBucket.skill}-${singleFileBucket.sub_skill}-${singleFileBucket.difficulty}`.toLowerCase()
+                : 'all';
+            const outName = `${descriptor}--${reportTimestamp()}.tagged.csv`;
+
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
+            res.setHeader('X-Tag-Skipped-Rows', String(skippedRowCount));
+            res.setHeader('X-Tag-Dropped-Keys', String(droppedKeyCount));
+            res.setHeader('X-Tag-Blocked-Files', String(blockedFiles.length));
+            return res.send(csv);
+        }
+
         const taggedRows: string[][] = [];
         const blockedFiles: string[] = [];
         let skippedRowCount = 0;
@@ -1068,7 +1345,7 @@ export async function tagBatch(req: AuthRequest, res: Response) {
 
         for (let i = 0; i < tempPaths.length; i += 1) {
             const filePath = tempPaths[i];
-            const verdict = verifyFile(filePath, { expectedRowCount: 200, requireSourceKey: false });
+            const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: false });
             if (verdict.outcome === 'fail') {
                 blockedFiles.push(uploaded[i].originalname);
                 continue;

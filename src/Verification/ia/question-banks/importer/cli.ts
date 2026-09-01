@@ -28,6 +28,7 @@ import { iaDirFor, parseDifficulty } from '../shared/iaLayout';
 import { verifyFile, fileFindingsFlat } from '../layer1-verifier/verify';
 import { countActions, planImport, type ExistingRow, type RowPlan } from './importer';
 import { parseTarget, redactUrl, resolveTarget, TargetError, type ResolvedTarget } from '../../../../Import/target';
+import prisma from '../../../../lib/prisma';
 
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
@@ -122,14 +123,6 @@ function expectedFor(filePath: string, raw: string): number {
   return fallback;
 }
 
-interface PrismaLike {
-  iAQuestion: {
-    findMany(args: { where: { source_key: { in: string[] } }; select: Record<string, true> }): Promise<ExistingRow[]>;
-    upsert(args: { where: { source_key: string }; create: unknown; update: unknown }): Promise<unknown>;
-  };
-  $disconnect(): Promise<void>;
-}
-
 interface FileReport {
   fileName: string;
   gateBlocked?: string;
@@ -195,9 +188,6 @@ async function main(): Promise<number> {
   }
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  const mod = (await import('../../../../lib/prisma.js')) as unknown as { default: PrismaLike };
-  const prisma = mod.default;
-
   const reports: FileReport[] = [];
   let sawFailure = false;
 
@@ -246,7 +236,12 @@ async function main(): Promise<number> {
                 exam_id: true,
               },
             });
-      const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+      // source_key is nullable schema-wide, but every row here was fetched by
+      // `source_key: { in: keys }` (all non-empty strings) — it can never be
+      // null in this result set. Same hedge as the controller's toIAExistingRows.
+      const existingByKey = new Map(
+        existingRows.filter((r): r is typeof r & { source_key: string } => r.source_key !== null).map(r => [r.source_key, r]),
+      );
 
       const plan = planImport(loaded.rows, existingByKey);
       report.plans = plan.plans;
@@ -263,7 +258,7 @@ async function main(): Promise<number> {
           try {
             await prisma.iAQuestion.upsert({
               where: { source_key: p.row.source_key },
-              create: { ...data, is_active: true },
+              create: { ...data, is_active: true } as any,
               update: {
                 prompt_text: data.prompt_text,
                 options: data.options,
@@ -277,7 +272,7 @@ async function main(): Promise<number> {
                 skill: data.skill,
                 sub_skill: data.sub_skill,
                 difficulty: data.difficulty,
-              },
+              } as any,
             });
             if (p.action === 'insert') report.written.inserted += 1;
             else report.written.updated += 1;
