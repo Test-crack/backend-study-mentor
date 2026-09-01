@@ -3,12 +3,9 @@
 // Superadmin Question-Bank Verification panel — thin HTTP wrapper around the
 // existing CLI verification/import libraries (Verification/, Import/), so
 // admins can run the same two-layer pipeline from the web instead of a
-// terminal. Deliberately forked per exam/bank-type the same way the CLI is
-// (see CLAUDE.md) — only this dispatch layer is shared, never the pipeline
-// logic itself.
-//
-// Scope: IELTS drills only for now (the plan's first fork). Add entries to
-// FORKS as the pattern is proven for IA / diagnostic / spoken-english.
+// terminal. Forked per exam/bank-type the same way the CLI is (see
+// CLAUDE.md) — only this dispatch layer is shared, never the pipeline logic
+// itself. See SUPPORTED_FORKS for what's currently wired up.
 
 import fs from 'fs';
 import os from 'os';
@@ -74,6 +71,22 @@ import { assignKeys as assignIAKeys, toTaggedRows as toIATaggedRows, TAGGED_HEAD
 import { fetchBucketRows as fetchIABucketRows, indexFromDbRows as indexFromIADbRows } from '../Verification/ia/question-banks/key-assignment-tool/dbIndex';
 import { planImport as planIAImport, countActions as countIAActions, type ExistingRow as IAExistingRow } from '../Verification/ia/question-banks/importer/importer';
 
+import {
+    verifyFile as verifySEFile,
+    fileFindingsFlat as seFileFindingsFlat,
+    verifyRun as verifySERun,
+} from '../Verification/spoken-english/question-banks/layer1-verifier/verify';
+import { determineBucket as determineSEBucket } from '../Verification/spoken-english/question-banks/layer1-verifier/checks';
+import { writeRunReport as writeSERunReport } from '../Verification/spoken-english/question-banks/shared/excelReport';
+import { judgeRun as judgeSERun } from '../Verification/spoken-english/question-banks/layer2-content-judge/judge';
+import type { JudgeStats as SEJudgeStats } from '../Verification/spoken-english/question-banks/layer2-content-judge/judge';
+import { writeJudgeReport as writeSEJudgeReport } from '../Verification/spoken-english/question-banks/layer2-content-judge/report';
+// Own module, not a re-export of drills' — same function name, different file.
+import { loadDrillCsv as loadSECsv } from '../Verification/spoken-english/question-banks/shared/csvLoader';
+import { assignKeys as assignSEKeys, toTaggedRows as toSETaggedRows, TAGGED_HEADER as SE_TAGGED_HEADER } from '../Verification/spoken-english/question-banks/key-assignment-tool/assignKeys';
+import { fetchBucketRows as fetchSEBucketRows, indexFromDbRows as indexFromSEDbRows } from '../Verification/spoken-english/question-banks/key-assignment-tool/dbIndex';
+import { planImport as planSEImport, countActions as countSEActions, type ExistingRow as SEExistingRow } from '../Verification/spoken-english/Import/importer';
+
 const DIAGNOSTIC_BACKUP_DIR = path.resolve(__dirname, '..', 'Verification', 'diagnostic', 'results', 'set-backups');
 
 /** Mirrors `ExistingRow` in ia/question-banks/importer/importer.ts. */
@@ -96,6 +109,25 @@ const IA_EXISTING_SELECT = {
 /** Same nullable-source_key hedge as toExistingRows below, for IA's ExistingRow shape. */
 function toIAExistingRows(rows: Array<Omit<IAExistingRow, 'source_key'> & { source_key: string | null }>): IAExistingRow[] {
     return rows.filter((r): r is IAExistingRow => r.source_key !== null);
+}
+
+/** Mirrors `ExistingRow` in spoken-english/Import/importer.ts. */
+const SE_EXISTING_SELECT = {
+    source_key: true,
+    skill: true,
+    sub_skill: true,
+    level: true,
+    drill_type: true,
+    prompt_text: true,
+    options: true,
+    correct_answer: true,
+    explanation: true,
+    exam_id: true,
+} as const;
+
+/** Same nullable-source_key hedge as toIAExistingRows, for SE's ExistingRow shape. */
+function toSEExistingRows(rows: Array<Omit<SEExistingRow, 'source_key'> & { source_key: string | null }>): SEExistingRow[] {
+    return rows.filter((r): r is SEExistingRow => r.source_key !== null);
 }
 
 /** Explicit `select` — same schema-drift hedge as the CLI (see importer/cli.ts). */
@@ -133,7 +165,7 @@ function forkKey(examId: string, bankType: string): ForkKey {
     return `${examId}:${bankType}`;
 }
 
-const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic', 'ielts:ia']);
+const SUPPORTED_FORKS = new Set<ForkKey>(['ielts:drill', 'ielts:diagnostic', 'ielts:ia', 'spoken_english:drill']);
 
 function assertSupportedFork(examId: string, bankType: string): void {
     if (!SUPPORTED_FORKS.has(forkKey(examId, bankType))) {
@@ -148,17 +180,12 @@ class UnsupportedForkError extends Error {
 }
 
 // ─── DB target safety (adapted from Import/target.ts) ─────────────────────
-// A running API instance only ever points at one database — there's no
-// per-request dev/prod flag to guard, unlike the CLI's SSH-tunnel ambiguity.
-//
-// NODE_ENV is NOT a reliable signal for which database this is: this repo's
-// own dev setup runs with NODE_ENV=production while pointed at
-// testcrack_db_dev through the SSH tunnel (confirmed empirically — an
-// earlier version of this check assumed NODE_ENV implied the target and
-// would have wrongly refused every import on a correctly-configured dev
-// box). So this only asserts the connection resolves to ONE of the two
-// known TestCrack databases — a real name, not silence or a typo — and
-// reports which one in the response, rather than trying to guess intent.
+// A running API instance only points at one database, so there's no per-
+// request dev/prod flag to guard here, unlike the CLI's SSH-tunnel ambiguity.
+// NODE_ENV can't stand in for that check — this repo's dev setup runs with
+// NODE_ENV=production while pointed at testcrack_db_dev — so this only
+// asserts the connection resolves to one of the two known TestCrack
+// databases and reports which one, rather than guessing from NODE_ENV.
 
 let cachedTargetCheck:
     | { ok: true; target: TargetName; databaseName: string }
@@ -221,20 +248,10 @@ function writeTempFiles(files: UploadedFile[]): string[] {
 }
 
 /**
- * Deliberately a no-op now — kept (rather than deleted at every call site) so
- * the intent stays visible in the diff.
- *
- * These paths are content-addressed (writeTempFiles), so deleting them after
- * one request is actively harmful: Layer 2 runs as a background job that can
- * still be reading a file minutes after its HTTP request returned, and any
- * other request over the same file content — say, downloading the Layer 1
- * report for the same batch — resolves to the exact same path. Its cleanup
- * would delete the file out from under the still-running Layer 2 job,
- * producing FILE_UNREADABLE on whatever hadn't been read yet. (Confirmed:
- * this is exactly what happened — file 1 finished before the race, files
- * 2-10 did not.) Leaving identical content in place is also precisely what
- * lets the Layer 2 judge cache actually hit across requests, so "don't
- * delete" is the fix, not a workaround.
+ * No-op. Paths are content-addressed (writeTempFiles) and Layer 2 runs as a
+ * background job that can still be reading a file after its own request
+ * returned — deleting here can pull a file out from under it, and also
+ * defeats the Layer 2 cache hitting across requests.
  */
 function cleanupTempFiles(_filePaths: string[]): void {}
 
@@ -278,6 +295,11 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
             where: { exam_id: 'ielts' } as any,
             _count: { _all: true },
         });
+        const seRows = await prisma.drillQuestion.groupBy({
+            by: ['skill'],
+            where: { exam_id: 'spoken_english' } as any,
+            _count: { _all: true },
+        });
 
         return res.json({
             data: [
@@ -302,6 +324,12 @@ export async function getCoverage(_req: AuthRequest, res: Response) {
                     label: 'IELTS Preparation',
                     bankType: 'ia',
                     skills: iaRows.map(r => ({ skill: r.skill, count: r._count._all })),
+                },
+                {
+                    examId: 'spoken_english',
+                    label: 'Spoken English',
+                    bankType: 'drill',
+                    skills: seRows.map(r => ({ skill: r.skill, count: r._count._all })),
                 },
             ],
         });
@@ -370,6 +398,20 @@ export async function runLayer1(req: AuthRequest, res: Response) {
                           })),
                       };
                   })
+                : examId === 'spoken_english'
+                ? tempPaths.map((filePath, i) => {
+                      const verdict = verifySEFile(filePath, { expectedRowCount, requireSourceKey: false });
+                      return {
+                          fileName: uploaded[i].originalname,
+                          outcome: verdict.outcome,
+                          findings: seFileFindingsFlat(verdict).map(f => ({
+                              code: f.code,
+                              severity: f.severity,
+                              message: f.message,
+                              line: (f as any).line ?? null,
+                          })),
+                      };
+                  })
                 : tempPaths.map((filePath, i) => {
                       const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: false });
                       return {
@@ -428,6 +470,9 @@ export async function runLayer1Report(req: AuthRequest, res: Response) {
         } else if (bankType === 'ia') {
             const run = verifyIARun(tempPaths, { fallback: expectedRowCount, byDifficulty: {} }, { requireSourceKey: false });
             await writeIARunReport(run, outPath);
+        } else if (examId === 'spoken_english') {
+            const run = verifySERun(tempPaths, { fallback: expectedRowCount, byLevel: {} }, { requireSourceKey: false });
+            await writeSERunReport(run, outPath);
         } else {
             const run = verifyRun(tempPaths, { fallback: expectedRowCount, byLevel: {} }, { requireSourceKey: false });
             await writeRunReport(run, outPath);
@@ -458,6 +503,7 @@ type JudgeRunResultLike = Awaited<ReturnType<typeof runJudge>>;
 interface Layer2Job {
     status: 'pending' | 'done' | 'error';
     startedAt: number;
+    examId: string;
     bankType: string;
     result?: JudgeRunResultLike;
     error?: string;
@@ -465,7 +511,7 @@ interface Layer2Job {
 
 const layer2Jobs = new Map<string, Layer2Job>();
 
-async function runJudge(filePaths: string[], bankType: string) {
+async function runJudge(filePaths: string[], examId: string, bankType: string) {
     const resolved = resolveApiKey();
     if (resolved === null) {
         throw new Error('No API key configured for Layer 2 (set GEMINI_API_KEY).');
@@ -491,6 +537,18 @@ async function runJudge(filePaths: string[], bankType: string) {
         // Same scoping as diagnostic above: no audioDir/transcribeAudio yet.
         const run = await judgeIARun(filePaths, {
             client,
+            limit: createLimiter(4),
+            useCache: true,
+            stats,
+        });
+        return { files: run.files, apiCalls: stats.apiCalls, cacheHits: stats.cacheHits };
+    }
+
+    if (examId === 'spoken_english') {
+        const stats: SEJudgeStats = { apiCalls: 0, cacheHits: 0 };
+        const run = await judgeSERun(filePaths, {
+            client,
+            votes: 1,
             limit: createLimiter(4),
             useCache: true,
             stats,
@@ -533,15 +591,15 @@ export async function startLayer2(req: AuthRequest, res: Response) {
 
     const tempPaths = writeTempFiles(uploaded);
     const jobId = crypto.randomUUID();
-    layer2Jobs.set(jobId, { status: 'pending', startedAt: Date.now(), bankType });
+    layer2Jobs.set(jobId, { status: 'pending', startedAt: Date.now(), examId, bankType });
 
-    runJudge(tempPaths, bankType)
+    runJudge(tempPaths, examId, bankType)
         .then(result => {
-            layer2Jobs.set(jobId, { status: 'done', startedAt: Date.now(), bankType, result });
+            layer2Jobs.set(jobId, { status: 'done', startedAt: Date.now(), examId, bankType, result });
         })
         .catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
-            layer2Jobs.set(jobId, { status: 'error', startedAt: Date.now(), bankType, error: message });
+            layer2Jobs.set(jobId, { status: 'error', startedAt: Date.now(), examId, bankType, error: message });
         })
         .finally(() => cleanupTempFiles(tempPaths));
 
@@ -586,6 +644,8 @@ export async function getLayer2Report(req: AuthRequest, res: Response) {
             await writeDiagnosticJudgeReport(job.result as any, outPath);
         } else if (job.bankType === 'ia') {
             await writeIAJudgeReport(job.result as any, outPath);
+        } else if (job.examId === 'spoken_english') {
+            await writeSEJudgeReport(job.result as any, outPath);
         } else {
             await writeJudgeReport(job.result as any, outPath);
         }
@@ -731,6 +791,64 @@ async function buildIAImportPlan(filePaths: string[], expectedRowCount: number) 
     return perFile;
 }
 
+async function buildSEImportPlan(filePaths: string[], expectedRowCount: number) {
+    const perFile: Array<{
+        fileName: string;
+        gateBlocked: string | null;
+        toInsert: number;
+        toUpdate: number;
+        unchanged: number;
+        errors: string[];
+        updates: { source_key: string; changed: string[] }[];
+    }> = [];
+
+    for (const filePath of filePaths) {
+        const verdict = verifySEFile(filePath, { expectedRowCount, requireSourceKey: true });
+        if (verdict.outcome === 'fail') {
+            const codes = [...new Set(seFileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
+            perFile.push({
+                fileName: path.basename(filePath),
+                gateBlocked: `Layer 1 FAILED: ${codes.join(', ')}.`,
+                toInsert: 0,
+                toUpdate: 0,
+                unchanged: 0,
+                errors: [],
+                updates: [],
+            });
+            continue;
+        }
+
+        const loaded = loadSECsv(filePath);
+        const keys = loaded.rows.map(r => r.source_key?.trim()).filter((k): k is string => Boolean(k));
+        const existingRows: SEExistingRow[] =
+            keys.length === 0
+                ? []
+                : toSEExistingRows(
+                      await prisma.drillQuestion.findMany({
+                          where: { source_key: { in: keys }, exam_id: 'spoken_english' } as any,
+                          select: SE_EXISTING_SELECT,
+                      }),
+                  );
+        const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+        const plan = planSEImport(loaded.rows, existingByKey);
+        const counts = countSEActions(plan.plans);
+
+        perFile.push({
+            fileName: loaded.fileName,
+            gateBlocked: null,
+            toInsert: counts.insert,
+            toUpdate: counts.update,
+            unchanged: counts.unchanged,
+            errors: plan.errors,
+            updates: plan.plans
+                .filter(p => p.action === 'update')
+                .map(p => ({ source_key: p.row.source_key, changed: p.changed })),
+        });
+    }
+
+    return perFile;
+}
+
 export async function planImportEndpoint(req: AuthRequest, res: Response) {
     const { examId, bankType, expected } = req.body as { examId?: string; bankType?: string; expected?: string };
     if (!examId || !bankType) {
@@ -754,7 +872,12 @@ export async function planImportEndpoint(req: AuthRequest, res: Response) {
     const expectedRowCount = Number(expected) > 0 ? Number(expected) : 200;
     const tempPaths = writeTempFiles(uploaded);
     try {
-        const perFile = bankType === 'ia' ? await buildIAImportPlan(tempPaths, expectedRowCount) : await buildImportPlan(tempPaths, expectedRowCount);
+        const perFile =
+            bankType === 'ia'
+                ? await buildIAImportPlan(tempPaths, expectedRowCount)
+                : examId === 'spoken_english'
+                ? await buildSEImportPlan(tempPaths, expectedRowCount)
+                : await buildImportPlan(tempPaths, expectedRowCount);
         return res.json({ data: perFile });
     } catch (err: any) {
         console.error('[SuperAdminVerification] planImportEndpoint error:', err);
@@ -905,6 +1028,85 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
             return res.json({ data: reports });
         }
 
+        if (examId === 'spoken_english') {
+            for (const filePath of tempPaths) {
+                const verdict = verifySEFile(filePath, { expectedRowCount, requireSourceKey: true });
+                if (verdict.outcome === 'fail') {
+                    const codes = [...new Set(seFileFindingsFlat(verdict).filter(f => f.severity === 'fail').map(f => f.code))];
+                    reports.push({
+                        fileName: path.basename(filePath),
+                        gateBlocked: `Layer 1 FAILED: ${codes.join(', ')}.`,
+                        inserted: 0,
+                        updated: 0,
+                        unchanged: 0,
+                        failed: 0,
+                        errors: [],
+                    });
+                    continue;
+                }
+
+                const loaded = loadSECsv(filePath);
+                const keys = loaded.rows.map(r => r.source_key?.trim()).filter((k): k is string => Boolean(k));
+                const existingRows: SEExistingRow[] =
+                    keys.length === 0
+                        ? []
+                        : toSEExistingRows(
+                              await prisma.drillQuestion.findMany({
+                                  where: { source_key: { in: keys }, exam_id: 'spoken_english' } as any,
+                                  select: SE_EXISTING_SELECT,
+                              }),
+                          );
+                const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+                const plan = planSEImport(loaded.rows, existingByKey);
+
+                const written = { inserted: 0, updated: 0, unchanged: 0, failed: 0 };
+                const errors = [...plan.errors];
+
+                for (const p of plan.plans) {
+                    if (p.action === 'unchanged') {
+                        written.unchanged += 1;
+                        continue;
+                    }
+                    const { line: _line, ...data } = p.row;
+                    try {
+                        await prisma.drillQuestion.upsert({
+                            where: { source_key: p.row.source_key },
+                            create: { ...data, is_active: true } as any,
+                            update: {
+                                prompt_text: data.prompt_text,
+                                options: data.options,
+                                correct_answer: data.correct_answer,
+                                explanation: data.explanation,
+                                drill_type: data.drill_type,
+                                skill: data.skill,
+                                sub_skill: data.sub_skill,
+                                level: data.level,
+                                exam_id: data.exam_id,
+                                updated_at: new Date(),
+                            } as any,
+                        });
+                        if (p.action === 'insert') written.inserted += 1;
+                        else written.updated += 1;
+                    } catch (err) {
+                        written.failed += 1;
+                        errors.push(
+                            `line ${p.row.line} (${p.row.source_key}): write failed — ` +
+                                (err instanceof Error ? err.message.split('\n')[0] : String(err)),
+                        );
+                    }
+                }
+
+                reports.push({
+                    fileName: loaded.fileName,
+                    gateBlocked: null,
+                    ...written,
+                    errors,
+                });
+            }
+
+            return res.json({ data: reports });
+        }
+
         for (const filePath of tempPaths) {
             const verdict = verifyFile(filePath, { expectedRowCount, requireSourceKey: true });
             if (verdict.outcome === 'fail') {
@@ -1000,12 +1202,11 @@ export async function confirmImportEndpoint(req: AuthRequest, res: Response) {
 }
 
 // ─── Diagnostic import: plan / confirm ──────────────────────────────────────
-// Genuinely different shape from drills — see the plan doc. This is an
-// UPDATE of an EXISTING set_id's rows (matched 1:1 by sequence), never an
-// insert, and there is no source_key/Layer-1-gate concept in the CLI's own
-// importer/cli.ts — it only checks the staging CSV parses cleanly
-// (loadDiagnosticCsv().fatal), not the full structural Layer 1 checks. This
-// mirrors that exactly rather than importing drills' stricter gate pattern.
+// Different shape from drills: this UPDATEs an EXISTING set_id's rows
+// (matched 1:1 by sequence), never inserts. No source_key or Layer 1 gate
+// here either — the CLI's own importer/cli.ts only checks the staging CSV
+// parses cleanly (loadDiagnosticCsv().fatal), so this mirrors that instead
+// of importing drills' stricter gate.
 
 interface DiagnosticImportRequestBody {
     setId?: string;
@@ -1252,12 +1453,10 @@ export async function restoreDiagnosticImport(req: AuthRequest, res: Response) {
 
 // ─── POST /api/superadmin/verification/tag ──────────────────────────────────
 // Mirrors the CLI's key-assignment-tool: stamps a permanent source_key onto
-// each row (reusing a key already issued in the DB for that exact prompt
-// text, or allocating the next free number) and returns the tagged CSV as a
-// download — the same "output CSV" the CLI writes to
-// Verification/drills/results/key-assignment-tool/. One file per request;
-// the database (not a local tagged-output folder) is the source of truth
-// for already-issued keys, since a web request has no local cache to merge.
+// each row (reusing an already-issued key for that exact prompt text, or
+// allocating the next free number) and returns the tagged CSV. The database
+// is the source of truth for already-issued keys — a web request has no
+// local tagged-output folder to merge against, unlike the CLI.
 
 export async function tagBatch(req: AuthRequest, res: Response) {
     const { examId, bankType, expected } = req.body as { examId?: string; bankType?: string; expected?: string };
@@ -1337,6 +1536,59 @@ export async function tagBatch(req: AuthRequest, res: Response) {
             return res.send(csv);
         }
 
+        if (examId === 'spoken_english') {
+            const taggedRows: string[][] = [];
+            const blockedFiles: string[] = [];
+            let skippedRowCount = 0;
+            let droppedKeyCount = 0;
+            let singleFileBucket: { skill: string; sub_skill: string; level: string } | null = null;
+
+            for (let i = 0; i < tempPaths.length; i += 1) {
+                const filePath = tempPaths[i];
+                const verdict = verifySEFile(filePath, { expectedRowCount, requireSourceKey: false });
+                if (verdict.outcome === 'fail') {
+                    blockedFiles.push(uploaded[i].originalname);
+                    continue;
+                }
+
+                const loaded = loadSECsv(filePath);
+                const { bucket } = determineSEBucket(loaded.rows);
+                if (!bucket) {
+                    blockedFiles.push(uploaded[i].originalname);
+                    continue;
+                }
+                if (tempPaths.length === 1) singleFileBucket = bucket;
+
+                const dbRows = await fetchSEBucketRows(prisma as any, bucket);
+                const { index } = indexFromSEDbRows(dbRows, bucket);
+                const { assignments, dropped, skippedRows } = assignSEKeys(loaded.rows, bucket, index);
+
+                taggedRows.push(...toSETaggedRows(assignments));
+                skippedRowCount += skippedRows.length;
+                droppedKeyCount += dropped.length;
+            }
+
+            if (taggedRows.length === 0) {
+                return res.status(400).json({
+                    error: `All ${blockedFiles.length} file(s) failed Layer 1 or have no determinable bucket — nothing to tag.`,
+                    blockedFiles,
+                });
+            }
+
+            const csv = toCsvText(SE_TAGGED_HEADER, taggedRows);
+            const descriptor = singleFileBucket
+                ? `${singleFileBucket.skill}-${singleFileBucket.sub_skill}-${singleFileBucket.level}`.toLowerCase()
+                : 'all';
+            const outName = `${descriptor}--${reportTimestamp()}.tagged.csv`;
+
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
+            res.setHeader('X-Tag-Skipped-Rows', String(skippedRowCount));
+            res.setHeader('X-Tag-Dropped-Keys', String(droppedKeyCount));
+            res.setHeader('X-Tag-Blocked-Files', String(blockedFiles.length));
+            return res.send(csv);
+        }
+
         const taggedRows: string[][] = [];
         const blockedFiles: string[] = [];
         let skippedRowCount = 0;
@@ -1376,12 +1628,10 @@ export async function tagBatch(req: AuthRequest, res: Response) {
         }
 
         const csv = toCsvText(TAGGED_HEADER, taggedRows);
-        // Deliberately NOT reusing descriptorForFile (report naming): that
-        // helper omits the level on purpose, because CLI reports live inside a
-        // level-named folder that already says it. This CSV is a flat, standalone
-        // download with no folder context — Layer 1's checkBucketAgainstFilename
-        // requires the level word IN the filename, so it has to be included here
-        // or a re-uploaded single-bucket tagged CSV fails its own filename check.
+        // Level must be in the filename, unlike the CLI's report naming (which
+        // omits it since its output lives in a level-named folder already) —
+        // Layer 1's checkBucketAgainstFilename needs it, or a re-uploaded
+        // tagged CSV fails its own filename check.
         const descriptor = singleFileBucket
             ? `${singleFileBucket.skill}-${singleFileBucket.sub_skill}-${singleFileBucket.level}`.toLowerCase()
             : 'all';

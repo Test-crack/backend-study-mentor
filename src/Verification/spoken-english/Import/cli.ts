@@ -34,6 +34,7 @@ import {
   TargetError,
   type ResolvedTarget,
 } from '../../../Import/target';
+import prisma from '../../../lib/prisma';
 
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
@@ -157,18 +158,6 @@ function expectedFor(filePath: string, raw: string): number {
   return fallback;
 }
 
-interface PrismaLike {
-  drillQuestion: {
-    findMany(args: {
-      where: { source_key: { in: string[] }; exam_id: string };
-      select: Record<string, true>;
-    }): Promise<ExistingRow[]>;
-    upsert(args: { where: { source_key: string }; create: unknown; update: unknown }): Promise<unknown>;
-    count(args?: unknown): Promise<number>;
-  };
-  $disconnect(): Promise<void>;
-}
-
 interface FileReport {
   fileName: string;
   gateBlocked?: string;
@@ -250,9 +239,6 @@ async function main(): Promise<number> {
   }
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  const mod = (await import('../../../lib/prisma.js')) as unknown as { default: PrismaLike };
-  const prisma = mod.default;
-
   const reports: FileReport[] = [];
   let sawFailure = false;
 
@@ -310,7 +296,12 @@ async function main(): Promise<number> {
                 exam_id: true,
               },
             });
-      const existingByKey = new Map(existingRows.map(r => [r.source_key, r]));
+      // source_key is nullable schema-wide, but every row here was fetched by
+      // `source_key: { in: keys }` (all non-empty strings) — it can never be
+      // null in this result set.
+      const existingByKey = new Map(
+        existingRows.filter((r): r is typeof r & { source_key: string } => r.source_key !== null).map(r => [r.source_key, r]),
+      );
 
       const plan = planImport(loaded.rows, existingByKey);
       report.plans = plan.plans;
@@ -329,7 +320,7 @@ async function main(): Promise<number> {
             await prisma.drillQuestion.upsert({
               where: { source_key: p.row.source_key },
               // is_active only on create: never resurrect a deliberately retired question.
-              create: { ...data, is_active: true },
+              create: { ...data, is_active: true } as any,
               update: {
                 prompt_text: data.prompt_text,
                 options: data.options,
@@ -341,7 +332,7 @@ async function main(): Promise<number> {
                 level: data.level,
                 exam_id: data.exam_id,
                 updated_at: new Date(),
-              },
+              } as any,
             });
             if (p.action === 'insert') report.written.inserted += 1;
             else report.written.updated += 1;
