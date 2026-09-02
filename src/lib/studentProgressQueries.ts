@@ -28,6 +28,8 @@ export interface InstStudentMinimal {
     momentum_score: number;
     daily_streak: number;
     isDiagnosed: boolean;
+    /** Which exam this student is enrolled in — "ielts" | "spoken_english" | ... */
+    exam_id: string;
     /**
      * The student's own declared exam date. Until now this lived only on the
      * student's surfaces (competency-scores / profile), so no instructor, owner
@@ -265,10 +267,11 @@ export async function computeStudentFullProgress(
 
     return {
         student: {
-            id:     studentUser?.id,
-            name:   studentUser?.name ?? 'Unknown',
-            email:  studentUser?.email ?? '',
-            avatar: (studentUser as any)?.profileImage ?? null,
+            id:      studentUser?.id,
+            name:    studentUser?.name ?? 'Unknown',
+            email:   studentUser?.email ?? '',
+            avatar:  (studentUser as any)?.profileImage ?? null,
+            exam_id: instStudent.exam_id,
         },
         competency:     competencyRows.map(r => ({ ...r, band_score: parseFloat(String(r.band_score ?? '0')) })),
         target_band:    instStudent.target_band ? parseFloat(String(instStudent.target_band)) : null,

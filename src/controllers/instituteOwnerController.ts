@@ -1195,7 +1195,7 @@ export async function getOwnerStudentFullProgress(req: AuthRequest, res: Respons
         // Verify student belongs to the institute (+ the selected exam's enrollment when set)
         const instStudent = await prisma.instituteStudent.findFirst({
             where: { user_id: studentId, institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
-            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true },
+            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true, exam_id: true },
         });
         if (!instStudent) {
             return res.status(403).json({ success: false, error: 'Student is not enrolled in your institute.' });

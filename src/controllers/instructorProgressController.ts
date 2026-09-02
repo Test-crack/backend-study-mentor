@@ -20,7 +20,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { todayStartIST } from '../lib/timezone';
-import { computeBatchDashboard } from '../lib/batchDashboardQueries';
+import { computeBatchDashboard, avgBandFromScores } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
 import { paramStr } from '../utils/httpParams';
 
@@ -148,7 +148,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         // Resolve institute_students record
         const instStudent = await prisma.instituteStudent.findUnique({
             where:  { user_id: studentId },
-            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true },
+            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true, exam_id: true },
         });
         if (!instStudent) {
             return res.status(404).json({ success: false, error: 'Student record not found.' });
@@ -243,11 +243,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             if (!row) continue;
             if (ia.status === 'COMPLETED') {
                 row.completed++;
-                const band = (function avgBandFromScores(scores: unknown): number {
-                    const arr = (scores as Array<{ band?: number }> | null) ?? [];
-                    const bands = arr.map(s => s.band ?? 0).filter(b => b > 0);
-                    return bands.length > 0 ? bands.reduce((a, b) => a + b, 0) / bands.length : 0;
-                })(ia.scores);
+                const band = avgBandFromScores(ia.scores);
                 if (band > 0) {
                     row.allBands.push(band);
                     row.lastBand = band;

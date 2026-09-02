@@ -36,9 +36,14 @@ export function daysBeforeIST(n: number): Date {
     return new Date(todayStartIST().getTime() - n * 24 * 60 * 60 * 1000);
 }
 
-/** Mean of all scores in a COMPLETED IA session's scores JSON. */
+/**
+ * Mean of all scores in a COMPLETED IA session's scores JSON. Guarded against
+ * non-array shapes: older Spoken English IA rows stored an object here
+ * ({ sectionScores, cefrLevel }) instead of a bare array, which crashed every
+ * caller of this function with "arr.map is not a function".
+ */
 export function avgBandFromScores(scores: unknown): number {
-    const arr = (scores as Array<{ band?: number }> | null) ?? [];
+    const arr = Array.isArray(scores) ? (scores as Array<{ band?: number }>) : [];
     const bands = arr.map(s => s.band ?? 0).filter(b => b > 0);
     return bands.length > 0 ? bands.reduce((a, b) => a + b, 0) / bands.length : 0;
 }
