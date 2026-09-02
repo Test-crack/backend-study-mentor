@@ -182,6 +182,7 @@ export interface InstStudentRow {
     daily_streak: number;
     isDiagnosed: boolean;
     last_streak_date: Date | null;
+    exam_id: string;
 }
 
 export interface UserRow {
@@ -227,6 +228,7 @@ export interface DashboardSummary {
         lexigrid_words_today: number | null;
         is_at_risk: boolean;
         risk_primary_flag: string | null;
+        exam_id: string;
     }>;
     period_summary: {
         ia_completed_last_7_days: number;
@@ -498,6 +500,7 @@ export async function computeBatchDashboard(
             lexigrid_words_today: lexi?.words ?? null,
             is_at_risk:           riskEntry !== null,
             risk_primary_flag:    riskEntry?.primary_flag ?? null,
+            exam_id:              s.exam_id,
         };
     });
 

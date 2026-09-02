@@ -62,6 +62,7 @@ async function resolveInstituteStudents(instituteId: string, examId?: string | n
         daily_streak: number;
         isDiagnosed: boolean;
         last_streak_date: Date | null;
+        exam_id: string;
     }>;
     instStudentIds: string[];
 }> {
@@ -75,6 +76,7 @@ async function resolveInstituteStudents(instituteId: string, examId?: string | n
             daily_streak: true,
             isDiagnosed: true,
             last_streak_date: true,
+            exam_id: true,
         },
     });
     return { instStudents, instStudentIds: instStudents.map(s => s.id) };
@@ -973,7 +975,7 @@ export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Respo
             userIds.length > 0
                 ? prisma.instituteStudent.findMany({
                     where: { user_id: { in: userIds } },
-                    select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true },
+                    select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true, exam_id: true },
                 })
                 : Promise.resolve([]),
             userIds.length > 0
@@ -1047,7 +1049,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
             select: {
                 id: true, user_id: true, target_band: true, momentum_score: true,
                 daily_streak: true, isDiagnosed: true, last_streak_date: true,
-                exam_date: true,
+                exam_date: true, exam_id: true,
             },
         });
 
@@ -1159,6 +1161,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 // Exam proximity was student-only until now: no staff surface
                 // could tell which students sit the exam next.
                 exam_date:      inst.exam_date ? toISTDateString(inst.exam_date) : null,
+                exam_id:        inst.exam_id,
             };
         }).filter(Boolean) as Array<{
             student_id: string; user_id: string; name: string; avatar: string | null;
@@ -1166,7 +1169,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
             target_band: number | null; gap: number | null; band_trend: 'up' | 'flat' | 'down' | null;
             daily_streak: number; drilled_today: boolean; momentum_score: number;
             is_at_risk: boolean; primary_flag: string | null; last_active: string | null;
-            is_diagnosed: boolean; exam_date: string | null;
+            is_diagnosed: boolean; exam_date: string | null; exam_id: string;
         }>;
 
         if (atRiskFilter) {
@@ -1596,7 +1599,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 is_active: true,
                 ...(scopedUserIds ? { user_id: { in: scopedUserIds } } : {}),
             },
-            select: { id: true, user_id: true, target_band: true, isDiagnosed: true },
+            select: { id: true, user_id: true, target_band: true, isDiagnosed: true, exam_id: true },
         });
 
         if (instStudents.length === 0) {
@@ -1647,10 +1650,14 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 select: { student_id: true, status: true, real_band_score: true, time_submitted_at: true },
                 orderBy: { created_at: 'desc' },
             }),
+            // sub_scores is selected alongside band_score so a Spoken English row's
+            // full CEFR sub-skill profile is available here too (see
+            // DiagnosticOverviewRow.sub_scores), not just the compact 0-6 ordinal
+            // band_score is reduced to.
             prisma.assessmentHistory.findMany({
                 where:   { student_id: { in: instStudentIds }, mode: 'DIAGNOSTIC' as any },
                 orderBy: { created_at: 'asc' },
-                select:  { student_id: true, skill: true, band_score: true, created_at: true },
+                select:  { student_id: true, skill: true, band_score: true, sub_scores: true, created_at: true },
             }),
             prisma.drillSession.groupBy({
                 by:    ['student_id'],
@@ -1702,10 +1709,10 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
         }
 
         // â”€â”€ Diagnostic per-student â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null };
+        type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null; subScores: unknown | null };
         const diagMap = new Map<string, DiagRow>();
         for (const s of instStudents) {
-            diagMap.set(s.id, { isDiagnosed: s.isDiagnosed, bands: { L: null, R: null, W: null, S: null }, diagnosedAt: null });
+            diagMap.set(s.id, { isDiagnosed: s.isDiagnosed, bands: { L: null, R: null, W: null, S: null }, diagnosedAt: null, subScores: null });
         }
         const skillKey: Record<string, string> = { LISTENING: 'L', READING: 'R', WRITING: 'W', SPEAKING: 'S' };
         const seenDiag = new Set<string>();
@@ -1717,6 +1724,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             if (!row) continue;
             const abbr = skillKey[String(entry.skill)] ?? String(entry.skill);
             row.bands[abbr] = parseFloat(String(entry.band_score));
+            if (entry.sub_scores != null) row.subScores = entry.sub_scores;
             if (!row.diagnosedAt) {
                 row.diagnosedAt = entry.created_at instanceof Date
                     ? entry.created_at.toISOString().split('T')[0]
@@ -1755,6 +1763,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 last_ia_date: row.lastDate,
                 ia_eligible:  drillEligibleById.get(s.id) ?? false,
                 batch_name:   batchInfo?.batch_name ?? '',
+                exam_id:      s.exam_id,
             };
         });
 
@@ -1771,6 +1780,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 best_real_band:   row.bestBand,
                 target_band:      s.target_band ? parseFloat(String(s.target_band)) : null,
                 batch_name:       batchInfo?.batch_name ?? '',
+                exam_id:          s.exam_id,
             };
         });
 
@@ -1786,16 +1796,22 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 baseline_bands: row.bands,
                 diagnosed_at:  row.diagnosedAt,
                 batch_name:    batchInfo?.batch_name ?? '',
+                sub_scores:    row.subScores,
             };
         });
         diagnosticOverview.sort((a, b) => Number(a.is_diagnosed) - Number(b.is_diagnosed));
 
-        // Institute-level summaries
-        const allAvgBands = iaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
+        // Institute-level summaries â€” IELTS-only averages (see the matching note in
+        // instructorProgressController.getBatchAssessmentOverview): a Spoken English
+        // row's avg_ia_band/latest_real_band is a CEFR ordinal (0-6), not an IELTS
+        // band, and must never be blended into these 0-9-scale averages.
+        const ieltsIaOverview   = iaOverview.filter(r => r.exam_id !== 'spoken_english');
+        const ieltsMockOverview = mockOverview.filter(r => r.exam_id !== 'spoken_english');
+        const allAvgBands = ieltsIaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
         const instIAAvg   = allAvgBands.length > 0 ? Math.round(allAvgBands.reduce((a, b) => a + b, 0) / allAvgBands.length * 10) / 10 : 0;
         const completedAny  = iaOverview.filter(r => r.ia_completed > 0).length;
         const highMissCount = iaOverview.filter(r => r.ia_missed >= 2).length;
-        const allRealBands  = mockOverview.map(r => r.latest_real_band).filter((v): v is number => v !== null);
+        const allRealBands  = ieltsMockOverview.map(r => r.latest_real_band).filter((v): v is number => v !== null);
         const instMockAvg   = allRealBands.length > 0 ? Math.round(allRealBands.reduce((a, b) => a + b, 0) / allRealBands.length * 10) / 10 : 0;
         const atOrAbove     = mockOverview.filter(r =>
             r.latest_real_band !== null && r.target_band !== null && r.latest_real_band >= r.target_band
@@ -2045,7 +2061,7 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
         const instStudents = allUserIds.length > 0
             ? await prisma.instituteStudent.findMany({
                 where: { user_id: { in: allUserIds } },
-                select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
+                select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true, exam_id: true },
             })
             : [];
         const instByUserId = new Map(instStudents.map(s => [s.user_id, s]));
@@ -2117,11 +2133,22 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
 
         const result = Array.from(instructorStudents.entries()).map(([uid, { user, instIds, batchCount }]) => {
             const studentCount = instIds.length;
+
+            // A Spoken English student's competency-matrix band_score is a CEFR
+            // ordinal (0-6), not an IELTS band (0-9) — averaging the two together
+            // would silently blend two different scales. Split the roster by exam
+            // before computing the delta.
+            const ieltsInstIds = instIds.filter(id => instById.get(id)?.exam_id !== 'spoken_english');
+            const seInstIds    = instIds.filter(id => instById.get(id)?.exam_id === 'spoken_english');
+
             // Per-student deltas averaged over students who have BOTH a baseline
             // and a current band — see avgImprovementOver for why this is not
             // groupMeanCurrent - groupMeanBaseline.
-            const improvementRaw = avgImprovementOver(instIds, baselineByInstId, avgBandByInstId);
+            const improvementRaw = avgImprovementOver(ieltsInstIds, baselineByInstId, avgBandByInstId);
             const avgImprovement = improvementRaw !== null ? Math.round(improvementRaw * 10) / 10 : null;
+
+            const cefrImprovementRaw = avgImprovementOver(seInstIds, baselineByInstId, avgBandByInstId);
+            const avgCefrImprovement = cefrImprovementRaw !== null ? Math.round(cefrImprovementRaw * 10) / 10 : null;
 
             // Completion rate = completed IAs / scheduled IAs, as a percent.
             // Previously completed / studentCount, which is a per-student average
@@ -2153,6 +2180,7 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
                 batch_count:      batchCount,
                 student_count:    studentCount,
                 avg_band_improvement: avgImprovement,
+                avg_cefr_improvement: avgCefrImprovement,
                 ia_completion_rate:  iaRate,
                 at_risk_count:    atRiskCount,
                 students_at_target: studentsAtTarget,
