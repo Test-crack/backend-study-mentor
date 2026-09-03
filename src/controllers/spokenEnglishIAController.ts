@@ -152,12 +152,15 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
         const rows = await prisma.iAQuestion.findMany({ where: { id: { in: (session.question_ids as string[]) ?? [] } } });
         const byId = new Map(rows.map((r) => [r.id, r]));
 
-        // Grade every submitted answer through the viva pipeline.
-        const graded: Array<{ subskillId: string; levels: Record<string, CefrLevel> }> = [];
+        // Grade every submitted answer through the viva pipeline — in parallel
+        // (gradeResponse is a pure per-prompt call, own audio file, no shared
+        // state), not sequentially awaiting each one before starting the next.
+        let graded: Array<{ subskillId: string; levels: Record<string, CefrLevel> }> = [];
         try {
-            for (const f of files) {
-                const row = byId.get(f.fieldname);
-                if (!row) continue;
+            const toGrade = files
+                .map((f) => ({ f, row: byId.get(f.fieldname) }))
+                .filter((x): x is { f: typeof files[number]; row: NonNullable<typeof x.row> } => !!x.row);
+            graded = await Promise.all(toGrade.map(async ({ f, row }) => {
                 const o = (row.options ?? {}) as any;
                 const input: PromptResponseInput = {
                     promptId: row.id, audioPath: f.path, mimeType: f.mimetype || 'audio/webm',
@@ -165,8 +168,8 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
                     scoredSubskills: Array.isArray(o.scored_subskills) ? o.scored_subskills : undefined,
                 };
                 const g: GradedResponse = await gradeResponse(input, rubric);
-                graded.push({ subskillId: ENUM_TO_SUB[String(row.sub_skill)], levels: (g.levels ?? {}) as Record<string, CefrLevel> });
-            }
+                return { subskillId: ENUM_TO_SUB[String(row.sub_skill)], levels: (g.levels ?? {}) as Record<string, CefrLevel> };
+            }));
         } catch (aiErr) {
             console.error('[submitSpokenEnglishIA] grading failed:', aiErr);
             cleanup();
