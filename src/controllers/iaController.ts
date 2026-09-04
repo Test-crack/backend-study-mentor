@@ -111,6 +111,14 @@ export async function getIAStatus(req: AuthRequest, res: Response) {
                 can_start_test: false,
                 next_ia: null,
                 upcoming_ias: [],
+                // Every other return path always includes `reasons` — omitting it
+                // here crashed the "not eligible" screen for any student (IELTS or
+                // Spoken English) who reaches it before their first drill, since
+                // the frontend reads iaStatus.reasons.length unconditionally.
+                reasons: [
+                    { key: 'drills', message: `Complete ${IA_DRILL_THRESHOLD} drill sessions (0 / ${IA_DRILL_THRESHOLD} done)` },
+                    { key: 'days', message: `Wait ${IA_MIN_DAYS} days since your first drill` },
+                ],
                 progress: {
                     drills_completed: 0,
                     drills_required: IA_DRILL_THRESHOLD,

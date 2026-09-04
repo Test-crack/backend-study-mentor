@@ -36,9 +36,14 @@ export function daysBeforeIST(n: number): Date {
     return new Date(todayStartIST().getTime() - n * 24 * 60 * 60 * 1000);
 }
 
-/** Mean of all scores in a COMPLETED IA session's scores JSON. */
+/**
+ * Mean of all scores in a COMPLETED IA session's scores JSON. Guarded against
+ * non-array shapes: older Spoken English IA rows stored an object here
+ * ({ sectionScores, cefrLevel }) instead of a bare array, which crashed every
+ * caller of this function with "arr.map is not a function".
+ */
 export function avgBandFromScores(scores: unknown): number {
-    const arr = (scores as Array<{ band?: number }> | null) ?? [];
+    const arr = Array.isArray(scores) ? (scores as Array<{ band?: number }>) : [];
     const bands = arr.map(s => s.band ?? 0).filter(b => b > 0);
     return bands.length > 0 ? bands.reduce((a, b) => a + b, 0) / bands.length : 0;
 }
@@ -70,6 +75,103 @@ export function computeCurrentBand(
     return Math.round(mean * 2) / 2;
 }
 
+// â”€â”€â”€ Canonical baseline / current band per student â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/**
+ * A student's diagnostic baseline: the FIRST diagnostic entry per skill,
+ * averaged across the skills they were diagnosed in.
+ *
+ * This is THE definition of "baseline" on the platform — it matches
+ * getDiagnosticReport ("keep only the first (oldest) entry per skill â€” that is
+ * the initial diagnostic baseline") and the baseline shown on the student
+ * deep-dive. The analytics endpoints used to average EVERY diagnostic row per
+ * student instead, so a student who retook a diagnostic had their starting point
+ * silently blended with a later attempt, and the same student's baseline read
+ * differently on two screens.
+ *
+ * `rows` MUST be ordered created_at ASCENDING â€” first-seen per skill wins.
+ */
+export function baselineBandByStudent(
+    rows: Array<{ student_id: string; skill: unknown; band_score: unknown }>
+): Map<string, number> {
+    const firstPerSkill = new Map<string, Map<string, number>>();
+
+    for (const r of rows) {
+        const v = parseFloat(String(r.band_score ?? '0'));
+        if (isNaN(v) || v <= 0) continue;
+        const skill = String(r.skill);
+        let bySkill = firstPerSkill.get(r.student_id);
+        if (!bySkill) { bySkill = new Map(); firstPerSkill.set(r.student_id, bySkill); }
+        // Ascending order means the first row seen for a skill is the oldest.
+        if (!bySkill.has(skill)) bySkill.set(skill, v);
+    }
+
+    const out = new Map<string, number>();
+    for (const [studentId, bySkill] of firstPerSkill) {
+        const vals = [...bySkill.values()];
+        if (vals.length > 0) out.set(studentId, vals.reduce((a, b) => a + b, 0) / vals.length);
+    }
+    return out;
+}
+
+/**
+ * A student's current band: mean of their non-zero skill bands. Unrounded, so
+ * group means and deltas are not compounded by 0.5-rounding at each step.
+ *
+ * Averaging per student FIRST and then across students is deliberate â€” pooling
+ * every skill row into one flat mean weights students who happen to have more
+ * skills assessed more heavily, which is the bug getSummary already documents.
+ */
+export function currentBandByStudent(
+    rows: Array<{ student_id: string; band_score: unknown }>
+): Map<string, number> {
+    const byStudent = new Map<string, number[]>();
+    for (const r of rows) {
+        const v = parseFloat(String(r.band_score ?? '0'));
+        if (isNaN(v) || v <= 0) continue;
+        const arr = byStudent.get(r.student_id) ?? [];
+        arr.push(v);
+        byStudent.set(r.student_id, arr);
+    }
+
+    const out = new Map<string, number>();
+    for (const [studentId, vals] of byStudent) {
+        out.set(studentId, vals.reduce((a, b) => a + b, 0) / vals.length);
+    }
+    return out;
+}
+
+/** Mean of the values a map holds for the given ids, or null when none apply. */
+export function meanOver(ids: string[], values: Map<string, number>): number | null {
+    const vals = ids.map(id => values.get(id)).filter((v): v is number => v != null);
+    if (vals.length === 0) return null;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+/**
+ * Average band improvement across a group.
+ *
+ * Averaged PER STUDENT over students who have BOTH a baseline and a current
+ * band, then meaned â€” not `groupMeanCurrent - groupMeanBaseline`. Those two
+ * group means are taken over different populations (not every student has both),
+ * so subtracting them produces a delta for a cohort that does not exist.
+ * Returns null when no student in the group has both.
+ */
+export function avgImprovementOver(
+    ids: string[],
+    baseline: Map<string, number>,
+    current: Map<string, number>
+): number | null {
+    const deltas: number[] = [];
+    for (const id of ids) {
+        const b = baseline.get(id);
+        const c = current.get(id);
+        if (b != null && c != null) deltas.push(c - b);
+    }
+    if (deltas.length === 0) return null;
+    return deltas.reduce((a, b) => a + b, 0) / deltas.length;
+}
+
 // â”€â”€â”€ Shared input types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface InstStudentRow {
@@ -80,6 +182,7 @@ export interface InstStudentRow {
     daily_streak: number;
     isDiagnosed: boolean;
     last_streak_date: Date | null;
+    exam_id: string;
 }
 
 export interface UserRow {
@@ -125,6 +228,7 @@ export interface DashboardSummary {
         lexigrid_words_today: number | null;
         is_at_risk: boolean;
         risk_primary_flag: string | null;
+        exam_id: string;
     }>;
     period_summary: {
         ia_completed_last_7_days: number;
@@ -396,6 +500,7 @@ export async function computeBatchDashboard(
             lexigrid_words_today: lexi?.words ?? null,
             is_at_risk:           riskEntry !== null,
             risk_primary_flag:    riskEntry?.primary_flag ?? null,
+            exam_id:              s.exam_id,
         };
     });
 

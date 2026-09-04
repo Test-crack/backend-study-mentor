@@ -7,6 +7,9 @@ import { analyzeContentToConcept, ConceptAnalysisInput } from '../services/conce
 import { createModuleContent, updateModuleContent as updateModuleContentService, deleteModuleContent as deleteModuleContentService } from '../services/conceptDbService';
 import { uploadImage, deleteImage, getPublicIdFromUrl } from '../services/cloudinaryService';
 import { paramStr } from '../utils/httpParams';
+import {
+    computeReadingHistory, computeSpeakingHistory, computeWritingHistory,
+} from '../lib/practiceHistoryQueries';
 
 export async function getInstructorCourses(req: AuthRequest, res: Response) {
     try {
@@ -1121,220 +1124,89 @@ export async function removeCourseThumbnail(req: AuthRequest, res: Response) {
 // ============================================================================
 
 /**
- * Get student reading assessment history for an instructor
- * GET /api/instructor/students/:studentId/reading-history
+ * Verifies the caller is an instructor of a batch this student belongs to.
+ * Returns an error message to send, or null when access is granted.
+ *
+ * All three practice-history handlers below shared this preamble verbatim; it is
+ * factored out so the authorisation rule has one definition.
  */
+async function assertInstructorOwnsStudent(
+    appUserId: string,
+    studentUserId: string
+): Promise<string | null> {
+    const instructor = await prisma.instituteInstructor.findUnique({
+        where: { user_id: appUserId },
+    });
+    if (!instructor) return 'Instructor profile not found';
+
+    const instructorBatches = await prisma.batchInstructor.findMany({
+        where:  { user_id: appUserId },
+        select: { batch_id: true },
+    });
+
+    const studentInBatch = await prisma.batchStudent.findFirst({
+        where: {
+            user_id:  studentUserId,
+            batch_id: { in: instructorBatches.map(b => b.batch_id) },
+        },
+    });
+    if (!studentInBatch) return "Not authorized to view this student's progress";
+
+    return null;
+}
+
 /**
- * Get student SPEAKING history (from IeltsSpeakingAssessment, previously IeltsReadingAssessment)
- * GET /api/instructor/students/:studentId/speaking-history
+ * The three handlers below are thin: authorise, then delegate to
+ * lib/practiceHistoryQueries. The computations moved there so the
+ * institute-owner and institute-admin portals can serve the identical payload
+ * under institute-level authorisation instead of batch-level.
  */
+
+/** GET /api/instructor/students/:studentId/speaking-history */
 export async function getStudentSpeakingHistory(req: AuthRequest, res: Response) {
     try {
-        const appUserId = (req as any).appUserId;
+        const appUserId = (req as any).appUserId as string;
         const studentId = paramStr(req.params.studentId);
 
-        // 1. Verify instructor belongs to an institute
-        const instructor = await prisma.instituteInstructor.findUnique({
-            where: { user_id: appUserId }
-        });
-        if (!instructor) {
-            return res.status(403).json({ message: 'Instructor profile not found' });
-        }
+        const denied = await assertInstructorOwnsStudent(appUserId, studentId);
+        if (denied) return res.status(403).json({ message: denied });
 
-        // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.batchInstructor.findMany({
-            where: { user_id: appUserId },
-            select: { batch_id: true }
-        });
-        const batchIds = instructorBatches.map(b => b.batch_id);
-
-        const studentInBatch = await prisma.batchStudent.findFirst({
-            where: { user_id: studentId, batch_id: { in: batchIds } }
-        });
-        if (!studentInBatch) {
-            return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
-        }
-
-        // 3. Fetch from IeltsSpeakingAssessment (the renamed table)
-        const history = await prisma.ieltsSpeakingAssessment.findMany({
-            where: { userId: studentId },
-            orderBy: { createdAt: 'desc' },
-            take: 50,
-            include: {
-                IeltsSpeakingPractice: { select: { title: true } }
-            }
-        });
-
-        const formattedData = history.map(item => {
-            const pass1Counts = (item.pass1Data as any)?.fillerCounts || {};
-            const pass2Counts = (item.pass2Data as any)?.fillerCounts || {};
-            const combined: Record<string, number> = { ...pass1Counts };
-            for (const [word, count] of Object.entries(pass2Counts)) {
-                combined[word] = (combined[word] || 0) + (count as number);
-            }
-            const frequentFillers = Object.entries(combined)
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 3)
-                .map(([word, count]) => ({ word, count }));
-
-            return {
-                id: item.id,
-                topicId: item.topicId,
-                topicTitle: item.IeltsSpeakingPractice?.title || item.topicId,
-                bandLevel: item.band || 'All',
-                fluencyScore: item.fluencyScore,
-                weightedWpm: item.weightedWpm,
-                keywordsHit: item.keywordsHit,
-                totalKeywords: item.totalKeywords,
-                pass1Data: item.pass1Data,
-                pass2Data: item.pass2Data,
-                frequentFillers,
-                createdAt: item.createdAt,
-            };
-        });
-
-        const avgFluency = formattedData.length
-            ? formattedData.reduce((a, b) => a + b.fluencyScore, 0) / formattedData.length : 0;
-        const avgWpm = formattedData.length
-            ? formattedData.reduce((a, b) => a + b.weightedWpm, 0) / formattedData.length : 0;
-        const bestScore = formattedData.length
-            ? Math.max(...formattedData.map(s => s.fluencyScore)) : 0;
-
-        res.json({
-            success: true,
-            data: {
-                sessions: formattedData,
-                summary: {
-                    totalSessions: formattedData.length,
-                    avgFluency: parseFloat(avgFluency.toFixed(1)),
-                    avgWpm: parseFloat(avgWpm.toFixed(0)),
-                    bestScore: parseFloat(bestScore.toFixed(1)),
-                },
-            }
-        });
+        return res.json({ success: true, data: await computeSpeakingHistory(studentId) });
     } catch (error) {
         console.error('getStudentSpeakingHistory error:', error);
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        return res.status(500).json({ success: false, error: 'Internal server error' });
     }
 }
 
-/**
- * Get student READING PRACTICE history (from new IeltsReadingAssessment table)
- * GET /api/instructor/students/:studentId/reading-history
- */
+/** GET /api/instructor/students/:studentId/reading-history */
 export async function getStudentReadingHistory(req: AuthRequest, res: Response) {
     try {
-        const appUserId = (req as any).appUserId;
+        const appUserId = (req as any).appUserId as string;
         const studentId = paramStr(req.params.studentId);
 
-        // 1. Verify instructor
-        const instructor = await prisma.instituteInstructor.findUnique({
-            where: { user_id: appUserId }
-        });
-        if (!instructor) {
-            return res.status(403).json({ message: 'Instructor profile not found' });
-        }
+        const denied = await assertInstructorOwnsStudent(appUserId, studentId);
+        if (denied) return res.status(403).json({ message: denied });
 
-        // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.batchInstructor.findMany({
-            where: { user_id: appUserId },
-            select: { batch_id: true }
-        });
-        const batchIds = instructorBatches.map(b => b.batch_id);
-
-        const studentInBatch = await prisma.batchStudent.findFirst({
-            where: { user_id: studentId, batch_id: { in: batchIds } }
-        });
-        if (!studentInBatch) {
-            return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
-        }
-
-        // 3. Fetch from IeltsReadingAssessment (NEW table)
-        const sessions = await prisma.ieltsReadingAssessment.findMany({
-            where: { userId: studentId },
-            orderBy: { createdAt: 'desc' },
-            take: 50,
-        });
-
-        const avgWpm = sessions.length ? sessions.reduce((a, b) => a + b.wpm, 0) / sessions.length : 0;
-        const avgAccuracy = sessions.length ? sessions.reduce((a, b) => a + b.accuracy, 0) / sessions.length : 0;
-        const bestScore = sessions.length ? Math.max(...sessions.map(s => s.speedLearningScore)) : 0;
-
-        res.json({
-            success: true,
-            data: {
-                sessions,
-                summary: {
-                    totalSessions: sessions.length,
-                    avgWpm: parseFloat(avgWpm.toFixed(0)),
-                    avgAccuracy: parseFloat(avgAccuracy.toFixed(1)),
-                    bestScore: parseFloat(bestScore.toFixed(1)),
-                },
-            }
-        });
+        return res.json({ success: true, data: await computeReadingHistory(studentId) });
     } catch (error) {
         console.error('getStudentReadingHistory error:', error);
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        return res.status(500).json({ success: false, error: 'Internal server error' });
     }
 }
 
-/**
- * Get student WRITING PRACTICE history (from new IeltsWritingAssessment table)
- * GET /api/instructor/students/:studentId/writing-history
- */
+/** GET /api/instructor/students/:studentId/writing-history */
 export async function getStudentWritingHistory(req: AuthRequest, res: Response) {
     try {
-        const appUserId = (req as any).appUserId;
+        const appUserId = (req as any).appUserId as string;
         const studentId = paramStr(req.params.studentId);
 
-        // 1. Verify instructor
-        const instructor = await prisma.instituteInstructor.findUnique({
-            where: { user_id: appUserId }
-        });
-        if (!instructor) {
-            return res.status(403).json({ message: 'Instructor profile not found' });
-        }
+        const denied = await assertInstructorOwnsStudent(appUserId, studentId);
+        if (denied) return res.status(403).json({ message: denied });
 
-        // 2. Verify student is in one of the instructor's batches
-        const instructorBatches = await prisma.batchInstructor.findMany({
-            where: { user_id: appUserId },
-            select: { batch_id: true }
-        });
-        const batchIds = instructorBatches.map(b => b.batch_id);
-
-        const studentInBatch = await prisma.batchStudent.findFirst({
-            where: { user_id: studentId, batch_id: { in: batchIds } }
-        });
-        if (!studentInBatch) {
-            return res.status(403).json({ message: 'Not authorized to view this student\'s progress' });
-        }
-
-        // 3. Fetch from IeltsWritingAssessment (NEW table)
-        const sessions = await prisma.ieltsWritingAssessment.findMany({
-            where: { userId: studentId },
-            orderBy: { createdAt: 'desc' },
-            take: 50,
-            include: { IeltsWritingTask: true }
-        });
-
-        const avgScore = sessions.length ? sessions.reduce((acc, curr) => {
-            const num = parseFloat(curr.aiBandScore || "0");
-            return acc + (isNaN(num) ? 0 : num);
-        }, 0) / sessions.length : 0;
-
-        res.json({
-            success: true,
-            data: {
-                sessions,
-                summary: {
-                    totalSessions: sessions.length,
-                    avgScore: parseFloat(avgScore.toFixed(1))
-                },
-            }
-        });
+        return res.json({ success: true, data: await computeWritingHistory(studentId) });
     } catch (error) {
         console.error('getStudentWritingHistory error:', error);
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        return res.status(500).json({ success: false, error: 'Internal server error' });
     }
 }
 
@@ -1348,11 +1220,60 @@ export async function submitManualGradeWriting(req: AuthRequest, res: Response) 
         const assessmentId = paramStr(req.params.assessmentId);
         const { bandScore, feedback } = req.body;
 
+        // ── Authorisation ────────────────────────────────────────────────────
+        // This previously updated ANY assessment by id with no ownership check,
+        // while the read counterpart (getStudentWritingHistory) verifies both
+        // the instructor profile and batch membership. An instructor at one
+        // institute could overwrite a grade at another. Mirror the read path.
+        const instructor = await prisma.instituteInstructor.findUnique({
+            where: { user_id: appUserId }
+        });
+        if (!instructor) {
+            return res.status(403).json({ success: false, error: 'Instructor profile not found' });
+        }
+
+        const existing = await prisma.ieltsWritingAssessment.findUnique({
+            where: { id: assessmentId },
+            select: { id: true, userId: true }
+        });
+        if (!existing) {
+            return res.status(404).json({ success: false, error: 'Assessment not found' });
+        }
+
+        const instructorBatches = await prisma.batchInstructor.findMany({
+            where: { user_id: appUserId },
+            select: { batch_id: true }
+        });
+        const studentInBatch = await prisma.batchStudent.findFirst({
+            where: {
+                user_id: existing.userId,
+                batch_id: { in: instructorBatches.map(b => b.batch_id) }
+            }
+        });
+        if (!studentInBatch) {
+            return res.status(403).json({ success: false, error: 'Not authorized to grade this student' });
+        }
+
+        // ── Validation ───────────────────────────────────────────────────────
+        // manualBandScore is VarChar(10), so without a check any string reaches
+        // the DB and renders straight onto the student's report.
+        const band = typeof bandScore === 'number' ? bandScore : parseFloat(String(bandScore));
+        if (isNaN(band) || band < 0 || band > 9) {
+            return res.status(400).json({ success: false, error: 'bandScore must be a number between 0 and 9.' });
+        }
+        // IELTS bands move in half steps; reject anything off the scale.
+        if (Math.round(band * 2) !== band * 2) {
+            return res.status(400).json({ success: false, error: 'bandScore must be a whole or half band (e.g. 6.0, 6.5).' });
+        }
+        if (feedback != null && typeof feedback !== 'string') {
+            return res.status(400).json({ success: false, error: 'feedback must be a string.' });
+        }
+
         const assessment = await prisma.ieltsWritingAssessment.update({
             where: { id: assessmentId },
             data: {
-                manualBandScore: bandScore,
-                manualFeedback: feedback,
+                manualBandScore: band.toFixed(1),
+                manualFeedback: feedback ?? null,
                 gradedByInstructorId: appUserId
             }
         });
@@ -1361,218 +1282,5 @@ export async function submitManualGradeWriting(req: AuthRequest, res: Response) 
     } catch (error) {
         console.error('submitManualGradeWriting error:', error);
         res.status(500).json({ success: false, error: 'Internal server error' });
-    }
-}
-
-export async function getBatchAnalytics(req: AuthRequest, res: Response) {
-    const batchId = paramStr(req.params.batchId);
-
-    try {
-        const appUserId = (req as any).appUserId as string;
-
-        // Verify the instructor is assigned to this batch
-        const instructorAssignment = await prisma.batchInstructor.findFirst({
-            where: { batch_id: batchId, user_id: appUserId }
-        });
-
-        if (!instructorAssignment) {
-            return res.status(403).json({ error: 'You are not assigned to this batch.' });
-        }
-
-        const batch = await prisma.batch.findUnique({
-            where: { id: batchId },
-            include: {
-                batch_students: {
-                    include: {
-                        User: {
-                            select: { id: true, name: true, profileImage: true }
-                        }
-                    }
-                }
-            }
-        });
-
-        if (!batch) {
-            return res.status(404).json({ error: 'Batch not found.' });
-        }
-
-        const studentIds = batch.batch_students.map(bs => bs.User.id);
-        // Fetch SPEAKING assessments (from IeltsSpeakingAssessment) for batch trends
-        const assessments = await prisma.ieltsSpeakingAssessment.findMany({
-            where: { userId: { in: studentIds } },
-            orderBy: { createdAt: 'asc' }
-        });
-
-        // Fetch WRITING assessments for batch trends
-        const writingAssessments = await prisma.ieltsWritingAssessment.findMany({
-            where: { userId: { in: studentIds } },
-            orderBy: { createdAt: 'asc' }
-        });
-
-        // Use the exact same chunking logic for demo trends
-        let speakingTrends: any[] = [];
-        let readingTrends: any[] = [];
-        let writingTrends: any[] = [];
-        let studentComparison: any[] = [];
-
-        if (assessments.length > 0) {
-            const chunkSize = Math.max(1, Math.floor(assessments.length / 6));
-            for (let i = 0; i < 6; i++) {
-                const chunk = assessments.slice(i * chunkSize, (i + 1) * chunkSize);
-                if (chunk.length === 0) continue;
-
-                const avgFluency = chunk.reduce((sum, a) => sum + (a.fluencyScore || 0), 0) / chunk.length;
-                const avgWpm = chunk.reduce((sum, a) => sum + (a.weightedWpm || 0), 0) / chunk.length;
-
-                const dateLabel = new Date(chunk[0].createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-                speakingTrends.push({ date: dateLabel, fluency: parseFloat(avgFluency.toFixed(2)), confidence: parseFloat((avgFluency + 5).toFixed(2)) });
-                readingTrends.push({ date: dateLabel, wpm: parseFloat(avgWpm.toFixed(2)), accuracy: parseFloat((Math.min(100, avgWpm * 0.4)).toFixed(2)) });
-            }
-        }
-
-        if (writingAssessments.length > 0) {
-            const chunkSizeWriting = Math.max(1, Math.floor(writingAssessments.length / 6));
-            for (let i = 0; i < 6; i++) {
-                const chunk = writingAssessments.slice(i * chunkSizeWriting, (i + 1) * chunkSizeWriting);
-                if (chunk.length === 0) continue;
-
-                const avgWriting = chunk.reduce((sum, a: any) => {
-                    const num = parseFloat(a.aiBandScore || "0");
-                    return sum + (isNaN(num) ? 0 : num);
-                }, 0) / chunk.length;
-
-                const dateLabel = new Date(chunk[0].createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                writingTrends.push({ date: dateLabel, score: parseFloat(avgWriting.toFixed(1)) });
-            }
-        }
-        if (speakingTrends.length === 0 && readingTrends.length === 0) {
-            // Fallback dummy data if no assessments found yet
-            speakingTrends = [
-                { date: 'Week 1', fluency: 40, confidence: 45 },
-                { date: 'Week 2', fluency: 45, confidence: 48 },
-                { date: 'Week 3', fluency: 50, confidence: 55 },
-                { date: 'Week 4', fluency: 58, confidence: 60 },
-                { date: 'Week 5', fluency: 65, confidence: 70 },
-                { date: 'Week 6', fluency: 72, confidence: 75 },
-            ];
-            readingTrends = [
-                { date: 'Week 1', wpm: 120, accuracy: 50 },
-                { date: 'Week 2', wpm: 130, accuracy: 55 },
-                { date: 'Week 3', wpm: 145, accuracy: 60 },
-                { date: 'Week 4', wpm: 155, accuracy: 65 },
-                { date: 'Week 5', wpm: 170, accuracy: 72 },
-                { date: 'Week 6', wpm: 185, accuracy: 80 },
-            ];
-            writingTrends = [
-                { date: 'Week 1', score: 5.5 },
-                { date: 'Week 2', score: 6.0 },
-                { date: 'Week 3', score: 6.0 }, 
-                { date: 'Week 4', score: 6.5 },
-                { date: 'Week 5', score: 6.5 }, 
-                { date: 'Week 6', score: 7.0 },
-            ];
-        }
-
-        // Calculate student comparison
-        for (const bs of batch.batch_students) {
-            const studentAssessments = assessments.filter(a => a.userId === bs.User.id);
-            const studentWriting = writingAssessments.filter(a => a.userId === bs.User.id);
-            
-            if (studentAssessments.length > 0 || studentWriting.length > 0) {
-                const latest = studentAssessments.length > 0 ? studentAssessments[studentAssessments.length - 1] : null;
-                const latestWriting = studentWriting.length > 0 ? studentWriting[studentWriting.length - 1] : null;
-                const wScore = latestWriting ? parseFloat(latestWriting.manualBandScore || latestWriting.aiBandScore || "0") : null;
-
-                studentComparison.push({
-                    id: bs.User.id,
-                    name: bs.User.name || 'Unknown Student',
-                    avatar: bs.User.profileImage,
-                    speakingScore: latest ? parseFloat((latest.fluencyScore || 0).toFixed(2)) : null,
-                    readingScore: latest ? parseFloat((latest.weightedWpm || 0).toFixed(2)) : null,
-                    writingScore: wScore && !isNaN(wScore) ? wScore : null,
-                    listeningScore: Math.floor(Math.random() * 30 + 50), // Mocked
-                    overallGrade: latest?.band || 'N/A'
-                });
-            } else {
-                studentComparison.push({
-                    id: bs.User.id,
-                    name: bs.User.name || 'Unknown Student',
-                    avatar: bs.User.profileImage,
-                    speakingScore: null,
-                    readingScore: null,
-                    writingScore: null,
-                    listeningScore: null,
-                    overallGrade: 'N/A'
-                });
-            }
-        }
-
-        const speakingLeaderboard = studentComparison
-            .filter(s => s.speakingScore !== null)
-            .map(s => {
-                const studentSpeaking = assessments.filter((a: any) => a.userId === s.id);
-                const bestScore = Math.max(...studentSpeaking.map((a: any) => a.fluencyScore || 0), 0);
-                const avgPronunciation = studentSpeaking.length 
-                    ? studentSpeaking.reduce((sum: number, a: any) => sum + (a.pronunciationScore || 0), 0) / studentSpeaking.length 
-                    : 0;
-                
-                return {
-                    studentId: s.id,
-                    name: s.name,
-                    avatar: s.avatar,
-                    avgFluency: s.speakingScore,
-                    avgBand: s.overallGrade,
-                    avgPronunciation: parseFloat(avgPronunciation.toFixed(1)),
-                    bestScore: bestScore > 0 ? parseFloat(bestScore.toFixed(1)) : null,
-                    totalSessions: studentSpeaking.length
-                };
-            })
-            .sort((a, b) => b.avgFluency - a.avgFluency);
-
-        const writingLeaderboard = studentComparison
-            .filter(s => s.writingScore !== null)
-            .map(s => {
-                const studentWriting = writingAssessments.filter((a: any) => a.userId === s.id);
-                const scores = studentWriting.map((a: any) => parseFloat(a.manualBandScore || a.aiBandScore || "0")).filter((n: number) => !isNaN(n));
-                const highestBand = scores.length > 0 ? Math.max(...scores) : 0;
-                const avgWordCount = studentWriting.length
-                    ? Math.round(studentWriting.reduce((sum: number, a: any) => sum + (a.wordCount || 0), 0) / studentWriting.length)
-                    : 0;
-
-                return {
-                    studentId: s.id,
-                    name: s.name,
-                    avatar: s.avatar,
-                    avgBand: Number(s.writingScore).toFixed(1),
-                    avgWordCount,
-                    bestScore: highestBand > 0 ? highestBand.toFixed(1) : null,
-                    totalSessions: studentWriting.length
-                };
-            })
-            .sort((a, b) => parseFloat(b.avgBand) - parseFloat(a.avgBand));
-
-        return res.json({
-            data: {
-                batchName: batch.name,
-                speakingTrends,
-                readingTrends,
-                writingTrends,
-                listeningTrends: speakingTrends.map(t => ({ date: t.date, score: Math.floor(Math.random() * 20 + 60) })),
-                studentComparison,
-                speakingLeaderboard,
-                writingLeaderboard,
-                summary: {
-                    totalStudents: batch.batch_students.length,
-                    avgSpeaking: studentComparison.reduce((sum, s) => sum + (s.speakingScore || 0), 0) / (studentComparison.filter(s => s.speakingScore !== null).length || 1),
-                    avgReading: studentComparison.reduce((sum, s) => sum + (s.readingScore || 0), 0) / (studentComparison.filter(s => s.readingScore !== null).length || 1),
-                    avgWriting: studentComparison.reduce((sum, s) => sum + (s.writingScore || 0), 0) / (studentComparison.filter(s => s.writingScore !== null).length || 1),
-                    avgListening: studentComparison.reduce((sum, s) => sum + (s.listeningScore || 0), 0) / (studentComparison.filter(s => s.listeningScore !== null).length || 1),
-                }
-            }
-        });
-    } catch (err: any) {
-        console.error('[Instructor] getBatchAnalytics error:', err);
-        return res.status(500).json({ error: err.message ?? 'Failed to fetch batch analytics' });
     }
 }

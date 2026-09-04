@@ -715,11 +715,16 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
         }
         if (inputs.length === 0) { cleanup(); return res.status(400).json({ error: 'No recognised prompt audio submitted.', can_retry: true }); }
 
-        // Grade each prompt, then aggregate over the exam's CEFR scale.
+        // Grade each prompt, then aggregate over the exam's CEFR scale. Graded in
+        // parallel — gradeResponse is a pure per-prompt call (its own audio file,
+        // no shared state) — rather than sequentially, which was the whole reason
+        // a 7-prompt diagnostic took 30s+: each grading call was fully awaited
+        // before the next one even started.
         let result;
         try {
-            const responses: GradedResponse[] = [];
-            for (const input of inputs) responses.push(await gradeResponse(input, rubric));
+            const responses: GradedResponse[] = await Promise.all(
+                inputs.map((input) => gradeResponse(input, rubric))
+            );
             const scale = getScale(rubric.scaleId);
             result = aggregateViva(responses, rubric, scale);
         } catch (aiErr) {

@@ -34,6 +34,12 @@ router.get('/batches/:batchId/dashboard-summary',       shared, C.getOwnerBatchD
 router.get('/students',                                 shared, C.getInstituteStudents);
 router.get('/students/:studentId/full-progress',        shared, C.getOwnerStudentFullProgress);
 router.post('/students/:studentId/diagnostic/reset',    shared, C.resetStudentDiagnostic);
+
+// Practice history — same shared computations the instructor endpoints use,
+// authorised by institute membership instead of batch assignment.
+router.get('/students/:studentId/reading-history',      shared, C.getOwnerStudentReadingHistory);
+router.get('/students/:studentId/speaking-history',     shared, C.getOwnerStudentSpeakingHistory);
+router.get('/students/:studentId/writing-history',      shared, C.getOwnerStudentWritingHistory);
 router.get('/at-risk',                                  shared, C.getInstituteAtRisk);
 router.get('/instructors',                              shared, C.getInstituteInstructors);
 router.get('/assessment-overview',                      shared, C.getInstituteAssessmentOverview);
@@ -46,8 +52,12 @@ router.get('/analytics/engagement-trends',              shared, C.getAnalyticsEn
 router.get('/analytics/goal-achievement',               shared, C.getAnalyticsGoalAchievement);
 router.get('/analytics/subskill-heatmap',               shared, C.getAnalyticsSubskillHeatmap);
 
-// ── Legacy (keep working) ─────────────────────────────────────────────────────
-router.get('/batches/:batchId/analytics',               shared, C.getBatchAnalytics);
+// ── Legacy ────────────────────────────────────────────────────────────────────
+// /batches/:batchId/analytics is REMOVED. It never returned measured trends:
+// every series was re-plotted onto a synthetic always-rising curve
+// (buildUpwardArc) and listening scores were literally Math.random(). Its only
+// caller was the unrouted BatchAnalyticsView. Real batch analytics live on
+// /batches/:batchId/dashboard-summary and /analytics/*.
 router.get('/batches/:batchId/reading-analytics',       shared, getBatchReadingAnalytics);
 
 export default router;

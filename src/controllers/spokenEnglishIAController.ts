@@ -152,12 +152,15 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
         const rows = await prisma.iAQuestion.findMany({ where: { id: { in: (session.question_ids as string[]) ?? [] } } });
         const byId = new Map(rows.map((r) => [r.id, r]));
 
-        // Grade every submitted answer through the viva pipeline.
-        const graded: Array<{ subskillId: string; levels: Record<string, CefrLevel> }> = [];
+        // Grade every submitted answer through the viva pipeline — in parallel
+        // (gradeResponse is a pure per-prompt call, own audio file, no shared
+        // state), not sequentially awaiting each one before starting the next.
+        let graded: Array<{ subskillId: string; levels: Record<string, CefrLevel> }> = [];
         try {
-            for (const f of files) {
-                const row = byId.get(f.fieldname);
-                if (!row) continue;
+            const toGrade = files
+                .map((f) => ({ f, row: byId.get(f.fieldname) }))
+                .filter((x): x is { f: typeof files[number]; row: NonNullable<typeof x.row> } => !!x.row);
+            graded = await Promise.all(toGrade.map(async ({ f, row }) => {
                 const o = (row.options ?? {}) as any;
                 const input: PromptResponseInput = {
                     promptId: row.id, audioPath: f.path, mimeType: f.mimetype || 'audio/webm',
@@ -165,8 +168,8 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
                     scoredSubskills: Array.isArray(o.scored_subskills) ? o.scored_subskills : undefined,
                 };
                 const g: GradedResponse = await gradeResponse(input, rubric);
-                graded.push({ subskillId: ENUM_TO_SUB[String(row.sub_skill)], levels: (g.levels ?? {}) as Record<string, CefrLevel> });
-            }
+                return { subskillId: ENUM_TO_SUB[String(row.sub_skill)], levels: (g.levels ?? {}) as Record<string, CefrLevel> };
+            }));
         } catch (aiErr) {
             console.error('[submitSpokenEnglishIA] grading failed:', aiErr);
             cleanup();
@@ -181,6 +184,15 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
         const profile: any[] = Array.isArray(prev.subskillProfile) ? [...prev.subskillProfile] : [];
         const assessed = [...new Set(graded.map((g) => g.subskillId))];
         const sectionScores: Array<{ subskill: string; level: string; previous_level: string | null }> = [];
+        // Same subskill results, shaped to match IELTS's SectionScore[] contract for the
+        // iASession.scores column (IELTS's own IA writer stores a bare array of these —
+        // see lib/iaProcessor.ts). Storing the {sectionScores, cefrLevel} object shape
+        // above instead of this array crashed every reader that assumes iASession.scores
+        // is always an array (instructor/owner/admin dashboards, batch band aggregates).
+        const storedScores: Array<{
+            skill: string; sub_skill: string; band: number; correct: number; total: number;
+            ai_graded: boolean; cefr_label: string;
+        }> = [];
 
         for (const subId of assessed) {
             const vals = graded.filter((g) => g.subskillId === subId).map((g) => rubric.levelToScore[g.levels[subId]] ?? rubric.levelToScore.below_a1);
@@ -190,6 +202,12 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
             const smoothed = Math.round((0.5 * prevPct + 0.5 * gradedPct) * 10) / 10;
             const level = (pctToLevel(smoothed, scale) as any) ?? 'b1';
             sectionScores.push({ subskill: subId, level, previous_level: row?.level ?? null });
+            storedScores.push({
+                skill: 'SPEAKING', sub_skill: subId.toUpperCase(),
+                band: CEFR_ORDINAL[level as CefrLevel] ?? 0,
+                correct: 0, total: 0, ai_graded: true,
+                cefr_label: String(level).toUpperCase(),
+            });
             if (row) { row.score = smoothed; row.level = level; }
         }
 
@@ -211,7 +229,7 @@ export async function submitSpokenEnglishIA(req: AuthRequest, res: Response) {
             });
             await tx.iASession.update({
                 where: { id: session.id },
-                data: { status: 'COMPLETED' as any, time_submitted_at: new Date(), momentum_awarded: IA_MOMENTUM, scores: { sectionScores, cefrLevel } as any },
+                data: { status: 'COMPLETED' as any, time_submitted_at: new Date(), momentum_awarded: IA_MOMENTUM, scores: storedScores as any },
             });
             await tx.instituteStudent.update({ where: { id: student.id }, data: { momentum_score: { increment: IA_MOMENTUM } } });
         });

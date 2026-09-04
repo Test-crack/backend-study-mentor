@@ -14,32 +14,17 @@ import {
     computeCurrentBand,
     computeBandTrend,
     avgBandFromScores,
+    baselineBandByStudent,
+    currentBandByStudent,
+    meanOver,
+    avgImprovementOver,
 } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
+import {
+    computeReadingHistory, computeSpeakingHistory, computeWritingHistory,
+} from '../lib/practiceHistoryQueries';
 import { resolveAccessibleExamIds } from '../lib/sessionContext';
 import { getExamConfig } from '../exam-engine';
-
-// ─── GET /api/institute-{owner,admin}/my-exams ───────────────────────────────
-// The exams this institute may currently use (ACTIVE/TRIAL subscriptions), with
-// labels — populates the owner/admin exam-context selector (Track A A1c). Not
-// exam-scoped itself; it IS the list of exams to choose from.
-export async function getMyExams(req: AuthRequest, res: Response) {
-    try {
-        const appUserId = (req as any).appUserId as string;
-        const instituteId = await getCallerInstitute(appUserId);
-        if (!instituteId) return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
-
-        const examIds = await resolveAccessibleExamIds(instituteId);
-        const data = examIds.map((id) => {
-            const ex: any = getExamConfig(id);
-            return { exam_id: id, label: ex?.naming?.public_display_name ?? id };
-        });
-        return res.json({ success: true, data });
-    } catch (err) {
-        console.error('[InstituteOwner] getMyExams error:', err);
-        return res.status(500).json({ success: false, error: 'Internal server error.' });
-    }
-}
 
 // â”€â”€â”€ Helper: get institute for owner OR admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -77,6 +62,7 @@ async function resolveInstituteStudents(instituteId: string, examId?: string | n
         daily_streak: number;
         isDiagnosed: boolean;
         last_streak_date: Date | null;
+        exam_id: string;
     }>;
     instStudentIds: string[];
 }> {
@@ -90,6 +76,7 @@ async function resolveInstituteStudents(instituteId: string, examId?: string | n
             daily_streak: true,
             isDiagnosed: true,
             last_streak_date: true,
+            exam_id: true,
         },
     });
     return { instStudents, instStudentIds: instStudents.map(s => s.id) };
@@ -643,6 +630,28 @@ export async function getBatchAnalytics(req: AuthRequest, res: Response) {
     }
 }
 
+// GET /api/institute-{owner,admin}/my-exams — exams the caller's institute may
+// currently use (ACTIVE/TRIAL subscriptions), for the exam-context switcher.
+// Shared by both the owner and admin routers.
+
+export async function getMyExams(req: AuthRequest, res: Response) {
+    try {
+        const appUserId = (req as any).appUserId as string;
+        const instituteId = await getCallerInstitute(appUserId);
+        if (!instituteId) return res.status(403).json({ success: false, error: 'Not a member of any institute.' });
+
+        const examIds = await resolveAccessibleExamIds(instituteId);
+        const data = examIds.map((id) => {
+            const ex: any = getExamConfig(id);
+            return { exam_id: id, label: ex?.naming?.public_display_name ?? id };
+        });
+        return res.json({ success: true, data });
+    } catch (err) {
+        console.error('[InstituteOwner] getMyExams error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
 // â”€â”€â”€ GET /api/institute-owner/summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getSummary(req: AuthRequest, res: Response) {
@@ -966,7 +975,7 @@ export async function getOwnerBatchDashboardSummary(req: AuthRequest, res: Respo
             userIds.length > 0
                 ? prisma.instituteStudent.findMany({
                     where: { user_id: { in: userIds } },
-                    select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true },
+                    select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true, exam_id: true },
                 })
                 : Promise.resolve([]),
             userIds.length > 0
@@ -1002,7 +1011,8 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         const batchIdFilter  = req.query.batch_id as string | undefined;
         const atRiskFilter   = req.query.at_risk === 'true';
 
-        // Determine which batches to scope to
+        // Batches of THIS institute — also the allow-list that validates
+        // batchIdFilter, so a batch id from another institute selects nobody.
         const batches: any[] = await prisma.batch.findMany({
             where: {
                 institute_id: instituteId,
@@ -1020,58 +1030,58 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 select: { batch_id: true, user_id: true },
             });
 
-        const userIds = [...new Set(batchStudentLinks.map(l => l.user_id))];
-        if (userIds.length === 0) {
+        // Scope: a batch filter narrows to that batch's members; WITHOUT a filter
+        // this is every active student in the institute, including those not yet
+        // assigned to any batch. Deriving the roster from batch membership meant
+        // an unbatched student was invisible here while getSummary still counted
+        // them — the two surfaces disagreed, and the students hidden were the
+        // newly-invited ones most likely to never start.
+        const scopedUserIds = batchIdFilter
+            ? [...new Set(batchStudentLinks.filter(l => l.batch_id === batchIdFilter).map(l => l.user_id))]
+            : null;
+
+        const instStudents = await prisma.instituteStudent.findMany({
+            where: {
+                institute_id: instituteId,
+                is_active: true,
+                ...(scopedUserIds ? { user_id: { in: scopedUserIds } } : {}),
+            },
+            select: {
+                id: true, user_id: true, target_band: true, momentum_score: true,
+                daily_streak: true, isDiagnosed: true, last_streak_date: true,
+                exam_date: true, exam_id: true,
+            },
+        });
+
+        if (instStudents.length === 0) {
             return res.json({ success: true, data: [] });
         }
 
-        const [instStudents, users, competencyRows, recentIAs, lastDrills] = await Promise.all([
-            prisma.instituteStudent.findMany({
-                where: { user_id: { in: userIds } },
-                select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, last_streak_date: true },
-            }),
+        const userIds = instStudents.map(s => s.user_id);
+        // Resolved once. Each of the three aggregate queries below previously
+        // re-fetched this same id list, so a single page load ran four identical
+        // institute_students queries.
+        const instIdsAll = instStudents.map(s => s.id);
+
+        const [users, competencyRows, recentIAs, lastDrills] = await Promise.all([
             prisma.user.findMany({
                 where: { id: { in: userIds } },
                 select: { id: true, name: true, profileImage: true, email: true },
             }),
-            (async () => {
-                const instIds = (await prisma.instituteStudent.findMany({
-                    where: { user_id: { in: userIds } },
-                    select: { id: true },
-                })).map(s => s.id);
-                return instIds.length > 0
-                    ? prisma.studentCompetencyMatrix.findMany({
-                        where: { student_id: { in: instIds } },
-                        select: { student_id: true, band_score: true },
-                    })
-                    : [];
-            })(),
-            (async () => {
-                const instIds = (await prisma.instituteStudent.findMany({
-                    where: { user_id: { in: userIds } },
-                    select: { id: true },
-                })).map(s => s.id);
-                return instIds.length > 0
-                    ? prisma.iASession.findMany({
-                        where: { student_id: { in: instIds }, status: 'COMPLETED' as any },
-                        orderBy: { ia_date: 'desc' },
-                        select: { student_id: true, scores: true },
-                    })
-                    : [];
-            })(),
-            (async () => {
-                const instIds = (await prisma.instituteStudent.findMany({
-                    where: { user_id: { in: userIds } },
-                    select: { id: true },
-                })).map(s => s.id);
-                return instIds.length > 0
-                    ? prisma.drillSession.groupBy({
-                        by: ['student_id'],
-                        where: { student_id: { in: instIds } },
-                        _max: { created_at: true },
-                    })
-                    : [];
-            })(),
+            prisma.studentCompetencyMatrix.findMany({
+                where: { student_id: { in: instIdsAll } },
+                select: { student_id: true, band_score: true },
+            }),
+            prisma.iASession.findMany({
+                where: { student_id: { in: instIdsAll }, status: 'COMPLETED' as any },
+                orderBy: { ia_date: 'desc' },
+                select: { student_id: true, scores: true },
+            }),
+            prisma.drillSession.groupBy({
+                by: ['student_id'],
+                where: { student_id: { in: instIdsAll } },
+                _max: { created_at: true },
+            }),
         ]);
 
         const instByUserId  = new Map(instStudents.map(s => [s.user_id, s]));
@@ -1090,12 +1100,14 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
         }
         const lastDrillByInstId = new Map(lastDrills.map(r => [r.student_id, (r._max as any).created_at as Date | null]));
 
-        // Map userId â†’ batch info (use first batch if student in multiple)
-        const batchByUserId = new Map<string, { batch_name: string }>();
+        // Map userId â†’ batch info (use first batch if student in multiple).
+        // batch_id is included because the frontend keys its batch filter by it;
+        // without it the dropdown built its options from `undefined`.
+        const batchByUserId = new Map<string, { batch_id: string; batch_name: string }>();
         for (const link of batchStudentLinks) {
             if (!batchByUserId.has(link.user_id)) {
                 const b = batchById.get(link.batch_id) as any;
-                batchByUserId.set(link.user_id, { batch_name: b?.name ?? '' });
+                batchByUserId.set(link.user_id, { batch_id: link.batch_id, batch_name: b?.name ?? '' });
             }
         }
 
@@ -1123,7 +1135,9 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 ? Math.floor((nowMs - lastDrill.getTime()) / (24 * 60 * 60 * 1000))
                 : -1;
             const riskEntry    = atRiskByInstId.get(inst.id) ?? null;
-            const batchInfo    = batchByUserId.get(uid) ?? { batch_name: '' };
+            // Unbatched students are in scope now, so absent batch info is a real
+            // state ("not assigned yet"), not a lookup miss.
+            const batchInfo    = batchByUserId.get(uid) ?? { batch_id: '', batch_name: '' };
 
             return {
                 student_id:     inst.id,
@@ -1131,6 +1145,7 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 name:           user?.name ?? 'Unknown',
                 avatar:         (user as any)?.profileImage ?? null,
                 email:          user?.email ?? '',
+                batch_id:       batchInfo.batch_id,
                 batch_name:     batchInfo.batch_name,
                 current_band,
                 target_band,
@@ -1143,14 +1158,18 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 primary_flag:   riskEntry?.primary_flag ?? null,
                 last_active:    lastDrill ? toISTDateString(lastDrill) : null,
                 is_diagnosed:   inst.isDiagnosed,
+                // Exam proximity was student-only until now: no staff surface
+                // could tell which students sit the exam next.
+                exam_date:      inst.exam_date ? toISTDateString(inst.exam_date) : null,
+                exam_id:        inst.exam_id,
             };
         }).filter(Boolean) as Array<{
             student_id: string; user_id: string; name: string; avatar: string | null;
-            email: string; batch_name: string; current_band: number | null;
+            email: string; batch_id: string; batch_name: string; current_band: number | null;
             target_band: number | null; gap: number | null; band_trend: 'up' | 'flat' | 'down' | null;
             daily_streak: number; drilled_today: boolean; momentum_score: number;
             is_at_risk: boolean; primary_flag: string | null; last_active: string | null;
-            is_diagnosed: boolean;
+            is_diagnosed: boolean; exam_date: string | null; exam_id: string;
         }>;
 
         if (atRiskFilter) {
@@ -1179,7 +1198,7 @@ export async function getOwnerStudentFullProgress(req: AuthRequest, res: Respons
         // Verify student belongs to the institute (+ the selected exam's enrollment when set)
         const instStudent = await prisma.instituteStudent.findFirst({
             where: { user_id: studentId, institute_id: instituteId, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
-            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
+            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true, exam_id: true },
         });
         if (!instStudent) {
             return res.status(403).json({ success: false, error: 'Student is not enrolled in your institute.' });
@@ -1263,6 +1282,76 @@ export async function resetStudentDiagnostic(req: AuthRequest, res: Response) {
     }
 }
 
+// ─── Practice history (Reading / Speaking / Writing) ─────────────────────────
+// GET /api/institute-owner/students/:studentId/{reading,speaking,writing}-history
+//
+// The standalone practice work behind the assessment results. These three
+// computations live in lib/practiceHistoryQueries and are shared with the
+// instructor endpoints — the only difference here is the authorisation scope:
+// institute membership rather than batch assignment. Without these, an owner or
+// admin could see every assessment result for a student but none of the practice
+// that produced it, while a tutor could see both.
+
+/**
+ * Confirms the student is enrolled in the caller's institute.
+ * Returns the institute id on success, or null once a response has been sent.
+ */
+async function assertInstituteOwnsStudent(
+    req: AuthRequest,
+    res: Response,
+    studentUserId: string
+): Promise<boolean> {
+    const appUserId   = (req as any).appUserId as string;
+    const instituteId = await getCallerInstitute(appUserId);
+    if (!instituteId) {
+        res.status(403).json({ success: false, error: 'Not a member of any institute.' });
+        return false;
+    }
+
+    const instStudent = await prisma.instituteStudent.findFirst({
+        where:  { user_id: studentUserId, institute_id: instituteId },
+        select: { id: true },
+    });
+    if (!instStudent) {
+        res.status(403).json({ success: false, error: 'Student is not enrolled in your institute.' });
+        return false;
+    }
+    return true;
+}
+
+export async function getOwnerStudentReadingHistory(req: AuthRequest, res: Response) {
+    try {
+        const studentId = paramStr(req.params.studentId);
+        if (!(await assertInstituteOwnsStudent(req, res, studentId))) return;
+        return res.json({ success: true, data: await computeReadingHistory(studentId) });
+    } catch (err) {
+        console.error('[InstituteOwner] getOwnerStudentReadingHistory error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+export async function getOwnerStudentSpeakingHistory(req: AuthRequest, res: Response) {
+    try {
+        const studentId = paramStr(req.params.studentId);
+        if (!(await assertInstituteOwnsStudent(req, res, studentId))) return;
+        return res.json({ success: true, data: await computeSpeakingHistory(studentId) });
+    } catch (err) {
+        console.error('[InstituteOwner] getOwnerStudentSpeakingHistory error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
+export async function getOwnerStudentWritingHistory(req: AuthRequest, res: Response) {
+    try {
+        const studentId = paramStr(req.params.studentId);
+        if (!(await assertInstituteOwnsStudent(req, res, studentId))) return;
+        return res.json({ success: true, data: await computeWritingHistory(studentId) });
+    } catch (err) {
+        console.error('[InstituteOwner] getOwnerStudentWritingHistory error:', err);
+        return res.status(500).json({ success: false, error: 'Internal server error.' });
+    }
+}
+
 // ─── GET /api/institute-owner/at-risk ────────────────────────────────────────
 
 export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
@@ -1284,21 +1373,24 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
                 select: { batch_id: true, user_id: true },
             });
 
-        const userIds = [...new Set(batchStudentLinks.map(l => l.user_id))];
-        if (userIds.length === 0) {
+        // Institute-scoped, not batch-scoped. A student with no batch assignment
+        // is the single most at-risk case there is — invited, never started, and
+        // nobody's explicit responsibility — so deriving this list from batch
+        // membership excluded exactly the students it exists to surface.
+        const instStudents = await prisma.instituteStudent.findMany({
+            where:  { institute_id: instituteId, is_active: true },
+            select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
+        });
+
+        if (instStudents.length === 0) {
             return res.json({ success: true, data: [] });
         }
 
-        const [instStudents, users] = await Promise.all([
-            prisma.instituteStudent.findMany({
-                where: { user_id: { in: userIds } },
-                select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
-            }),
-            prisma.user.findMany({
-                where: { id: { in: userIds } },
-                select: { id: true, name: true, profileImage: true },
-            }),
-        ]);
+        const userIds = instStudents.map(s => s.user_id);
+        const users = await prisma.user.findMany({
+            where:  { id: { in: userIds } },
+            select: { id: true, name: true, profileImage: true },
+        });
         const userByUserId = new Map(users.map(u => [u.id, u]));
 
         const instIds = instStudents.map(s => s.id);
@@ -1474,6 +1566,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
 
         const batchIdFilter  = req.query.batch_id as string | undefined;
 
+        // Batches of THIS institute — also the allow-list validating batchIdFilter.
         const batches: any[] = await prisma.batch.findMany({
             where: {
                 institute_id: instituteId,
@@ -1491,8 +1584,25 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 select: { batch_id: true, user_id: true },
             });
 
-        const userIds = [...new Set(batchStudentLinks.map(l => l.user_id))];
-        if (userIds.length === 0) {
+        // Institute-scoped unless a batch filter is given — same rule as
+        // getInstituteStudents / getInstituteAtRisk. It matters most here: the
+        // headline this endpoint feeds is "who has never been diagnosed", and a
+        // batch-derived roster silently omitted every student not yet assigned to
+        // a batch, who are precisely the ones most likely never to have started.
+        const scopedUserIds = batchIdFilter
+            ? [...new Set(batchStudentLinks.filter(l => l.batch_id === batchIdFilter).map(l => l.user_id))]
+            : null;
+
+        const instStudents = await prisma.instituteStudent.findMany({
+            where: {
+                institute_id: instituteId,
+                is_active: true,
+                ...(scopedUserIds ? { user_id: { in: scopedUserIds } } : {}),
+            },
+            select: { id: true, user_id: true, target_band: true, isDiagnosed: true, exam_id: true },
+        });
+
+        if (instStudents.length === 0) {
             return res.json({
                 success: true,
                 data: {
@@ -1505,11 +1615,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             });
         }
 
-        const instStudents = await prisma.instituteStudent.findMany({
-            where: { user_id: { in: userIds } },
-            select: { id: true, user_id: true, target_band: true, isDiagnosed: true },
-        });
-
+        const userIds        = instStudents.map(s => s.user_id);
         const instStudentIds = instStudents.map(s => s.id);
         const instByUserId   = new Map(instStudents.map(s => [s.user_id, s]));
 
@@ -1544,10 +1650,14 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 select: { student_id: true, status: true, real_band_score: true, time_submitted_at: true },
                 orderBy: { created_at: 'desc' },
             }),
+            // sub_scores is selected alongside band_score so a Spoken English row's
+            // full CEFR sub-skill profile is available here too (see
+            // DiagnosticOverviewRow.sub_scores), not just the compact 0-6 ordinal
+            // band_score is reduced to.
             prisma.assessmentHistory.findMany({
                 where:   { student_id: { in: instStudentIds }, mode: 'DIAGNOSTIC' as any },
                 orderBy: { created_at: 'asc' },
-                select:  { student_id: true, skill: true, band_score: true, created_at: true },
+                select:  { student_id: true, skill: true, band_score: true, sub_scores: true, created_at: true },
             }),
             prisma.drillSession.groupBy({
                 by:    ['student_id'],
@@ -1599,10 +1709,10 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
         }
 
         // â”€â”€ Diagnostic per-student â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null };
+        type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null; subScores: unknown | null };
         const diagMap = new Map<string, DiagRow>();
         for (const s of instStudents) {
-            diagMap.set(s.id, { isDiagnosed: s.isDiagnosed, bands: { L: null, R: null, W: null, S: null }, diagnosedAt: null });
+            diagMap.set(s.id, { isDiagnosed: s.isDiagnosed, bands: { L: null, R: null, W: null, S: null }, diagnosedAt: null, subScores: null });
         }
         const skillKey: Record<string, string> = { LISTENING: 'L', READING: 'R', WRITING: 'W', SPEAKING: 'S' };
         const seenDiag = new Set<string>();
@@ -1614,6 +1724,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
             if (!row) continue;
             const abbr = skillKey[String(entry.skill)] ?? String(entry.skill);
             row.bands[abbr] = parseFloat(String(entry.band_score));
+            if (entry.sub_scores != null) row.subScores = entry.sub_scores;
             if (!row.diagnosedAt) {
                 row.diagnosedAt = entry.created_at instanceof Date
                     ? entry.created_at.toISOString().split('T')[0]
@@ -1652,6 +1763,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 last_ia_date: row.lastDate,
                 ia_eligible:  drillEligibleById.get(s.id) ?? false,
                 batch_name:   batchInfo?.batch_name ?? '',
+                exam_id:      s.exam_id,
             };
         });
 
@@ -1668,6 +1780,7 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 best_real_band:   row.bestBand,
                 target_band:      s.target_band ? parseFloat(String(s.target_band)) : null,
                 batch_name:       batchInfo?.batch_name ?? '',
+                exam_id:          s.exam_id,
             };
         });
 
@@ -1683,16 +1796,22 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 baseline_bands: row.bands,
                 diagnosed_at:  row.diagnosedAt,
                 batch_name:    batchInfo?.batch_name ?? '',
+                sub_scores:    row.subScores,
             };
         });
         diagnosticOverview.sort((a, b) => Number(a.is_diagnosed) - Number(b.is_diagnosed));
 
-        // Institute-level summaries
-        const allAvgBands = iaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
+        // Institute-level summaries â€” IELTS-only averages (see the matching note in
+        // instructorProgressController.getBatchAssessmentOverview): a Spoken English
+        // row's avg_ia_band/latest_real_band is a CEFR ordinal (0-6), not an IELTS
+        // band, and must never be blended into these 0-9-scale averages.
+        const ieltsIaOverview   = iaOverview.filter(r => r.exam_id !== 'spoken_english');
+        const ieltsMockOverview = mockOverview.filter(r => r.exam_id !== 'spoken_english');
+        const allAvgBands = ieltsIaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
         const instIAAvg   = allAvgBands.length > 0 ? Math.round(allAvgBands.reduce((a, b) => a + b, 0) / allAvgBands.length * 10) / 10 : 0;
         const completedAny  = iaOverview.filter(r => r.ia_completed > 0).length;
         const highMissCount = iaOverview.filter(r => r.ia_missed >= 2).length;
-        const allRealBands  = mockOverview.map(r => r.latest_real_band).filter((v): v is number => v !== null);
+        const allRealBands  = ieltsMockOverview.map(r => r.latest_real_band).filter((v): v is number => v !== null);
         const instMockAvg   = allRealBands.length > 0 ? Math.round(allRealBands.reduce((a, b) => a + b, 0) / allRealBands.length * 10) / 10 : 0;
         const atOrAbove     = mockOverview.filter(r =>
             r.latest_real_band !== null && r.target_band !== null && r.latest_real_band >= r.target_band
@@ -1844,8 +1963,8 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
             }),
             prisma.assessmentHistory.findMany({
                 where:   { student_id: { in: allInstIds }, mode: 'DIAGNOSTIC' as any },
-                orderBy: { created_at: 'asc' },
-                select:  { student_id: true, band_score: true },
+                orderBy: { created_at: 'asc' },   // ascending — baselineBandByStudent needs oldest-first
+                select:  { student_id: true, skill: true, band_score: true },
             }),
             prisma.drillSession.groupBy({
                 by: ['student_id'],
@@ -1860,26 +1979,11 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
             computeAtRiskFlags(allInstIds, instStudents),
         ]);
 
-        const competencyByInstId = new Map<string, number[]>();
-        for (const row of competencyRows) {
-            const v = parseFloat(String(row.band_score ?? '0'));
-            if (!isNaN(v) && v > 0) {
-                const arr = competencyByInstId.get(row.student_id) ?? [];
-                arr.push(v);
-                competencyByInstId.set(row.student_id, arr);
-            }
-        }
-
-        // Diagnostic baseline per student: average all diagnostic scores
-        const diagnosticByInstId = new Map<string, number[]>();
-        for (const entry of diagnosticHistory) {
-            const v = parseFloat(String(entry.band_score ?? '0'));
-            if (!isNaN(v) && v > 0) {
-                const arr = diagnosticByInstId.get(entry.student_id) ?? [];
-                arr.push(v);
-                diagnosticByInstId.set(entry.student_id, arr);
-            }
-        }
+        // Canonical per-student bands — baseline is first-entry-per-skill, current
+        // is the per-student mean. See lib/batchDashboardQueries for why both are
+        // computed per student before any group aggregation.
+        const currentByInstId  = currentBandByStudent(competencyRows);
+        const baselineByInstId = baselineBandByStudent(diagnosticHistory as any);
 
         const activeTodaySet    = new Set((drillsTodayRaw as any[]).map((r: any) => r.student_id));
         const iaCompletedMap    = new Map((iaLast7Raw as any[]).map((r: any) => [r.student_id, (r._count as any).id as number]));
@@ -1892,15 +1996,16 @@ export async function getAnalyticsBatchComparison(req: AuthRequest, res: Respons
             const studentCount = batchUserIds.length;
             const activeToday  = batchInstIds.filter(id => activeTodaySet.has(id)).length;
 
-            const bands = batchInstIds.flatMap(id => competencyByInstId.get(id) ?? []);
-            const avgBand = bands.length > 0 ? Math.round(bands.reduce((a, c) => a + c, 0) / bands.length * 10) / 10 : null;
+            const avgBandRaw      = meanOver(batchInstIds, currentByInstId);
+            const diagBaselineRaw = meanOver(batchInstIds, baselineByInstId);
+            const improvementRaw  = avgImprovementOver(batchInstIds, baselineByInstId, currentByInstId);
 
-            const diagBands = batchInstIds.flatMap(id => diagnosticByInstId.get(id) ?? []);
-            const diagBaseline = diagBands.length > 0 ? Math.round(diagBands.reduce((a, c) => a + c, 0) / diagBands.length * 10) / 10 : null;
-
-            const improvementDelta = avgBand !== null && diagBaseline !== null
-                ? Math.round((avgBand - diagBaseline) * 10) / 10
-                : null;
+            const avgBand      = avgBandRaw      !== null ? Math.round(avgBandRaw * 10) / 10 : null;
+            const diagBaseline = diagBaselineRaw !== null ? Math.round(diagBaselineRaw * 10) / 10 : null;
+            // Per-student deltas averaged, NOT avgBand - diagBaseline: those two
+            // means cover different populations, so their difference describes a
+            // cohort that does not exist.
+            const improvementDelta = improvementRaw !== null ? Math.round(improvementRaw * 10) / 10 : null;
 
             const iaCompleted = batchInstIds.reduce((sum, id) => sum + (iaCompletedMap.get(id) ?? 0), 0);
             const iaCompletionRate = studentCount > 0 ? Math.round(iaCompleted / studentCount * 100) : 0;
@@ -1950,13 +2055,13 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
         });
 
         // Build instructor â†’ instStudentIds mapping
-        const instructorStudents = new Map<string, { user: any; instIds: string[] }>();
+        const instructorStudents = new Map<string, { user: any; instIds: string[]; batchCount: number }>();
 
         const allUserIds = [...new Set(batches.flatMap((b: any) => b.batch_students.map((s: any) => s.user_id)))];
         const instStudents = allUserIds.length > 0
             ? await prisma.instituteStudent.findMany({
                 where: { user_id: { in: allUserIds } },
-                select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true },
+                select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true, exam_id: true },
             })
             : [];
         const instByUserId = new Map(instStudents.map(s => [s.user_id, s]));
@@ -1970,11 +2075,12 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
             for (const bi of b.batch_instructors) {
                 const uid = bi.User.id;
                 if (!instructorStudents.has(uid)) {
-                    instructorStudents.set(uid, { user: bi.User, instIds: [] });
+                    instructorStudents.set(uid, { user: bi.User, instIds: [], batchCount: 0 });
                 }
                 const existing = instructorStudents.get(uid)!;
                 const newIds = batchInstIds.filter((id: string) => !existing.instIds.includes(id));
                 existing.instIds.push(...newIds);
+                existing.batchCount += 1;
             }
         }
 
@@ -1984,64 +2090,101 @@ export async function getAnalyticsInstructorEffectiveness(req: AuthRequest, res:
 
         const allInstIds = [...new Set([...instructorStudents.values()].flatMap(e => e.instIds))];
 
-        const [competencyRows, diagnosticHistory, iaCompletedRaw, atRiskFlagsAll] = await Promise.all([
+        const [competencyRows, diagnosticHistory, iaCompletedRaw, iaScheduledRaw, atRiskFlagsAll] = await Promise.all([
             prisma.studentCompetencyMatrix.findMany({
                 where: { student_id: { in: allInstIds } },
                 select: { student_id: true, band_score: true },
             }),
             prisma.assessmentHistory.findMany({
                 where:   { student_id: { in: allInstIds }, mode: 'DIAGNOSTIC' as any },
-                orderBy: { created_at: 'asc' },
-                select:  { student_id: true, band_score: true },
+                orderBy: { created_at: 'asc' },   // ascending — baselineBandByStudent needs oldest-first
+                select:  { student_id: true, skill: true, band_score: true },
             }),
             prisma.iASession.groupBy({
                 by: ['student_id'],
                 where: { student_id: { in: allInstIds }, status: 'COMPLETED' as any },
                 _count: { id: true },
             }),
+            // Denominator for a real completion rate: every IA the student was
+            // scheduled for, whatever its status. Without this, "rate" was
+            // completed-sessions / student-count, which is an average count per
+            // student and exceeds 100% as soon as anyone sits a second IA.
+            prisma.iASession.groupBy({
+                by: ['student_id'],
+                where: { student_id: { in: allInstIds } },
+                _count: { id: true },
+            }),
             computeAtRiskFlags(allInstIds, instStudents),
         ]);
 
-        const competencyByInstId = new Map<string, number[]>();
-        for (const row of competencyRows) {
-            const v = parseFloat(String(row.band_score ?? '0'));
-            if (!isNaN(v) && v > 0) {
-                const arr = competencyByInstId.get(row.student_id) ?? [];
-                arr.push(v);
-                competencyByInstId.set(row.student_id, arr);
-            }
-        }
-        const diagnosticByInstId = new Map<string, number[]>();
-        for (const entry of diagnosticHistory) {
-            const v = parseFloat(String(entry.band_score ?? '0'));
-            if (!isNaN(v) && v > 0) {
-                const arr = diagnosticByInstId.get(entry.student_id) ?? [];
-                arr.push(v);
-                diagnosticByInstId.set(entry.student_id, arr);
-            }
-        }
+        // Canonical per-student bands — baseline is first-entry-per-skill (NOT the
+        // mean of every diagnostic row, which blended retakes into the starting
+        // point and disagreed with the student deep-dive).
+        // avgBandByInstId doubles as the "at target" comparison below, so current
+        // band has one definition in this handler.
+        const avgBandByInstId  = currentBandByStudent(competencyRows);
+        const baselineByInstId = baselineBandByStudent(diagnosticHistory as any);
+
         const iaMap = new Map((iaCompletedRaw as any[]).map((r: any) => [r.student_id, (r._count as any).id as number]));
+        const iaTotalMap = new Map((iaScheduledRaw as any[]).map((r: any) => [r.student_id, (r._count as any).id as number]));
         const atRiskSet = new Set((atRiskFlagsAll as AtRiskFlag[]).map(r => r.student_id));
 
-        const result = Array.from(instructorStudents.entries()).map(([uid, { user, instIds }]) => {
+        const instById = new Map(instStudents.map(s => [s.id, s]));
+
+        const result = Array.from(instructorStudents.entries()).map(([uid, { user, instIds, batchCount }]) => {
             const studentCount = instIds.length;
-            const bands = instIds.flatMap(id => competencyByInstId.get(id) ?? []);
-            const diagBands = instIds.flatMap(id => diagnosticByInstId.get(id) ?? []);
-            const avgBand = bands.length > 0 ? Math.round(bands.reduce((a, b) => a + b, 0) / bands.length * 10) / 10 : null;
-            const diagBaseline = diagBands.length > 0 ? Math.round(diagBands.reduce((a, b) => a + b, 0) / diagBands.length * 10) / 10 : null;
-            const avgImprovement = avgBand !== null && diagBaseline !== null ? Math.round((avgBand - diagBaseline) * 10) / 10 : null;
+
+            // A Spoken English student's competency-matrix band_score is a CEFR
+            // ordinal (0-6), not an IELTS band (0-9) — averaging the two together
+            // would silently blend two different scales. Split the roster by exam
+            // before computing the delta.
+            const ieltsInstIds = instIds.filter(id => instById.get(id)?.exam_id !== 'spoken_english');
+            const seInstIds    = instIds.filter(id => instById.get(id)?.exam_id === 'spoken_english');
+
+            // Per-student deltas averaged over students who have BOTH a baseline
+            // and a current band — see avgImprovementOver for why this is not
+            // groupMeanCurrent - groupMeanBaseline.
+            const improvementRaw = avgImprovementOver(ieltsInstIds, baselineByInstId, avgBandByInstId);
+            const avgImprovement = improvementRaw !== null ? Math.round(improvementRaw * 10) / 10 : null;
+
+            const cefrImprovementRaw = avgImprovementOver(seInstIds, baselineByInstId, avgBandByInstId);
+            const avgCefrImprovement = cefrImprovementRaw !== null ? Math.round(cefrImprovementRaw * 10) / 10 : null;
+
+            // Completion rate = completed IAs / scheduled IAs, as a percent.
+            // Previously completed / studentCount, which is a per-student average
+            // count and produced values like 171% and 994%.
             const iaCompleted = instIds.reduce((sum, id) => sum + (iaMap.get(id) ?? 0), 0);
-            const iaRate = studentCount > 0 ? Math.round(iaCompleted / studentCount * 100) : 0;
+            const iaScheduled = instIds.reduce((sum, id) => sum + (iaTotalMap.get(id) ?? 0), 0);
+            const iaRate = iaScheduled > 0 ? Math.round((iaCompleted / iaScheduled) * 100) : 0;
+
             const atRiskCount = instIds.filter(id => atRiskSet.has(id)).length;
+
+            // Students whose current average band has reached their own target.
+            // Only counted where BOTH a band and a target exist — a student with
+            // no target is not "below target", they are unmeasured.
+            const studentsAtTarget = instIds.filter(id => {
+                const band = avgBandByInstId.get(id);
+                const target = instById.get(id)?.target_band;
+                return band != null && target != null && band >= target;
+            }).length;
+
+            const streaks = instIds.map(id => instById.get(id)?.daily_streak ?? 0);
+            const avgStreak = streaks.length > 0
+                ? Math.round(streaks.reduce((a, b) => a + b, 0) / streaks.length)
+                : 0;
 
             return {
                 user_id:          uid,
                 name:             user.name,
                 avatar:           user.profileImage,
+                batch_count:      batchCount,
                 student_count:    studentCount,
                 avg_band_improvement: avgImprovement,
+                avg_cefr_improvement: avgCefrImprovement,
                 ia_completion_rate:  iaRate,
                 at_risk_count:    atRiskCount,
+                students_at_target: studentsAtTarget,
+                avg_student_streak: avgStreak,
             };
         });
 

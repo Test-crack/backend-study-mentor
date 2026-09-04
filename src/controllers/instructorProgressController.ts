@@ -20,7 +20,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { todayStartIST } from '../lib/timezone';
-import { computeBatchDashboard } from '../lib/batchDashboardQueries';
+import { computeBatchDashboard, avgBandFromScores } from '../lib/batchDashboardQueries';
 import { computeStudentFullProgress } from '../lib/studentProgressQueries';
 import { paramStr } from '../utils/httpParams';
 
@@ -48,6 +48,7 @@ async function resolveBatchStudents(
         daily_streak: number;
         isDiagnosed: boolean;
         last_streak_date: Date | null;
+        exam_id: string;
     }>;
     instStudentIds: string[];
     userIds: string[];
@@ -84,6 +85,7 @@ async function resolveBatchStudents(
             daily_streak: true,
             isDiagnosed: true,
             last_streak_date: true,
+            exam_id: true,
         },
     });
 
@@ -148,7 +150,7 @@ export async function getStudentFullProgress(req: AuthRequest, res: Response) {
         // Resolve institute_students record
         const instStudent = await prisma.instituteStudent.findUnique({
             where:  { user_id: studentId },
-            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true },
+            select: { id: true, user_id: true, target_band: true, momentum_score: true, daily_streak: true, isDiagnosed: true, exam_date: true, exam_id: true },
         });
         if (!instStudent) {
             return res.status(404).json({ success: false, error: 'Student record not found.' });
@@ -211,10 +213,14 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
                 orderBy: { created_at: 'desc' },
             }),
             // Diagnostic baseline: oldest entry per skill per student (mode = DIAGNOSTIC)
+            // sub_scores is selected alongside band_score so a Spoken English row's
+            // full CEFR sub-skill profile (cefrLabel + per-skill breakdown) is
+            // available here too, not just the compact 0-6 ordinal band_score is
+            // reduced to. See DiagnosticOverviewRow.sub_scores.
             prisma.assessmentHistory.findMany({
                 where:   { student_id: { in: instStudentIds }, mode: 'DIAGNOSTIC' as any },
                 orderBy: { created_at: 'asc' },
-                select:  { student_id: true, skill: true, band_score: true, created_at: true },
+                select:  { student_id: true, skill: true, band_score: true, sub_scores: true, created_at: true },
             }),
             // Drill aggregates per student â€” for ia_eligible computation
             prisma.drillSession.groupBy({
@@ -243,11 +249,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             if (!row) continue;
             if (ia.status === 'COMPLETED') {
                 row.completed++;
-                const band = (function avgBandFromScores(scores: unknown): number {
-                    const arr = (scores as Array<{ band?: number }> | null) ?? [];
-                    const bands = arr.map(s => s.band ?? 0).filter(b => b > 0);
-                    return bands.length > 0 ? bands.reduce((a, b) => a + b, 0) / bands.length : 0;
-                })(ia.scores);
+                const band = avgBandFromScores(ia.scores);
                 if (band > 0) {
                     row.allBands.push(band);
                     row.lastBand = band;
@@ -278,10 +280,10 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
         }
 
         // â”€â”€ Diagnostic per-student: first entry per skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null };
+        type DiagRow = { isDiagnosed: boolean; bands: Record<string, number | null>; diagnosedAt: string | null; subScores: unknown | null };
         const diagMap = new Map<string, DiagRow>();
         for (const s of instStudents) {
-            diagMap.set(s.id, { isDiagnosed: s.isDiagnosed, bands: { L: null, R: null, W: null, S: null }, diagnosedAt: null });
+            diagMap.set(s.id, { isDiagnosed: s.isDiagnosed, bands: { L: null, R: null, W: null, S: null }, diagnosedAt: null, subScores: null });
         }
 
         const skillKey: Record<string, string> = {
@@ -297,6 +299,11 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
             if (!row) continue;
             const abbr = skillKey[String(entry.skill)] ?? String(entry.skill);
             row.bands[abbr] = parseFloat(String(entry.band_score));
+            // sub_scores only carries a real profile on the Speaking entry today
+            // (Spoken English has one skill; IELTS's Speaking sub_scores, if any,
+            // isn't a CEFR profile) â€” captured here regardless of skill so the row
+            // stays generic if that changes.
+            if (entry.sub_scores != null) row.subScores = entry.sub_scores;
             if (!row.diagnosedAt) {
                 row.diagnosedAt = entry.created_at instanceof Date
                     ? entry.created_at.toISOString().split('T')[0]
@@ -342,6 +349,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
                 avg_ia_band:  avg,
                 last_ia_date: row.lastDate,
                 ia_eligible:  drillEligibleById.get(s.id) ?? false,
+                exam_id:      s.exam_id,
             };
         });
 
@@ -357,6 +365,7 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
                 latest_real_band: row.latestBand,
                 best_real_band:   row.bestBand,
                 target_band:      s.target_band ? parseFloat(String(s.target_band)) : null,
+                exam_id:          s.exam_id,
             };
         });
 
@@ -371,20 +380,29 @@ export async function getBatchAssessmentOverview(req: AuthRequest, res: Response
                 is_diagnosed:  row.isDiagnosed,
                 baseline_bands: row.bands,
                 diagnosed_at:  row.diagnosedAt,
+                sub_scores:    row.subScores,
             };
         });
 
         diagnosticOverview.sort((a, b) => Number(a.is_diagnosed) - Number(b.is_diagnosed));
 
         // â”€â”€ Batch-level summaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        const allAvgBands   = iaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
+        // avg_band here is an IELTS 0-9 band average â€” a Spoken English row's
+        // avg_ia_band/latest_real_band is a CEFR ordinal (0-6) stamped into the same
+        // numeric column, so it's excluded from both averages below. completedAny/
+        // highMissCount/mock counts are exam-agnostic (they count sessions, not
+        // score values) and stay blended.
+        const ieltsIaOverview   = iaOverview.filter(r => r.exam_id !== 'spoken_english');
+        const ieltsMockOverview = mockOverview.filter(r => r.exam_id !== 'spoken_english');
+
+        const allAvgBands   = ieltsIaOverview.map(r => r.avg_ia_band).filter((v): v is number => v !== null);
         const batchIAAvg    = allAvgBands.length > 0
             ? Math.round(allAvgBands.reduce((a, b) => a + b, 0) / allAvgBands.length * 10) / 10
             : 0;
         const completedAny  = iaOverview.filter(r => r.ia_completed > 0).length;
         const highMissCount = iaOverview.filter(r => r.ia_missed >= 2).length;
 
-        const allRealBands  = mockOverview.map(r => r.latest_real_band).filter((v): v is number => v !== null);
+        const allRealBands  = ieltsMockOverview.map(r => r.latest_real_band).filter((v): v is number => v !== null);
         const batchMockAvg  = allRealBands.length > 0
             ? Math.round(allRealBands.reduce((a, b) => a + b, 0) / allRealBands.length * 10) / 10
             : 0;

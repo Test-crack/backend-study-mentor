@@ -52,6 +52,16 @@ jobs:
           cd /var/www/testcrack/${{ steps.vars.outputs.app_name }}
           git fetch origin
           git reset --hard origin/${{ github.ref_name }}
+
+          # node-gyp keeps its own build-tool cache outside node_modules
+          # (~/.cache/node-gyp/<node-version>) that `npm ci` never touches. If an
+          # earlier deploy's native compile (e.g. better-sqlite3) was interrupted —
+          # a timeout, an OOM kill — that cache can be left half-written, and every
+          # later `npm ci` keeps compiling against the same poisoned cache with
+          # inconsistent errors run to run. Clear it so each deploy compiles native
+          # modules from a genuinely clean cache.
+          rm -rf ~/.cache/node-gyp
+
           npm ci
           npm run build
 
