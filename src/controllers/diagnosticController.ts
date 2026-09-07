@@ -164,8 +164,20 @@ async function isSkillAlreadyScored(
  */
 async function checkAndMarkDiagnosed(studentId: string, examId: string): Promise<boolean> {
     const cfg: any = getExamConfig(examId);
-    const components: string[] = cfg?.overall?.components ?? ['listening', 'reading', 'writing', 'speaking'];
-    const requiredSkills = components.map((c) => c.toUpperCase());
+    // Which components define "diagnosed"?
+    //  • aggregate exams (IELTS = L/R/W/S, Spoken English = [speaking]) declare them in
+    //    overall.components — the components that feed the headline.
+    //  • per-component exams (OET) have NO headline, so overall.components is []. Completion
+    //    is then every ASSESSED component (OET: L/R/W/S). Reading overall.components here
+    //    would be [] → vacuously "complete" → a student marked diagnosed with zero scores.
+    const overallComps: string[] = Array.isArray(cfg?.overall?.components) ? cfg.overall.components : [];
+    const components: string[] = overallComps.length
+        ? overallComps
+        : (Array.isArray(cfg?.components)
+            ? cfg.components.filter((c: any) => c?.assessed).map((c: any) => c.id)
+            : ['listening', 'reading', 'writing', 'speaking']);
+    const requiredSkills = components.map((c) => String(c).toUpperCase());
+    if (requiredSkills.length === 0) return false; // never mark diagnosed with zero required components
 
     const scored = await prisma.assessmentHistory.findMany({
         where: { student_id: studentId, mode: 'DIAGNOSTIC', skill: { in: requiredSkills as any } },

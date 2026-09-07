@@ -16,17 +16,54 @@
 
 import { toBand, fractionToBand, internalToBand } from '../lib/bandScale';
 import { getExamConfig, getScale } from './loader';
-import { bandMean } from './scoring';
+import { bandMean, roundHalfUpToStep, clamp } from './scoring';
 import { getStrategy } from './registry';
 import { RawScore } from './types';
 
 export interface ComponentResult {
   value: number;   // the band, exactly as the pre-extraction path produced it
-  label: string;   // one-decimal display, e.g. "6.5"
+  label: string;   // one-decimal display, e.g. "6.5"; for graded scales "350 (B)"
 }
 
-/** Convert a RawScore into a band on a numeric scale. Delegates to bandScale (IELTS profile). */
-export function componentBand(raw: RawScore, _scale: any): ComponentResult {
+/** Letter grade for a value on a scale that defines grade_bands (e.g. OET A–E). null otherwise. */
+function gradeFor(value: number, scale: any): string | null {
+  const bands = Array.isArray(scale?.grade_bands) ? scale.grade_bands : null;
+  if (!bands) return null;
+  for (const b of bands) if (value >= b.min && value <= b.max) return b.grade ?? b.level ?? null;
+  return null;
+}
+
+/**
+ * Generic numeric transform for any scale that is NOT the IELTS [4,9] profile — e.g. OET
+ * oet_500 (0–500, step 10, A–E grade bands), and later GRE/GMAT. Maps the raw performance to
+ * a 0..1 position, then onto the scale's own [min,max] at its step. This is the generalization
+ * the pre-existing componentBand comment deferred "until a second numeric exam actually needs it".
+ */
+function genericNumericBand(raw: RawScore, scale: any): ComponentResult {
+  const min = Number(scale?.min ?? 0);
+  const max = Number(scale?.max ?? 100);
+  const step = Number(scale?.step ?? 1);
+  let frac = 0;
+  switch (raw.unit) {
+    case 'raw':      frac = raw.total > 0 ? raw.correct / raw.total : 0; break;
+    case 'internal': frac = (clamp(raw.value, 1, 10) - 1) / 9; break;                 // AI grades on internal 1..10
+    case 'band':     frac = max > min ? (clamp(raw.value, min, max) - min) / (max - min) : 0; break;
+    case 'percent':  frac = clamp(raw.value, 0, 100) / 100; break;
+  }
+  frac = clamp(frac, 0, 1);
+  const value = clamp(roundHalfUpToStep(min + frac * (max - min), step), min, max);   // OET reports in 10s
+  const grade = gradeFor(value, scale);
+  return { value, label: grade ? `${value} (${grade})` : String(value) };
+}
+
+/** Convert a RawScore into a band on its numeric scale. */
+export function componentBand(raw: RawScore, scale: any): ComponentResult {
+  // Only the IELTS [4,9]/0.5/internal-1..10 profile keeps the proven bandScale maths
+  // byte-for-byte (parity-asserted in vectors.check.ts §10). Every other numeric scale uses
+  // the generic transform above — so IELTS is untouched while OET/GRE/GMAT get correct scores.
+  const isIeltsBand = scale?.report_floor === 4.0 && scale?.max === 9.0 && scale?.step === 0.5;
+  if (!isIeltsBand) return genericNumericBand(raw, scale);
+
   let value: number;
   switch (raw.unit) {
     case 'raw':
