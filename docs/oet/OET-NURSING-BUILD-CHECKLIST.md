@@ -130,11 +130,18 @@ Verified live against the dev DB (read-only introspection, 2026). No migration n
       into the diagnostic controller (D4 storage). **Verified** strong→500(A), mid→340(C+ via gate),
       weak→90(E), empty→0(E). IELTS writing path untouched. *(Service-level verified; HTTP e2e pending
       OET content + test student.)*
-- [ ] **Speaking (roleplay).** ⚠️ **D5 — grading path (open).** Recorded roleplay (mockup ~4 prompts).
-      Recommend **reuse the viva multi-recording pipeline** (`services/viva` + `/viva/submit`), scoring
-      the **4 linguistic** criteria first (clinical-communication criteria as fast-follow, per
-      verification §4). Decide: viva-reuse vs bespoke roleplay grader.
-- [ ] **Provenance** — stamp `...provenance()` on every `assessment_history` + matrix write.
+- [x] **Speaking (roleplay) — production grader + wiring.** Done. `services/oetSpeakingService.ts`
+      grades the clinical role-play on the **full 9 OET criteria** — 4 linguistic (0–6) + **5
+      clinical-communication (0–3)** — in one multimodal call (reusing the viva audio technique) →
+      `oet_500` with the Grade-B gate. Dedicated endpoints `GET/POST /api/diagnostic/oet-speaking/
+      {prompts,submit}` (multi-recording; reuse the multer plumbing + set pinning); D4 storage,
+      `exam_id`, one-time guard, `checkAndMarkDiagnosed`. Verified: 9-criteria structure + transcript;
+      off-task audio correctly floored. *(Positive-path scoring pending a real role-play recording — Phase 5.)*
+- [x] **Provenance** — already stamped: OET L/R/W/S all write via `saveDiagnosticAssessment`, which
+      spreads `...provenance()` (engine + config version) onto the `assessment_history` row.
+
+> **Phase 3 (backend logic) is complete.** IELTS/SE untouched throughout (vectors 87/0). What remains
+> before OET diagnostics run for a real student is **content + a test student** (Phase 5 / DoD).
 
 ---
 
@@ -185,7 +192,7 @@ The diagnostic routes are **already exam-agnostic** — verify, don't rebuild.
 | **D2** | Per-component target storage | Preset id (`nmc`) or `target_per_component` JSON | deferred (not diagnostic-blocking) |
 | **D3** | `chk_dq_question_type` values for OET | MCQ / WRITING_PROMPT / SPEAKING_PROMPT all allowed — no ALTER | ✅ resolved |
 | **D4** | `oet_500` score storage vs `numeric(2,1)` | Real `{score,grade}` in `sub_scores`; normalised 0–9 in `band_score` | recommended — **awaiting sign-off** |
-| **D5** | Roleplay speaking grading/route | Reuse viva multi-recording pipeline | open (Phase 3) |
+| **D5** | Roleplay speaking grading/route | Full 9 OET criteria (4 linguistic + 5 clinical); dedicated `/oet-speaking` endpoints reusing viva plumbing | ✅ resolved |
 | **D6** | Go-live | Stay `reserved` (legal `BLOCKED_ON_COUNSEL`) | locked |
 
 ---
