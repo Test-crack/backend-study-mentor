@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
 import { analyzeOetWriting } from '../services/oetWritingService';
+import { analyzeOetSpeaking } from '../services/oetSpeakingService';
 import { BAND_MIN, toBand } from '../lib/bandScale';
 import { scoreComponent, examProficiencyLevel, provenance, getExamConfig, getScale, toStoredComponentScore, isIeltsBandComponent } from '../exam-engine';
 import fs from 'fs';
@@ -840,5 +841,144 @@ export const submitDiagnosticViva = async (req: AuthRequest & { appUserId?: stri
         }
         console.error('[submitDiagnosticViva]', err);
         res.status(500).json({ error: 'Failed to submit viva diagnostic' });
+    }
+};
+
+// ─── OET (oet_500) diagnostic SPEAKING — clinical role-play ──────────────────────
+// Distinct from the CEFR viva: OET Speaking is a recorded clinical role-play graded on
+// the nine OET criteria (4 linguistic + 5 clinical-communication) → oet_500. Reuses the
+// same multipart plumbing (one audio file per prompt) and the served-set pinning, but
+// grades via oetSpeakingService. Only for non-viva, non-IELTS-band speaking exams.
+
+/** True when this exam's speaking is an OET-style roleplay (numeric scale, not a CEFR viva). */
+function isRoleplaySpeakingExam(examId: string): boolean {
+    return !getVivaRubric(examId) && !isIeltsBandComponent(examId, 'speaking');
+}
+
+/** Pick a random active OET speaking role-play set for this exam (baseline — not level-scoped). */
+async function pickOetSpeakingSet(examId: string): Promise<string | null> {
+    const rows = await prisma.$queryRaw<{ set_id: string }[]>`
+        SELECT set_id FROM diagnostic_questions
+        WHERE skill = 'SPEAKING' AND is_active = true AND exam_id = ${examId}
+        GROUP BY set_id ORDER BY random() LIMIT 1`;
+    return rows[0]?.set_id ?? null;
+}
+
+/** GET the ordered OET role-play prompt set for the student's exam. */
+export const getOetSpeakingPrompts = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+    try {
+        const userId = req.appUserId;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
+        if (!student) return res.status(404).json({ error: 'Student not found.' });
+        if (!isRoleplaySpeakingExam(student.exam_id)) {
+            return res.status(400).json({ error: 'not_roleplay_exam', message: `Role-play speaking is not configured for exam ${student.exam_id}.` });
+        }
+
+        // Pin one served set in diagnostic_sessions so re-fetches are stable and submit grades
+        // against exactly what we served.
+        const setId = await resolveServedId(student, 'SPEAKING', () => pickOetSpeakingSet(student.exam_id));
+        if (!setId) return res.status(400).json({ error: 'speaking_not_seeded', message: `No OET speaking prompts seeded for exam ${student.exam_id}.` });
+
+        const rows = await prisma.diagnosticQuestion.findMany({
+            where: { set_id: setId, skill: 'SPEAKING', is_active: true },
+            orderBy: { sequence: 'asc' },
+        });
+
+        res.json({
+            examId: student.exam_id,
+            alreadyDiagnosed: student.isDiagnosed,
+            prompts: rows.map((q) => {
+                const o = (q.options ?? {}) as any;
+                return {
+                    id: q.id,
+                    order: q.sequence,
+                    scenario: q.prompt_text,                       // setting + role + task
+                    setting: o.setting ?? null,
+                    prepSeconds: Number(o.prep_seconds ?? 20),
+                    speakSeconds: Number(o.speak_seconds ?? 90),
+                    interlocutorAudioUrl: q.audio_url || null,      // optional patient/carer voice line
+                };
+            }),
+        });
+    } catch (err) {
+        console.error('[getOetSpeakingPrompts]', err);
+        res.status(500).json({ error: 'Failed to load OET speaking prompts' });
+    }
+};
+
+/** POST recorded OET role-plays (multipart; one audio file per prompt, fieldname = promptId). */
+export const submitOetSpeaking = async (req: AuthRequest & { appUserId?: string }, res: Response) => {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    const cleanup = () => { for (const f of files) { try { fs.unlinkSync(f.path); } catch { /* gone */ } } };
+    try {
+        const userId = req.appUserId;
+        if (!userId) { cleanup(); return res.status(401).json({ error: 'Unauthorized' }); }
+        const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
+        if (!student) { cleanup(); return res.status(404).json({ error: 'Student not found.' }); }
+        if (!isRoleplaySpeakingExam(student.exam_id)) { cleanup(); return res.status(400).json({ error: 'not_roleplay_exam' }); }
+
+        if (student.isDiagnosed) { cleanup(); return res.status(409).json({ error: 'Diagnostic already completed and cannot be retaken.' }); }
+        if (await isSkillAlreadyScored(student.id, 'SPEAKING')) { cleanup(); return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' }); }
+        if (files.length === 0) { cleanup(); return res.status(400).json({ error: 'No audio submitted.', can_retry: true }); }
+
+        const session = await prisma.diagnosticSession.findUnique({
+            where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'SPEAKING' } },
+        });
+        if (!session) { cleanup(); return res.status(409).json({ error: 'no_active_speaking', can_retry: true, message: 'Load the role-play prompts before submitting.' }); }
+
+        const rows = await prisma.diagnosticQuestion.findMany({ where: { set_id: session.set_id, skill: 'SPEAKING', is_active: true } });
+        const byId = new Map(rows.map((r) => [r.id, r]));
+
+        // Each file's fieldname is a served promptId; the scenario is resolved server-side (the
+        // client id only selects it, never supplies grading content). Ordered by sequence.
+        const roleplays = files
+            .map((f) => ({ f, row: byId.get(f.fieldname) }))
+            .filter((x) => x.row)
+            .sort((a, b) => (a.row!.sequence ?? 0) - (b.row!.sequence ?? 0))
+            .map((x) => ({ audioPath: x.f.path, mimeType: x.f.mimetype || 'audio/webm', scenario: x.row!.prompt_text }));
+        if (roleplays.length === 0) { cleanup(); return res.status(400).json({ error: 'No recognised prompt audio submitted.', can_retry: true }); }
+
+        let oet;
+        try {
+            oet = await analyzeOetSpeaking({ roleplays, profession: 'nursing' });
+        } catch (aiErr) {
+            console.error('[submitOetSpeaking] grading failed:', aiErr);
+            cleanup();
+            return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
+        } finally {
+            cleanup();
+        }
+
+        const stored = toStoredComponentScore(student.exam_id, 'speaking', {
+            value: oet.oetScore,
+            label: `${oet.oetScore} (${oet.grade})`,
+        });
+        const subScores = {
+            ...stored.sub_scores_extra,             // score (0–500), grade, scale_id, display
+            is_valid_attempt: oet.isValidAttempt,
+            meets_grade_b: oet.meetsGradeB,
+            below_grade_b: oet.belowGradeB,
+            raw_score: oet.rawScore,
+            criteria: oet.criteria,
+            transcripts: oet.transcripts,
+            feedback: oet.feedback,
+        };
+
+        await prisma.$transaction(async (tx) => {
+            await lockDiagnosticSkill(tx, student.id, 'SPEAKING');
+            if (await isSkillAlreadyScored(student.id, 'SPEAKING')) throw new DiagnosticAlreadyScoredError();
+            await saveDiagnosticAssessment(tx, student.id, 'SPEAKING', stored.band_score, { roleplay_count: roleplays.length }, subScores, student.exam_id);
+        });
+        const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
+
+        res.json({ message: 'OET speaking submitted successfully', oetScore: oet.oetScore, grade: oet.grade, overallComplete, sub_scores: subScores });
+    } catch (err) {
+        cleanup();
+        if (err instanceof DiagnosticAlreadyScoredError) {
+            return res.status(409).json({ error: 'The SPEAKING section has already been submitted.' });
+        }
+        console.error('[submitOetSpeaking]', err);
+        res.status(500).json({ error: 'Failed to submit OET speaking' });
     }
 };

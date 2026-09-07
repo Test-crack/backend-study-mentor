@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import { getDiagnosticStatus, getDiagnosticQuestionsBySkill, submitDiagnosticAssessment, submitDiagnosticSpeaking, getDiagnosticVivaPrompts, submitDiagnosticViva } from '../controllers/diagnosticController';
+import { getDiagnosticStatus, getDiagnosticQuestionsBySkill, submitDiagnosticAssessment, submitDiagnosticSpeaking, getDiagnosticVivaPrompts, submitDiagnosticViva, getOetSpeakingPrompts, submitOetSpeaking } from '../controllers/diagnosticController';
 
 const router = Router();
 // Cap speaking uploads at 15 MB — a ~90s recording is well under this; the limit
@@ -51,6 +51,10 @@ router.post('/submit/speaking', handleSpeakingUpload, submitDiagnosticSpeaking);
 // Config-driven viva diagnostic (Spoken English & future viva exams).
 router.get('/viva/prompts', getDiagnosticVivaPrompts);
 router.post('/viva/submit', handleVivaUpload, submitDiagnosticViva);
+
+// OET (oet_500) clinical role-play speaking — multi-recording, one audio per prompt.
+router.get('/oet-speaking/prompts', getOetSpeakingPrompts);
+router.post('/oet-speaking/submit', handleVivaUpload, submitOetSpeaking);
 
 // Submit each section (listening, reading, writing - expects JSON payload)
 router.post('/submit/:skill', submitDiagnosticAssessment);
