@@ -5,7 +5,7 @@ import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
 import { BAND_MIN, toBand } from '../lib/bandScale';
-import { scoreComponent, examProficiencyLevel, provenance, getExamConfig, getScale } from '../exam-engine';
+import { scoreComponent, examProficiencyLevel, provenance, getExamConfig, getScale, toStoredComponentScore, isIeltsBandComponent } from '../exam-engine';
 import fs from 'fs';
 import { paramStr } from '../utils/httpParams';
 import { getVivaRubric } from '../services/viva/registry';
@@ -412,24 +412,28 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                 }
             });
 
-            if (total === 0) {
-                // Nothing answered, so no set to grade against. Score the floor rather
-                // than 400 — a timed-out section must still be submittable.
-                bandScore = BAND_MIN;
-                subScores = { total_questions: 0, correct_answers: 0, accuracy_percentage: 0, by_question_type: {} };
-            } else {
-                // Mastery fraction → band, via the engine (config-driven scale for this component).
-                bandScore = scoreComponent('ielts', skillUpper.toLowerCase(), { unit: 'raw', correct, total }).value;
-                subScores = {
-                    total_questions:     total,
-                    correct_answers:     correct,
-                    accuracy_percentage: Math.round((correct / total) * 100),
-                    by_question_type:    byType
-                };
-            }
+            // Grade on the exam's OWN scale (IELTS band / OET oet_500 / …). total===0 (timed out,
+            // nothing answered) scores the scale floor via a 0/0 fraction — 4.0 for IELTS, 0/E for
+            // OET — so a timed-out section is still submittable without a hardcoded band.
+            const comp = skillUpper.toLowerCase();
+            const result = scoreComponent(student.exam_id, comp, { unit: 'raw', correct, total });
+            const stored = toStoredComponentScore(student.exam_id, comp, result);
+            bandScore = stored.band_score;
+            subScores = {
+                total_questions:     total,
+                correct_answers:     correct,
+                accuracy_percentage: total > 0 ? Math.round((correct / total) * 100) : 0,
+                by_question_type:    byType,
+                ...stored.sub_scores_extra,
+            };
 
         // ── WRITING — fetch prompt by question_id, send to Gemini ─────────────
         } else if (skillUpper === 'WRITING') {
+            // OET (and any non-IELTS-band) Writing needs its own criteria grader — analyzeWriting
+            // scores IELTS's 4 criteria, not OET's 6. Block until that grader is wired (next step).
+            if (!isIeltsBandComponent(student.exam_id, 'writing')) {
+                return res.status(501).json({ error: 'writing_grading_not_ready', message: 'Writing grading for this exam is being set up.' });
+            }
             const wordCount = parsedAnswers.text
                 ? parsedAnswers.text.split(/\s+/).filter(Boolean).length
                 : 0;
@@ -496,12 +500,13 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             }
         }
 
-        // Universal exit gate: round to 0.5 and clamp to [4,9] (adds the previously-missing floor).
-        bandScore = toBand(bandScore);
+        // IELTS bands pass the 0.5/[4,9] exit gate; wider scales (OET oet_500) already hold the
+        // final stored band from toStoredComponentScore and must NOT be re-clamped to [4,9].
+        if (isIeltsBandComponent(student.exam_id, skillUpper.toLowerCase())) bandScore = toBand(bandScore);
         await prisma.$transaction(async (tx) => {
             await lockDiagnosticSkill(tx, student.id, skillUpper);
             if (await isSkillAlreadyScored(student.id, skillUpper)) throw new DiagnosticAlreadyScoredError();
-            await saveDiagnosticAssessment(tx, student.id, skillUpper, bandScore, parsedAnswers, subScores);
+            await saveDiagnosticAssessment(tx, student.id, skillUpper, bandScore, parsedAnswers, subScores, student.exam_id);
         });
         const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
 

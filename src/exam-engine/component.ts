@@ -56,13 +56,17 @@ function genericNumericBand(raw: RawScore, scale: any): ComponentResult {
   return { value, label: grade ? `${value} (${grade})` : String(value) };
 }
 
+/** True only for the IELTS band profile — [4,9], 0.5 step, 4.0 report floor. */
+export function isIeltsBandScale(scale: any): boolean {
+  return scale?.report_floor === 4.0 && scale?.max === 9.0 && scale?.step === 0.5;
+}
+
 /** Convert a RawScore into a band on its numeric scale. */
 export function componentBand(raw: RawScore, scale: any): ComponentResult {
   // Only the IELTS [4,9]/0.5/internal-1..10 profile keeps the proven bandScale maths
   // byte-for-byte (parity-asserted in vectors.check.ts §10). Every other numeric scale uses
   // the generic transform above — so IELTS is untouched while OET/GRE/GMAT get correct scores.
-  const isIeltsBand = scale?.report_floor === 4.0 && scale?.max === 9.0 && scale?.step === 0.5;
-  if (!isIeltsBand) return genericNumericBand(raw, scale);
+  if (!isIeltsBandScale(scale)) return genericNumericBand(raw, scale);
 
   let value: number;
   switch (raw.unit) {
@@ -98,6 +102,32 @@ function componentScale(examId: string, componentId: string): any {
 /** Facade: resolve a component's scale from config, then score its raw performance. */
 export function scoreComponent(examId: string, componentId: string, raw: RawScore): ComponentResult {
   return componentBand(raw, componentScale(examId, componentId));
+}
+
+/** True if a component is scored on the IELTS band scale (→ band_score stores the value directly). */
+export function isIeltsBandComponent(examId: string, componentId: string): boolean {
+  try { return isIeltsBandScale(componentScale(examId, componentId)); } catch { return true; }
+}
+
+export interface StoredComponentScore {
+  band_score: number;                     // safe for the numeric(2,1) / [0,9] column
+  sub_scores_extra: Record<string, any>;  // {} for IELTS; {score,grade,scale_id,display} for wider scales
+}
+
+/**
+ * Map a scored ComponentResult onto how the platform STORES it, given band_score is a
+ * numeric(2,1) column with a [0,9] CHECK. IELTS bands (0–9) store as-is. Wider numeric scales
+ * (OET oet_500) keep their real value+grade in sub_scores and store a 0–9 normalisation in
+ * band_score for the shared widgets (decision D4).
+ */
+export function toStoredComponentScore(examId: string, componentId: string, result: ComponentResult): StoredComponentScore {
+  const scale = componentScale(examId, componentId);
+  if (isIeltsBandScale(scale)) return { band_score: result.value, sub_scores_extra: {} };
+  const max = Number(scale?.max ?? 9) || 9;
+  const band_score = clamp(Math.round((result.value / max) * 9 * 10) / 10, 0, 9);
+  const grade = /\(([^)]+)\)/.exec(result.label)?.[1] ?? null;
+  const scale_id = getExamConfig(examId)?.components?.find((c: any) => c.id === componentId)?.scale ?? null;
+  return { band_score, sub_scores_extra: { score: result.value, grade, scale_id, display: result.label } };
 }
 
 /**
