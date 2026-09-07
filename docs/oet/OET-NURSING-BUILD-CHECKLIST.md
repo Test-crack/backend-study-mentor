@@ -66,41 +66,44 @@ right + boot.
 
 ## 2. DB-table verification (what the diagnostic will read/write)
 
-No migration is expected (string `exam_id`, no `ExamType` enum). Verify each table supports
-`exam_id='oet'` and the OET shapes. **Do not run destructive SQL** — verification is read-only;
-any constraint change is a separate reviewed `ALTER`.
+Verified live against the dev DB (read-only introspection, 2026). No migration needed for the
+**diagnostic slice**. **No destructive SQL run.**
 
-- [ ] **`exams` / `exam_configs`** — seeded (see §1).
-- [ ] **`institute_exam_subscription`** — create one `TRIAL` OET row for a test institute so a test
-      student gets access (`examAccess.isSubscriptionAccessible` → TRIAL==ACTIVE).
-- [ ] **`institute_students`** — set a test student `exam_id='oet'`. ⚠️ **D2 — per-component target:**
-      `institute_students.target_band` is a *single* `Decimal(2,1)`; OET targets are **per-component**
-      (L/R/W/S). Decide where the 4 targets live (recommend: `sub_scores`-style JSON or a small
-      `target_per_component` JSON; do **not** overload the single band).
-- [ ] **`diagnostic_questions`** (`diagnosticController` reads via exam-scoped pickers) — columns fit:
-      `exam_id`, `level Char(1)`, `skill SkillType`, `question_type VarChar(30)`, `set_id`,
-      `passage_text`, `audio_url`, `prompt_text`, `options Json`, `correct_answer`, `min_words`,
-      `sequence`.
-      - [ ] ⚠️ **D3 — `chk_dq_question_type` CHECK:** confirm the allowed `question_type` values.
-            We hit this before (it rejected `VIVA_PROMPT`; `SPEAKING_PROMPT` was allowed). Confirm the
-            set covers what OET needs: MCQ (L/R), the writing-task type, and the speaking/roleplay
-            type — or plan an idempotent `ALTER` to add missing values.
-- [ ] **`diagnostic_sessions`** — `@@unique([student_id, exam_id, skill])`, exam-scoped already. OK
-      as-is; no change.
-- [ ] **`student_competency_matrix`** — one row per `(student_id, skill)` (`@@unique`). L/R/W/S = 4
-      rows. ⚠️ **D4 — score storage:** `band_score Decimal(2,1)` (max 9.9) **cannot** hold `oet_500`
-      (0–500). Recommend: store the real per-component `{score, grade}` in `sub_scores` JSON; keep
-      `band_score` as a **normalised 0–9** for the shared widgets (mirrors how CEFR reused
-      `band_score` as an ordinal). Confirm no reader assumes band semantics for OET.
-- [ ] **`assessment_history`** — `mode='DIAGNOSTIC'`, `band_score`, `sub_scores`, `exam_id`,
-      provenance. Same **D4** storage rule.
-- [ ] **CHECK constraints** — `chk_ah_band_range`, `chk_scm_band_range` are `[0,9]` (from
-      `band_range_cefr.sql`). With D4's normalised `band_score` they need **no change**. (If D4 flips
-      to "store raw 0–500", these must widen — separate `ALTER`.)
-- [ ] **`SkillType` enum** — has `LISTENING/READING/WRITING/SPEAKING` (✓, reused).
-- [ ] **`SubSkillType` enum** — verify it contains the IELTS Writing/Speaking subskill values we're
-      reusing (e.g. task-response / coherence / lexical / grammar / fluency / pronunciation). Add any
-      missing value via idempotent `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (like `INTERACTION` was).
+- [x] **`exams` / `exam_configs`** — seeded (see §1).
+- [x] **`diagnostic_questions` columns fit** — `exam_id`, `level Char(1)`, `skill SkillType`,
+      `question_type VarChar(30)`, `set_id`, `passage_text`, `audio_url`, `prompt_text`,
+      `options Json`, `correct_answer`, `min_words`, `sequence`. ✅
+- [x] **D3 (RESOLVED) — `chk_dq_question_type`** allows `('MCQ','TFNG','WRITING_PROMPT','SPEAKING_PROMPT')`.
+      OET maps cleanly: **MCQ** (Listening/Reading), **WRITING_PROMPT** (Writing), **SPEAKING_PROMPT**
+      (Speaking roleplay). `chk_dq_level` allows `A/B/C` (our proficiency levels). **No ALTER needed**
+      for the MCQ-based diagnostic. *(If we later add gap-fill/matching item types, that's a new value.)*
+- [x] **`diagnostic_sessions`** — `@@unique([student_id, exam_id, skill])`, exam-scoped. No change.
+- [x] **D4 (CONFIRMED) — score storage.** Verified: `band_score` is `numeric(2,1)` (max 9.9) on
+      `assessment_history` + `student_competency_matrix` (and `mock_sessions.real_band_score`), each
+      with a `CHECK (0 ≤ band_score ≤ 9.0)`. So `oet_500` (0–500) **cannot** be stored raw. **Decision
+      (recommended): store real `{score, grade}` per component in `sub_scores` JSON; put a normalised
+      0–9 in `band_score`** (fits type + CHECK; mirrors CEFR's ordinal reuse). **No schema change.**
+      ← *needs your sign-off before Phase 3 scoring code.*
+- [x] **`assessment_history`** — `mode='DIAGNOSTIC'`, `band_score numeric(2,1)`, `sub_scores`,
+      `exam_id`, provenance. Same D4 rule. ✅
+- [x] **CHECK constraints** — `chk_ah_band_range`, `chk_scm_band_range`, `chk_target_band_range` all
+      `[0,9]`. With D4's normalised `band_score` → **no change needed**.
+- [x] **`SkillType` enum** — `LISTENING/READING/WRITING/SPEAKING` ✅ (reused).
+- [x] **`SubSkillType` enum** — `LISTENING, READING, GRAMMAR, VOCABULARY, COHERENCE, TASK_RESPONSE,
+      FLUENCY, PRONUNCIATION, INTERACTION`. ⚠️ OET's real criteria (purpose/content/genre/intelligibility/
+      appropriateness/relationship_building/…) **do NOT map** to these. **Not a diagnostic blocker:**
+      like SE, OET stores its subskills in `sub_scores` JSON (per-component row), **not** as
+      `SubSkillType` enum rows. Enum only matters if/when OET gets **drills** tagged by criterion —
+      defer to the drills phase.
+- [ ] **D2 (DEFERRED, not diagnostic-blocking) — per-component targets.** `institute_students` has a
+      single `target_band double precision` (0–9 CHECK) + `exam_date` — **no** per-component target
+      column. OET needs L/R/W/S targets. The diagnostic doesn't use targets (it measures baseline), so
+      defer to the readiness/dashboard phase. Recommendation then: store a **regulator preset id**
+      (e.g. `"nmc"`, which already lives in `oet.target.presets`) or add a `target_per_component` JSON —
+      don't overload the single band.
+- [ ] **`institute_exam_subscriptions`** — currently only `ielts` + `spoken_english` rows exist; **no
+      OET row**. To test, insert one `TRIAL` OET row for the test institute (data insert, unique
+      `[institute_id, exam_id]`). Done at test-student setup (Phase 3/DoD).
 
 ---
 
@@ -171,10 +174,10 @@ The diagnostic routes are **already exam-agnostic** — verify, don't rebuild.
 | ID | Decision | Recommendation | Status |
 |---|---|---|---|
 | **D1** | Writing/Speaking subskills | **OET's real criteria** — Writing 6, Speaking 4 linguistic + 5 clinical; grade all incl. clinical | ✅ locked |
-| **D2** | Per-component target storage | JSON `target_per_component`, not the single band | open |
-| **D3** | `chk_dq_question_type` values for OET | Confirm set; `ALTER` if missing | open |
-| **D4** | `oet_500` score storage vs `Decimal(2,1)` | Store raw in `sub_scores`, normalised 0–9 in `band_score` | open |
-| **D5** | Roleplay speaking grading/route | Reuse viva multi-recording pipeline | open |
+| **D2** | Per-component target storage | Preset id (`nmc`) or `target_per_component` JSON | deferred (not diagnostic-blocking) |
+| **D3** | `chk_dq_question_type` values for OET | MCQ / WRITING_PROMPT / SPEAKING_PROMPT all allowed — no ALTER | ✅ resolved |
+| **D4** | `oet_500` score storage vs `numeric(2,1)` | Real `{score,grade}` in `sub_scores`; normalised 0–9 in `band_score` | recommended — **awaiting sign-off** |
+| **D5** | Roleplay speaking grading/route | Reuse viva multi-recording pipeline | open (Phase 3) |
 | **D6** | Go-live | Stay `reserved` (legal `BLOCKED_ON_COUNSEL`) | locked |
 
 ---
