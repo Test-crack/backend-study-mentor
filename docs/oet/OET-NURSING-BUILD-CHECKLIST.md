@@ -122,9 +122,14 @@ Verified live against the dev DB (read-only introspection, 2026). No migration n
       `sub_scores`, normalised 0–9 in `band_score`). Exit gate exam-aware; `exam_id` now stamped on
       the save (was defaulting to `'ielts'`). IELTS byte-identical (vectors 87/0). **Unit-verified;
       end-to-end pending OET content + test student (Phase 5 / DoD).**
-- [ ] **Writing** — OET Writing is currently **guarded (501)** in the endpoint. Wire its own grader:
-      AI on the **OET 6 criteria** (D1) + **nursing referral-letter** genre → `internal` unit →
-      `scoreComponent(exam_id,'writing')` → `oet_500`. Dedicated next step.
+- [x] **Writing — production grader.** Done — `services/oetWritingService.ts` grades on OET's real
+      6 criteria (Purpose 0–3; Content/Conciseness/Genre/Organisation/Language 0–7) with clinical
+      factual-fidelity rules vs the case notes, maps raw→`oet_500`, and applies **OET's Grade-B gate**
+      (miss any threshold → capped <350). Robust: temp-escalating JSON retry, trivial/empty floor
+      (no AI spend), per-criterion clamps, throws-on-failure (502, never a fabricated score). Wired
+      into the diagnostic controller (D4 storage). **Verified** strong→500(A), mid→340(C+ via gate),
+      weak→90(E), empty→0(E). IELTS writing path untouched. *(Service-level verified; HTTP e2e pending
+      OET content + test student.)*
 - [ ] **Speaking (roleplay).** ⚠️ **D5 — grading path (open).** Recorded roleplay (mockup ~4 prompts).
       Recommend **reuse the viva multi-recording pipeline** (`services/viva` + `/viva/submit`), scoring
       the **4 linguistic** criteria first (clinical-communication criteria as fast-follow, per
