@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { analyzeWriting }  from '../services/ieltsWritingService';
 import { analyzeSpeaking } from '../services/ieltsSpeakingService';
+import { analyzeOetWriting } from '../services/oetWritingService';
 import { BAND_MIN, toBand } from '../lib/bandScale';
 import { scoreComponent, examProficiencyLevel, provenance, getExamConfig, getScale, toStoredComponentScore, isIeltsBandComponent } from '../exam-engine';
 import fs from 'fs';
@@ -191,6 +192,48 @@ async function checkAndMarkDiagnosed(studentId: string, examId: string): Promise
         return true;
     }
     return false;
+}
+
+/**
+ * Grade an OET (oet_500) diagnostic Writing letter via the OET 6-criteria clinical grader, and
+ * shape it for storage (D4): normalised 0–9 in band_score, the real 0–500 score + grade + criteria
+ * + feedback in sub_scores. The stimulus (case notes + task) is resolved from what the server
+ * actually served this student — a submitted question_id is never trusted for grading. Throws on
+ * AI failure so the caller returns a retryable 502 (never stores a fabricated score).
+ */
+async function gradeOetDiagnosticWriting(
+    student: { id: string; exam_id: string },
+    letter: string,
+): Promise<{ bandScore: number; subScores: any }> {
+    const session = await prisma.diagnosticSession.findUnique({
+        where: { student_id_exam_id_skill: { student_id: student.id, exam_id: student.exam_id, skill: 'WRITING' } },
+    });
+    const promptRow = session ? await prisma.diagnosticQuestion.findUnique({ where: { id: session.set_id } }) : null;
+
+    const oet = await analyzeOetWriting({
+        caseNotes: promptRow?.passage_text ?? '',
+        task: promptRow?.prompt_text ?? 'Using the case notes, write an appropriate referral letter.',
+        letter,
+        profession: 'nursing',
+    });
+
+    const stored = toStoredComponentScore(student.exam_id, 'writing', {
+        value: oet.oetScore,
+        label: `${oet.oetScore} (${oet.grade})`,
+    });
+    return {
+        bandScore: stored.band_score,
+        subScores: {
+            word_count: oet.wordCount,
+            ...stored.sub_scores_extra,          // score (0–500), grade, scale_id, display
+            is_valid_attempt: oet.isValidAttempt,
+            meets_grade_b: oet.meetsGradeB,
+            below_grade_b: oet.belowGradeB,
+            raw_score: oet.rawScore,
+            criteria: oet.criteria,
+            feedback: oet.feedback,
+        },
+    };
 }
 
 // â”€â”€â”€ GET /api/diagnostic/status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -429,11 +472,18 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
 
         // ── WRITING — fetch prompt by question_id, send to Gemini ─────────────
         } else if (skillUpper === 'WRITING') {
-            // OET (and any non-IELTS-band) Writing needs its own criteria grader — analyzeWriting
-            // scores IELTS's 4 criteria, not OET's 6. Block until that grader is wired (next step).
+            // OET (oet_500) Writing uses its own 6-criteria clinical grader; IELTS keeps its
+            // 4-criteria path unchanged.
             if (!isIeltsBandComponent(student.exam_id, 'writing')) {
-                return res.status(501).json({ error: 'writing_grading_not_ready', message: 'Writing grading for this exam is being set up.' });
-            }
+                try {
+                    const g = await gradeOetDiagnosticWriting(student, typeof parsedAnswers.text === 'string' ? parsedAnswers.text : '');
+                    bandScore = g.bandScore;
+                    subScores = g.subScores;
+                } catch (aiErr) {
+                    console.error('[gradeOetDiagnosticWriting] Failure:', aiErr);
+                    return res.status(502).json({ error: 'ai_grading_failed', can_retry: true, message: 'AI evaluation failed. Please try submitting again.' });
+                }
+            } else {
             const wordCount = parsedAnswers.text
                 ? parsedAnswers.text.split(/\s+/).filter(Boolean).length
                 : 0;
@@ -497,6 +547,7 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
                     taskResponseScore: analysis.taskResponseScore,
                     feedback:          analysis.feedback
                 };
+            }
             }
         }
 
