@@ -550,19 +550,36 @@
           "id": "writing", "label": "Writing", "modality": "writing",
           "assessed": true, "scale": "oet_500", "delivery": "essay",
           "weight": 1.0, "time_limit_minutes": 45, "variant_scoped": true,
-          "subskills": [],
+          "subskills": [
+            { "id": "purpose",             "label": "Purpose",               "max": 3, "group": "writing" },
+            { "id": "content",             "label": "Content",               "max": 7, "group": "writing" },
+            { "id": "conciseness_clarity", "label": "Conciseness & Clarity", "max": 7, "group": "writing" },
+            { "id": "genre_style",         "label": "Genre & Style",         "max": 7, "group": "writing" },
+            { "id": "organisation_layout", "label": "Organisation & Layout", "max": 7, "group": "writing" },
+            { "id": "language",            "label": "Language",              "max": 7, "group": "writing" }
+          ],
           "item_tags": ["referral_letter", "transfer_letter", "discharge_letter", "advice_letter"],
           "remediation": { "level": "component", "trigger": { "kind": "below_score", "value": 350 }, "content_refs": [], "max_items": 3 },
-          "_subskill_todo": "OET publishes analytic assessment criteria for Writing. They are NOT reproduced here because they were not verified against a primary CBLA source in this pass. Do not invent them. Confirm from the OET Assessor guidelines before populating."
+          "_subskill_provenance": "OET Writing analytic criteria (6), verified Sept 2026 — see docs/oet/OET-NURSING-CONFIG-VERIFICATION.md. Raw marks: Purpose 0-3, the other five 0-7 (38 total). Grade B needs Purpose>=2 and each other criterion>=5. These are OET's own criteria, NOT IELTS's."
         },
         {
           "id": "speaking", "label": "Speaking", "modality": "speaking",
           "assessed": true, "scale": "oet_500", "delivery": "roleplay",
           "weight": 1.0, "time_limit_minutes": 20, "variant_scoped": true,
-          "subskills": [],
+          "subskills": [
+            { "id": "intelligibility",       "label": "Intelligibility",                  "max": 6, "group": "linguistic" },
+            { "id": "fluency",               "label": "Fluency",                          "max": 6, "group": "linguistic" },
+            { "id": "appropriateness",       "label": "Appropriateness of Language",      "max": 6, "group": "linguistic" },
+            { "id": "grammar_expression",    "label": "Resources of Grammar & Expression","max": 6, "group": "linguistic" },
+            { "id": "relationship_building", "label": "Relationship Building",             "max": 3, "group": "clinical" },
+            { "id": "patient_perspective",   "label": "Patient's Perspective",            "max": 3, "group": "clinical" },
+            { "id": "structure",             "label": "Providing Structure",              "max": 3, "group": "clinical" },
+            { "id": "information_gathering", "label": "Information Gathering",             "max": 3, "group": "clinical" },
+            { "id": "information_giving",    "label": "Information Giving",                "max": 3, "group": "clinical" }
+          ],
           "item_tags": ["role_play"],
           "remediation": { "level": "component", "trigger": { "kind": "below_score", "value": 350 }, "content_refs": [], "max_items": 3 },
-          "_subskill_todo": "OET Speaking is assessed on both linguistic and clinical-communication criteria. NOT reproduced here — unverified. Confirm from primary source before populating.",
+          "_subskill_provenance": "OET Speaking criteria, verified Sept 2026 — see docs/oet/OET-NURSING-CONFIG-VERIFICATION.md. Two groups: 4 Linguistic (each 0-6: intelligibility, fluency, appropriateness, grammar & expression) + 5 Clinical Communication (each 0-3: relationship building, patient's perspective, structure, information gathering, information giving). The clinical criteria are OET-specific and need a healthcare-aware grader.",
           "_delivery_note": "delivery is 'roleplay', which the frontend has reserved as a SpeakingFormat enum value but has never built. This is real new UI, not a config change."
         }
       ],

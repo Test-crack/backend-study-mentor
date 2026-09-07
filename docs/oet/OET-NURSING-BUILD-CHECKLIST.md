@@ -44,16 +44,23 @@ right + boot.
 
 - [x] OET block exists in `src/exam-engine/exam-engine-config.v2.json` (all 4 components, `oet_500`,
       per_component overall, nursing variant, NMC targets).
-- [ ] **D1 — Subskills:** populate `oet.components[].subskills` for **writing** and **speaking** with
-      the IELTS subskill ids above (replaces the empty `[]` + `_subskill_todo`). *Config edit only.*
-- [ ] Keep `oet.status = "reserved"`; keep `legal._status = BLOCKED_ON_COUNSEL`. Do **not** set
-      `live`.
-- [ ] Confirm `overall.mode = "per_component"`, `overall.components = []` (correct — no headline).
-- [ ] Boot backend locally → confirm `validateConfig` passes (0 errors) with the subskill edit.
-- [ ] **Verify DB seed:** `SELECT id, label, status FROM exams WHERE id='oet';` → 1 row, `reserved`.
-- [ ] **Verify DB seed:** `SELECT exam_id, config_version, is_active FROM exam_configs WHERE
-      exam_id='oet';` → `2.0.0`, `is_active=true`.
-- [ ] Confirm `getExamConfig('oet')` returns the block from the in-memory cache at runtime.
+- [x] **D1 (LOCKED) — Subskills:** populated `oet.components[].subskills` with OET's **real** criteria
+      (Writing 6: purpose/content/conciseness_clarity/genre_style/organisation_layout/language, marks
+      3/7/7/7/7/7; Speaking 9: 4 linguistic ea. 0–6 + 5 clinical ea. 0–3). **NOT IELTS's** — verified,
+      see `OET-NURSING-CONFIG-VERIFICATION.md`.
+- [x] Kept `oet.status = "reserved"`; `legal._status = BLOCKED_ON_COUNSEL` unchanged (not `live`).
+- [x] Confirmed `overall.mode = "per_component"`, `overall.components = []`.
+- [x] `validateConfig` passes (0 errors; 15 pre-existing benign warnings) — verified standalone; boot-safe.
+- [x] **DB `exams`** → `oet | Healthcare English Preparation | reserved` ✅.
+- [x] **DB `exam_configs`** → `2.0.0`, `is_active=true` ✅.
+- [ ] ⚠️ **Stale DB config blob (known, deferred).** `seedExamConfigs` only CREATEs a row for a *new*
+      `config_version`; it never updates an existing one. The `exam_configs` blob for `oet@2.0.0` still
+      holds the pre-edit (empty-subskill) config (verified: 0/0 subskills in the DB blob). **Runtime is
+      unaffected** — the engine serves `getExamConfig` from the in-memory JSON cache, not the DB. Fix
+      path: bump `config_version` at the real OET config release (that reseeds all exams' blobs + stamps
+      new provenance). Leave stale until then; do **not** hand-edit the DB row.
+- [ ] ⚠️ **Restart backend before OET endpoint work.** The running server's cache also predates the
+      edit (nodemon watches `.ts`, not `.json`). A restart reloads the JSON into cache (Phase 2+).
 
 ---
 
@@ -163,7 +170,7 @@ The diagnostic routes are **already exam-agnostic** — verify, don't rebuild.
 
 | ID | Decision | Recommendation | Status |
 |---|---|---|---|
-| **D1** | Writing/Speaking subskills | Adopt IELTS's (config edit) | proposed |
+| **D1** | Writing/Speaking subskills | **OET's real criteria** — Writing 6, Speaking 4 linguistic + 5 clinical; grade all incl. clinical | ✅ locked |
 | **D2** | Per-component target storage | JSON `target_per_component`, not the single band | open |
 | **D3** | `chk_dq_question_type` values for OET | Confirm set; `ALTER` if missing | open |
 | **D4** | `oet_500` score storage vs `Decimal(2,1)` | Store raw in `sub_scores`, normalised 0–9 in `band_score` | open |
