@@ -117,12 +117,14 @@ Verified live against the dev DB (read-only introspection, 2026). No migration n
       `grade_bands` (A–E label). **IELTS byte-identical** — `vectors.check` 87/0 (incl. §10 grid).
       Smoke: 30/42→360(B), 100%→500(A), AI 7/10→330(C+); IELTS 30/42→7.5. `scoreComponent(examId,…)`
       now returns real `oet_500` for OET.
-- [ ] **Controller wiring (next).** Change `submitDiagnosticAssessment` L/R + Writing to call
-      `scoreComponent(student.exam_id, …)` (not hard-coded `'ielts'`) and apply the **D4 storage split**
-      for OET: real `{score, grade}` in `sub_scores`, normalised 0–9 in `band_score`. IELTS path stays
-      as-is (value → `band_score` directly). ← needs **D4** sign-off.
-- [ ] **Writing** — reuse the essay path + AI grading with the **OET Writing criteria** (6, from D1)
-      and the **nursing referral-letter** genre; map AI result → `oet_500`.
+- [x] **Controller wiring — Listening/Reading (D4).** Done — `submitDiagnosticAssessment` L/R now
+      scores on `student.exam_id`'s own scale + `toStoredComponentScore` (real `{score,grade}` in
+      `sub_scores`, normalised 0–9 in `band_score`). Exit gate exam-aware; `exam_id` now stamped on
+      the save (was defaulting to `'ielts'`). IELTS byte-identical (vectors 87/0). **Unit-verified;
+      end-to-end pending OET content + test student (Phase 5 / DoD).**
+- [ ] **Writing** — OET Writing is currently **guarded (501)** in the endpoint. Wire its own grader:
+      AI on the **OET 6 criteria** (D1) + **nursing referral-letter** genre → `internal` unit →
+      `scoreComponent(exam_id,'writing')` → `oet_500`. Dedicated next step.
 - [ ] **Speaking (roleplay).** ⚠️ **D5 — grading path (open).** Recorded roleplay (mockup ~4 prompts).
       Recommend **reuse the viva multi-recording pipeline** (`services/viva` + `/viva/submit`), scoring
       the **4 linguistic** criteria first (clinical-communication criteria as fast-follow, per
