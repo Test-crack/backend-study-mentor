@@ -109,24 +109,25 @@ Verified live against the dev DB (read-only introspection, 2026). No migration n
 
 ## 3. Backend logic
 
-- [ ] **`checkAndMarkDiagnosed` (per_component fix).** ⚠️ Today it reads `overall.components`; for OET
-      that is `[]` → it would mark a student diagnosed with **zero** assessments. Add a branch: when
-      `overall.mode === 'per_component'`, required skills = all `components[]` with `assessed:true`
-      (L/R/W/S). (`diagnosticController.ts:165`.)
-- [ ] **`oet_500` scoring.** Add a component-level scorer: L/R objective fraction → 0–500 + grade band
-      (`scales.oet_500.grade_bands`); W/S AI raw (1–10) → 0–500 + grade. No overall aggregation
-      (per_component). Reuse `exam-engine/scoring.ts` primitives; add OET mapping.
-- [ ] **Listening/Reading** — reuse `getDiagnosticQuestionsBySkill` + `submitDiagnosticAssessment`
-      (already exam-scoped: `pickRandomSetId(level, skill, examId)`). Only the score mapping is
-      OET-specific (→ `oet_500`, D4 storage).
-- [ ] **Writing** — reuse the essay path + AI grading (`ieltsWritingService`/`iaGrading`) with the
-      **IELTS writing subskills** but the **nursing referral-letter** genre in the prompt. Map to
-      `oet_500`.
-- [ ] **Speaking (roleplay).** ⚠️ **D5 — grading path.** The scenario is a recorded roleplay (mockup:
-      ~4 prompts). Recommend **reuse the viva multi-recording pipeline** (`services/viva` +
-      `/viva/submit` shape) with an OET roleplay rubric scored on the **IELTS speaking subskills**,
-      rather than building a new grader. Decide: viva-reuse vs a bespoke roleplay grader.
-- [ ] **Provenance** — stamp `...provenance()` on every `assessment_history` + matrix write (as SE/IELTS do).
+- [x] **`checkAndMarkDiagnosed` (per_component fix).** Done — per_component exams (OET, empty
+      `overall.components`) now require **all `assessed:true` components** (L/R/W/S); zero-guard blocks
+      marking diagnosed with no scores. IELTS/SE paths unchanged. (`diagnosticController.ts:165`.)
+- [x] **`oet_500` scoring engine.** Done — `component.ts:componentBand` generalized beyond IELTS:
+      non-IELTS numeric scales (`oet_500`, later GRE/GMAT) map onto their own `[min,max]`/`step` +
+      `grade_bands` (A–E label). **IELTS byte-identical** — `vectors.check` 87/0 (incl. §10 grid).
+      Smoke: 30/42→360(B), 100%→500(A), AI 7/10→330(C+); IELTS 30/42→7.5. `scoreComponent(examId,…)`
+      now returns real `oet_500` for OET.
+- [ ] **Controller wiring (next).** Change `submitDiagnosticAssessment` L/R + Writing to call
+      `scoreComponent(student.exam_id, …)` (not hard-coded `'ielts'`) and apply the **D4 storage split**
+      for OET: real `{score, grade}` in `sub_scores`, normalised 0–9 in `band_score`. IELTS path stays
+      as-is (value → `band_score` directly). ← needs **D4** sign-off.
+- [ ] **Writing** — reuse the essay path + AI grading with the **OET Writing criteria** (6, from D1)
+      and the **nursing referral-letter** genre; map AI result → `oet_500`.
+- [ ] **Speaking (roleplay).** ⚠️ **D5 — grading path (open).** Recorded roleplay (mockup ~4 prompts).
+      Recommend **reuse the viva multi-recording pipeline** (`services/viva` + `/viva/submit`), scoring
+      the **4 linguistic** criteria first (clinical-communication criteria as fast-follow, per
+      verification §4). Decide: viva-reuse vs bespoke roleplay grader.
+- [ ] **Provenance** — stamp `...provenance()` on every `assessment_history` + matrix write.
 
 ---
 
