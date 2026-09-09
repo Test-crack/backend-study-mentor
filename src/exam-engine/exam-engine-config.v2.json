@@ -480,17 +480,19 @@
       }
     },
 
-    "oet": {
-      "exam_id": "oet",
+    "oet_nursing": {
+      "exam_id": "oet_nursing",
       "prisma_enum": "OET",
       "config_version": "2.0.0",
       "status": "reserved",
       "requires_entitlement": true,
+      "_profession": "nursing",
+      "_model_note": "Per-profession OET exam (decision D-oet-1). Because exam_id is the ONLY field that scopes content (diagnostic_questions etc.) and no variant column exists, each OET profession is its own exam id (oet_nursing, oet_medicine, …). Listening/Reading are identical across professions but are duplicated per profession until a variant column ships; Writing/Speaking are profession-specific by nature.",
 
       "naming": {
-        "public_display_name": "Healthcare English Preparation",
-        "legal_display_name": "Healthcare English Preparation",
-        "short_code": "HC-EN",
+        "public_display_name": "Healthcare English Preparation (Nursing)",
+        "legal_display_name": "Healthcare English Preparation (Nursing)",
+        "short_code": "HC-EN-N",
         "_naming_note": "Deliberately does NOT put 'OET' in the product name. See legal below — this is the one exam in the set where the rights holder publishes no nominative-use carve-out."
       },
 
@@ -508,26 +510,7 @@
         "_risk_note": "CBLA's published IP policy states its marks 'cannot be used without the prior express written permission of CBLA', and the Terms & Conditions state 'You are not permitted to use any trade marks, logos or trade names appearing on the Website.' Unlike ETS, CBLA publishes NO nominative-use or fair-use carve-out for preparation providers. It instead runs a paid Preparation Provider Programme whose Premium tier grants an official logo. This is materially more restrictive than the IELTS position. Treat 'can we call it OET prep?' as a counsel question with a real chance of 'no'."
       },
 
-      "variants": {
-        "dimension": "profession",
-        "options": [
-          { "id": "nursing", "label": "Nursing" },
-          { "id": "medicine", "label": "Medicine" },
-          { "id": "dentistry", "label": "Dentistry" },
-          { "id": "pharmacy", "label": "Pharmacy" },
-          { "id": "physiotherapy", "label": "Physiotherapy" },
-          { "id": "radiography", "label": "Radiography" },
-          { "id": "dietetics", "label": "Dietetics" },
-          { "id": "occupational_therapy", "label": "Occupational Therapy" },
-          { "id": "optometry", "label": "Optometry" },
-          { "id": "podiatry", "label": "Podiatry" },
-          { "id": "speech_pathology", "label": "Speech Pathology" },
-          { "id": "veterinary_science", "label": "Veterinary Science" }
-        ],
-        "applies_to_components": ["writing", "speaking"],
-        "default": "nursing",
-        "_note": "Listening and Reading are identical for all professions; Writing and Speaking are profession-specific. This is the single biggest content-cost fact about OET: 2 shared banks + 2 x N profession-specific banks. Launch scope is nursing only."
-      },
+      "variants": null,
 
       "components": [
         {
@@ -549,7 +532,7 @@
         {
           "id": "writing", "label": "Writing", "modality": "writing",
           "assessed": true, "scale": "oet_500", "delivery": "essay",
-          "weight": 1.0, "time_limit_minutes": 45, "variant_scoped": true,
+          "weight": 1.0, "time_limit_minutes": 45, "variant_scoped": false,
           "subskills": [
             { "id": "purpose",             "label": "Purpose",               "max": 3, "group": "writing" },
             { "id": "content",             "label": "Content",               "max": 7, "group": "writing" },
@@ -565,7 +548,7 @@
         {
           "id": "speaking", "label": "Speaking", "modality": "speaking",
           "assessed": true, "scale": "oet_500", "delivery": "roleplay",
-          "weight": 1.0, "time_limit_minutes": 20, "variant_scoped": true,
+          "weight": 1.0, "time_limit_minutes": 20, "variant_scoped": false,
           "subskills": [
             { "id": "intelligibility",       "label": "Intelligibility",                  "max": 6, "group": "linguistic" },
             { "id": "fluency",               "label": "Fluency",                          "max": 6, "group": "linguistic" },

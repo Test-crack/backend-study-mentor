@@ -14,9 +14,11 @@ logic → 4) Routes → 5) Content → 6) Frontend. Diagnostics come after 1–4
 
 ## 0. Scope, principles & known deltas
 
-- **Variant:** Nursing only (launch scope). `oet.variants.default = "nursing"`; L/R are shared across
-  professions, W/S are nursing-specific.
-- **Status stays `reserved`.** ⚠️ Flipping `oet.status` → `"live"` is a **fatal boot error** while
+- **Exam id:** `oet_nursing` — **per-profession OET exam** (decision D-oet-1). Because `exam_id` is the
+  only field that scopes content and no variant column exists, each OET profession is its own exam id;
+  other professions ship later as `oet_medicine`, … (L/R banks duplicated per profession until a
+  variant column exists). Launch scope is nursing only.
+- **Status stays `reserved`.** ⚠️ Flipping `oet_nursing.status` → `"live"` is a **fatal boot error** while
   `legal._status` starts with `BLOCKED` (`validator.ts:176`), and OET's legal is
   `BLOCKED_ON_COUNSEL`. Access for dev/testing comes from an **`InstituteExamSubscription`**
   (TRIAL), not from `status` — so `reserved` is fine to build and test against.
@@ -44,17 +46,17 @@ right + boot.
 
 - [x] OET block exists in `src/exam-engine/exam-engine-config.v2.json` (all 4 components, `oet_500`,
       per_component overall, nursing variant, NMC targets).
-- [x] **D1 (LOCKED) — Subskills:** populated `oet.components[].subskills` with OET's **real** criteria
+- [x] **D1 (LOCKED) — Subskills:** populated `oet_nursing.components[].subskills` with OET's **real** criteria
       (Writing 6: purpose/content/conciseness_clarity/genre_style/organisation_layout/language, marks
       3/7/7/7/7/7; Speaking 9: 4 linguistic ea. 0–6 + 5 clinical ea. 0–3). **NOT IELTS's** — verified,
       see `OET-NURSING-CONFIG-VERIFICATION.md`.
-- [x] Kept `oet.status = "reserved"`; `legal._status = BLOCKED_ON_COUNSEL` unchanged (not `live`).
+- [x] Kept `oet_nursing.status = "reserved"`; `legal._status = BLOCKED_ON_COUNSEL` unchanged (not `live`).
 - [x] Confirmed `overall.mode = "per_component"`, `overall.components = []`.
 - [x] `validateConfig` passes (0 errors; 15 pre-existing benign warnings) — verified standalone; boot-safe.
-- [x] **DB `exams`** → `oet | Healthcare English Preparation | reserved` ✅.
+- [x] **DB `exams`** → `oet_nursing | Healthcare English Preparation | reserved` ✅.
 - [x] **DB `exam_configs`** → `2.0.0`, `is_active=true` ✅.
 - [ ] ⚠️ **Stale DB config blob (known, deferred).** `seedExamConfigs` only CREATEs a row for a *new*
-      `config_version`; it never updates an existing one. The `exam_configs` blob for `oet@2.0.0` still
+      `config_version`; it never updates an existing one. The `exam_configs` blob for `oet_nursing@2.0.0` still
       holds the pre-edit (empty-subskill) config (verified: 0/0 subskills in the DB blob). **Runtime is
       unaffected** — the engine serves `getExamConfig` from the in-memory JSON cache, not the DB. Fix
       path: bump `config_version` at the real OET config release (that reseeds all exams' blobs + stamps
@@ -99,7 +101,7 @@ Verified live against the dev DB (read-only introspection, 2026). No migration n
       single `target_band double precision` (0–9 CHECK) + `exam_date` — **no** per-component target
       column. OET needs L/R/W/S targets. The diagnostic doesn't use targets (it measures baseline), so
       defer to the readiness/dashboard phase. Recommendation then: store a **regulator preset id**
-      (e.g. `"nmc"`, which already lives in `oet.target.presets`) or add a `target_per_component` JSON —
+      (e.g. `"nmc"`, which already lives in `oet_nursing.target.presets`) or add a `target_per_component` JSON —
       don't overload the single band.
 - [ ] **`institute_exam_subscriptions`** — currently only `ielts` + `spoken_english` rows exist; **no
       OET row**. To test, insert one `TRIAL` OET row for the test institute (data insert, unique
@@ -149,7 +151,7 @@ Verified live against the dev DB (read-only introspection, 2026). No migration n
 
 The diagnostic routes are **already exam-agnostic** — verify, don't rebuild.
 
-- [ ] `GET /api/diagnostic/status` — works for `exam_id='oet'` (per-component completion via §3 fix).
+- [ ] `GET /api/diagnostic/status` — works for `exam_id='oet_nursing'` (per-component completion via §3 fix).
 - [ ] `GET /api/diagnostic/questions/:skill` — L/R/W served for OET (exam-scoped picker). ✓ expected.
 - [ ] `POST /api/diagnostic/submit/:skill` — L/R/W submit (JSON). ✓ expected; score→`oet_500`.
 - [ ] **Speaking roleplay endpoint** — **D5**: if viva-reuse, use `GET /viva/prompts` +
@@ -171,16 +173,16 @@ files changed on this branch.
 - **`SubSkillType`** unchanged — OET criteria live in `sub_scores` JSON (like SE).
 - **Per-component targets (D2)** — deferred; not used by the diagnostic.
 
-**The only DB work is DATA:** (1) seed `diagnostic_questions` for `exam_id='oet'` (§5); (2) a test
-`institute_exam_subscriptions` row (`oet`,`TRIAL`) + a student `exam_id='oet'` for e2e. **Optional
-cleanup:** the `exam_configs` `oet@2.0.0` blob is stale (predates the subskill edit) — runtime is
+**The only DB work is DATA:** (1) seed `diagnostic_questions` for `exam_id='oet_nursing'` (§5); (2) a test
+`institute_exam_subscriptions` row (`oet_nursing`,`TRIAL`) + a student `exam_id='oet_nursing'` for e2e. **Optional
+cleanup:** the `exam_configs` `oet_nursing@2.0.0` blob is stale (predates the subskill edit) — runtime is
 unaffected (engine reads the JSON cache; graders own their criteria); refresh only at the config
 release via a `config_version` bump, never a hand-edit. **Process:** restart the backend so its
 in-memory config cache reflects the edited file.
 
 ---
 
-## 5. Content (data team / seed) — `diagnostic_questions`, `exam_id='oet'`, nursing
+## 5. Content (data team / seed) — `diagnostic_questions`, `exam_id='oet_nursing'`, nursing
 
 - [ ] **Listening** — audio item-sets (OET Part A/B/C style), MCQ, `audio_url`, `set_id`, per level.
 - [ ] **Reading** — passage item-sets (ward notices, extracts), MCQ, `set_id`, per level.
@@ -199,7 +201,7 @@ in-memory config cache reflects the edited file.
       → Speaking roleplay recorder.
 - [ ] **Roleplay recorder** — the one genuinely new UI (`SpeakingFormat` reserved, never built).
 - [ ] Result surface: **per-component grades** (A–E / 0–500), **no overall** headline.
-- [ ] `EXAM_DISPLAY.oet` config entry (scale label, per-component, disclaimer, nursing).
+- [ ] `EXAM_DISPLAY.oet_nursing` config entry (scale label, per-component, disclaimer, nursing).
 - [ ] Reuse IELTS diagnostic components/styling (exam-aware, IELTS untouched).
 
 ---
@@ -219,7 +221,7 @@ in-memory config cache reflects the edited file.
 
 ## Definition of done (diagnostic slice)
 
-- [ ] Test student (`exam_id='oet'`, TRIAL sub) can complete L/R/W/S diagnostic end-to-end.
+- [ ] Test student (`exam_id='oet_nursing'`, TRIAL sub) can complete L/R/W/S diagnostic end-to-end.
 - [ ] `checkAndMarkDiagnosed` flips `is_diagnosed` only after **all 4** assessed components are scored.
 - [ ] Each component produces an `oet_500` score + grade, stored per D4, provenance-stamped.
 - [ ] No IELTS/SE regression (exam-aware branches, shared tables untouched in behaviour).

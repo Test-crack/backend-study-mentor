@@ -1,6 +1,6 @@
 # OET-Nursing — Config Verification (our config vs real OET)
 
-**Purpose:** verify what our `exam-engine-config.v2.json` declares for `oet` against the real,
+**Purpose:** verify what our `exam-engine-config.v2.json` declares for `oet_nursing` against the real,
 published OET exam before we build. Checked against OET's own materials + multiple prep sources
 (Sept 2026). See Sources.
 
@@ -53,7 +53,7 @@ L/R identical for all professions; W/S nursing-specific. ✅ matches config's va
 
 - NMC requires **Grade B (≥350) in Listening, Reading, Speaking** and **Grade C+ (≥300) in Writing**.
   Combined sittings allowed within 12 months, no sub-test more than half a grade below.
-- Our `oet.target.presets.nmc` = `{ listening:350, reading:350, writing:300, speaking:350 }` → ✅ exact.
+- Our `oet_nursing.target.presets.nmc` = `{ listening:350, reading:350, writing:300, speaking:350 }` → ✅ exact.
 
 ---
 
@@ -120,7 +120,7 @@ All seeded OET content must be **original** (written to the format), never copie
 papers — CBLA's IP terms are strict (see `legal._risk_note` in the config).
 
 ## Sources
-- OET test format / timing — [OET-Bank format guide](https://oet-bank.com/exam-format-guide/), [Yocket OET pattern](https://yocket.com/blog/oet-exam-pattern), [Shiksha OET pattern](https://www.shiksha.com/studyabroad/exams/oet/pattern)
-- Writing criteria (6) — [OET Live: how writing is scored](https://oetlive.com/blog/how-oet-writing-is-actually-scored/), [WCS writing criteria](https://oetwritingcorrection.com/oet-writing-criteria), [Benchmark criteria explained](https://edubenchmark.com/blog/oet-assessment-criteria-explained/)
-- Speaking criteria (4 linguistic + 5 clinical) — [OET official: assessment criteria](https://oet.com/post/study-skills-assessment-criteria), [OET official: speaking criteria overview](https://oet.com/en-us/post/speaking-criteria-overview)
-- Scoring 0–500 / grades / NMC — [OET Live: band scores explained](https://oetlive.com/help/oet-band-scores-explained/), [OET: NMC English requirements](https://oet.com/post/nmc-changes-english-language-requirements), [Tijus NMC OET requirements 2026](https://tijusacademy.com/blogs/oet/uk-nmc-oet-requirements-for-nurses-2026/)
+- OET test format / timing — [OET-Bank format guide](https://oet_nursing-bank.com/exam-format-guide/), [Yocket OET pattern](https://yocket.com/blog/oet_nursing-exam-pattern), [Shiksha OET pattern](https://www.shiksha.com/studyabroad/exams/oet_nursing/pattern)
+- Writing criteria (6) — [OET Live: how writing is scored](https://oetlive.com/blog/how-oet_nursing-writing-is-actually-scored/), [WCS writing criteria](https://oetwritingcorrection.com/oet_nursing-writing-criteria), [Benchmark criteria explained](https://edubenchmark.com/blog/oet_nursing-assessment-criteria-explained/)
+- Speaking criteria (4 linguistic + 5 clinical) — [OET official: assessment criteria](https://oet_nursing.com/post/study-skills-assessment-criteria), [OET official: speaking criteria overview](https://oet_nursing.com/en-us/post/speaking-criteria-overview)
+- Scoring 0–500 / grades / NMC — [OET Live: band scores explained](https://oetlive.com/help/oet_nursing-band-scores-explained/), [OET: NMC English requirements](https://oet_nursing.com/post/nmc-changes-english-language-requirements), [Tijus NMC OET requirements 2026](https://tijusacademy.com/blogs/oet_nursing/uk-nmc-oet_nursing-requirements-for-nurses-2026/)

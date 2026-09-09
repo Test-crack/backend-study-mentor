@@ -114,7 +114,7 @@ check('  aggregate envelope carries config_version', okEnv.config_version, '2.0.
 // B8: per_component envelope — overall is null, no progression ladder, still valid
 head('§6b  per_component envelope (OET/GRE/GMAT)');
 const perComp = buildEnvelope({
-  examId: 'oet', strategy: null, mode: 'per_component',
+  examId: 'oet_nursing', strategy: null, mode: 'per_component',
   components: [
     { id: 'listening', assessed: true, kind: 'oet_score', value: 350, display: '350 (B)' },
     { id: 'reading', assessed: true, kind: 'oet_score', value: 360, display: '360 (B)' },
@@ -128,7 +128,7 @@ check('  per_component: provenance stamped', perComp.engine_version, '2.0.0');
 
 // §7 per-component exams
 head('§7  Exams with no computable headline');
-(['oet', 'gre', 'gmat'] as const).forEach((id) => {
+(['oet_nursing', 'gre', 'gmat'] as const).forEach((id) => {
   const ex = cfg.exams[id];
   check(`  ${id}: overall.mode`, ex.overall.mode, 'per_component');
   check(`  ${id}: no aggregate strategy`, ex.overall.strategy, null);
