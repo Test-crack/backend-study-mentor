@@ -160,6 +160,26 @@ The diagnostic routes are **already exam-agnostic** — verify, don't rebuild.
 
 ---
 
+## 4b. DB changes required before diagnostics run — **NONE (schema)**, data only
+
+Confirmed after Phases 1–3: **no schema/constraint/enum migration is needed.** No `.sql`/`prisma`
+files changed on this branch.
+
+- **`chk_dq_question_type`** already allows `MCQ`/`WRITING_PROMPT`/`SPEAKING_PROMPT` (D3). No ALTER.
+- **`band_score`** stays `numeric(2,1)`/`[0,9]` — OET stores real `{score,grade}` in `sub_scores`,
+  normalised band in `band_score` (D4). No column/CHECK change.
+- **`SubSkillType`** unchanged — OET criteria live in `sub_scores` JSON (like SE).
+- **Per-component targets (D2)** — deferred; not used by the diagnostic.
+
+**The only DB work is DATA:** (1) seed `diagnostic_questions` for `exam_id='oet'` (§5); (2) a test
+`institute_exam_subscriptions` row (`oet`,`TRIAL`) + a student `exam_id='oet'` for e2e. **Optional
+cleanup:** the `exam_configs` `oet@2.0.0` blob is stale (predates the subskill edit) — runtime is
+unaffected (engine reads the JSON cache; graders own their criteria); refresh only at the config
+release via a `config_version` bump, never a hand-edit. **Process:** restart the backend so its
+in-memory config cache reflects the edited file.
+
+---
+
 ## 5. Content (data team / seed) — `diagnostic_questions`, `exam_id='oet'`, nursing
 
 - [ ] **Listening** — audio item-sets (OET Part A/B/C style), MCQ, `audio_url`, `set_id`, per level.
