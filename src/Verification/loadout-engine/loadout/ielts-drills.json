@@ -1,0 +1,150 @@
+{
+  "id": "ielts-drills",
+  "label": "IELTS · Daily Drills",
+
+  "columns": [
+    {
+      "name": "skill",
+      "kind": "enum",
+      "members": ["LISTENING", "READING", "WRITING", "SPEAKING"],
+      "invalidCode": "SKILL_INVALID"
+    },
+    {
+      "name": "sub_skill",
+      "kind": "enum",
+      "members": [
+        "LISTENING",
+        "READING",
+        "GRAMMAR",
+        "VOCABULARY",
+        "COHERENCE",
+        "TASK_RESPONSE",
+        "FLUENCY",
+        "PRONUNCIATION"
+      ],
+      "invalidCode": "SUB_SKILL_INVALID"
+    },
+    {
+      "name": "level",
+      "kind": "enum",
+      "members": ["BEGINNER", "INTERMEDIATE", "ADVANCED"],
+      "invalidCode": "LEVEL_INVALID"
+    },
+    {
+      "name": "prompt_text",
+      "kind": "text",
+      "requireNonEmpty": true,
+      "emptyCode": "PROMPT_TEXT_EMPTY"
+    },
+    {
+      "name": "options",
+      "kind": "json_object",
+      "requiredKeys": ["A", "B", "C", "D"],
+      "requireNonEmptyValues": true,
+      "requireUniqueValues": true,
+      "codes": {
+        "empty": "OPTIONS_EMPTY",
+        "notJson": "OPTIONS_NOT_JSON",
+        "notObject": "OPTIONS_NOT_OBJECT",
+        "keysWrong": "OPTIONS_KEYS_WRONG",
+        "valueNotString": "OPTION_VALUE_NOT_STRING",
+        "valueEmpty": "OPTION_VALUE_EMPTY",
+        "valueDuplicate": "OPTION_TEXT_DUPLICATE"
+      }
+    },
+    {
+      "name": "correct_answer",
+      "kind": "json_string_enum",
+      "allowed": ["A", "B", "C", "D"],
+      "notJsonHint": " — a bare {first} is not JSON.",
+      "codes": {
+        "empty": "CORRECT_ANSWER_EMPTY",
+        "notJson": "CORRECT_ANSWER_NOT_JSON",
+        "notString": "CORRECT_ANSWER_NOT_A_STRING",
+        "notAllowed": "CORRECT_ANSWER_NOT_A_KEY"
+      }
+    },
+    {
+      "name": "explanation",
+      "kind": "text",
+      "requireNonEmpty": true,
+      "emptyCode": "EXPLANATION_EMPTY"
+    }
+  ],
+
+  "sourceKeyColumn": "source_key",
+  "embeddedHeaderThreshold": 4,
+
+  "checkOrder": ["enums", "structured", "text", "credit", "sourceKey"],
+
+  "bucket": {
+    "dimensions": ["skill", "sub_skill", "level"],
+    "allowList": {
+      "keyDimension": "skill",
+      "valueDimension": "sub_skill",
+      "invalidCode": "BUCKET_PAIR_INVALID",
+      "allowed": {
+        "LISTENING": ["LISTENING"],
+        "READING": ["READING"],
+        "WRITING": ["GRAMMAR", "VOCABULARY", "COHERENCE", "TASK_RESPONSE"],
+        "SPEAKING": ["GRAMMAR", "VOCABULARY", "FLUENCY", "PRONUNCIATION"]
+      }
+    }
+  },
+
+  "sourceKey": {
+    "prefix": "drill",
+    "segments": ["skill", "sub_skill", "level"],
+    "pad": 3,
+    "words": {
+      "skill": {
+        "LISTENING": "listening",
+        "READING": "reading",
+        "WRITING": "writing",
+        "SPEAKING": "speaking"
+      },
+      "sub_skill": {
+        "LISTENING": "listening",
+        "READING": "reading",
+        "GRAMMAR": "grammar",
+        "VOCABULARY": "vocabulary",
+        "COHERENCE": "coherence",
+        "TASK_RESPONSE": "task_response",
+        "FLUENCY": "fluency",
+        "PRONUNCIATION": "pronunciation"
+      },
+      "level": {
+        "BEGINNER": "beginner",
+        "INTERMEDIATE": "intermediate",
+        "ADVANCED": "advanced"
+      }
+    },
+    "exampleForMessage": "drill_listen_listen_beg_001"
+  },
+
+  "filenameChecks": [
+    { "dimension": "level", "onMissing": "nameOther" },
+    { "dimension": "skill", "onMissing": "nameOther" },
+    { "dimension": "sub_skill", "onMissing": "contradictOrUndetermined" }
+  ],
+
+  "folderCheck": { "dimension": "level", "code": "LEVEL_FOLDER_MISMATCH" },
+
+  "duplicateIdentity": [
+    { "column": "prompt_text", "normalize": "foldCase" },
+    { "column": "options", "normalize": "optionSignature" }
+  ],
+
+  "expectedRows": {
+    "fallback": 200,
+    "byDimension": { "level": { "ADVANCED": 50 } }
+  },
+
+  "warnings": {
+    "explanationCredit": {
+      "answerColumn": "correct_answer",
+      "explanationColumn": "explanation",
+      "optionKeys": ["A", "B", "C", "D"]
+    }
+  }
+}

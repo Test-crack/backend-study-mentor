@@ -9,6 +9,11 @@
         "seed": "tsx prisma/seed.ts",
         "exam-engine:vectors": "ts-node --transpile-only src/exam-engine/vectors.check.ts",
         "viva:check": "ts-node --transpile-only src/services/viva/viva.check.ts",
+        "loadout:parity": "ts-node --project tsconfig.dev.json src/Verification/loadout-engine/parity/compare.ts",
+        "loadout:parity:mock": "ts-node --project tsconfig.dev.json src/Verification/loadout-engine/parity/compareMock.ts",
+        "loadout:parity:ia": "ts-node --project tsconfig.dev.json src/Verification/loadout-engine/parity/compareIA.ts",
+        "loadout:parity:diagnostic": "ts-node --project tsconfig.dev.json src/Verification/loadout-engine/parity/compareDiagnostic.ts",
+        "loadout:parity:test": "ts-node --project tsconfig.dev.json src/Verification/loadout-engine/parity/parity.spec.ts",
         "drills:verify": "ts-node --project tsconfig.dev.json src/Verification/drills/question-banks/layer1-verifier/cli.ts",
         "drills:verify:typecheck": "tsc -p src/Verification/tsconfig.json --noEmit",
         "drills:verify:test": "ts-node --project tsconfig.dev.json src/Verification/drills/question-banks/layer1-verifier/layer1.spec.ts",
@@ -44,7 +49,7 @@
         "mock:assign-keys": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/key-assignment-tool/cli.ts",
         "mock:assign-keys:test": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/key-assignment-tool/keyAssignment.spec.ts",
         "mock:import": "ts-node --project tsconfig.dev.json src/Verification/mock/question-banks/importer/cli.ts",
-        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test && npm run ia:verify:test && npm run ia:judge:test && npm run ia:assign-keys:test && npm run ia:import:test && npm run se:drills:verify:test && npm run se:drills:judge:test && npm run se:drills:assign-keys:test && npm run mock:verify:test && npm run mock:judge:test && npm run mock:assign-keys:test"
+        "test": "npm run drills:verify:test && npm run drills:judge:test && npm run drills:assign-keys:test && npm run drills:import:test && npm run ia:verify:test && npm run ia:judge:test && npm run ia:assign-keys:test && npm run ia:import:test && npm run se:drills:verify:test && npm run se:drills:judge:test && npm run se:drills:assign-keys:test && npm run mock:verify:test && npm run mock:judge:test && npm run mock:assign-keys:test && npm run loadout:parity:test"
     },
     "prisma": {
         "seed": "tsx prisma/seed.ts"
@@ -89,8 +94,11 @@
         "better-sqlite3": "^12.6.2",
         "canvas": "^3.2.0",
         "cloudinary": "^2.9.0",
+        "commander": "^15.0.0",
         "cors": "^2.8.5",
+        "csv-parse": "^7.0.2",
         "dotenv": "^17.2.3",
+        "exceljs": "^4.4.0",
         "express": "^5.1.0",
         "fs-extra": "^11.3.2",
         "jsonwebtoken": "^9.0.3",

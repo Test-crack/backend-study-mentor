@@ -1,0 +1,3 @@
+skill,sub_skill,question_type,task_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+LISTENING,FLUENCY,MCQ,,,,https://cdn.test/a1.mp3,"What does the speaker book?","{""A"":""a taxi"",""B"":""a table"",""C"":""a room"",""D"":""a tour""}","""C""","The speaker asks for a room.",IELTS
+LISTENING,FLUENCY,MCQ,,,,https://cdn.test/a1.mp3,"How many nights?","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""B""","Two nights is stated.",IELTS

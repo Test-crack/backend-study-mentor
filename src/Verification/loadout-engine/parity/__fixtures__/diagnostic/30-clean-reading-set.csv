@@ -1,0 +1,3 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+READING,A,s1,1,MCQ,"What is the main claim?","{""A"":""growth"",""B"":""decline"",""C"":""stasis"",""D"":""reform""}",A,,"The city has grown steadily since 2010.",,
+READING,A,s1,2,TFNG,"The city shrank after 2010.",,F,,"The city has grown steadily since 2010.",,

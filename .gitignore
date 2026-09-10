@@ -173,6 +173,9 @@ src/Verification/mock/results/
 src/Verification/mock/cache/
 # CSV files are local-only, never push to origin
 *.csv
+# ...except Layer 1 fixtures, which are test data rather than question content:
+# the parity suite fails without them, so they have to travel with the code.
+!src/Verification/loadout-engine/parity/__fixtures__/**/*.csv
 
 # Local Claude Code tooling/config — never commit
 .claude/
@@ -183,3 +186,6 @@ CLAUDE.md
 scripts/
 
 docs/test-audio/
+
+# Loadouts authored in the panel are runtime data, not source.
+data/loadouts/

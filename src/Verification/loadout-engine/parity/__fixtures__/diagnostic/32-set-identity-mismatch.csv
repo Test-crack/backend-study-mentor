@@ -1,0 +1,3 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+READING,A,s3,1,MCQ,"Row one of the set.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}",A,,"Consistent passage.",,
+READING,B,s3,2,MCQ,"Row two claims a different level.","{""A"":""five"",""B"":""six"",""C"":""seven"",""D"":""eight""}",B,,"Consistent passage.",,

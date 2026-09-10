@@ -1,0 +1,3 @@
+skill,sub_skill,question_type,task_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+SPEAKING,GRAMMAR,TFNG,,,,,"Is this a valid speaking item?",,"T","TFNG is not offered for SPEAKING.",IELTS
+SPEAKING,GRAMMAR,MCQ,,,"A stray passage on a standalone row.",,"Which tense is correct here?","{""A"":""went"",""B"":""goes"",""C"":""gone"",""D"":""going""}","""A""","Past simple is required.",IELTS

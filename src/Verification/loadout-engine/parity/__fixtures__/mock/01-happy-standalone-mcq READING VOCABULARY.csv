@@ -1,0 +1,3 @@
+skill,sub_skill,question_type,task_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+READING,VOCABULARY,MCQ,,,,,"Choose the word closest in meaning to 'arduous'.","{""A"":""easy"",""B"":""demanding"",""C"":""brief"",""D"":""hollow""}","""B""","Arduous means requiring great effort.",IELTS
+READING,VOCABULARY,MCQ,,,,,"Choose the word closest in meaning to 'candid'.","{""A"":""frank"",""B"":""shy"",""C"":""rushed"",""D"":""vague""}","""A""","Candid means open and honest.",IELTS
