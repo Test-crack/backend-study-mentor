@@ -30,11 +30,11 @@ logic → 4) Routes → 5) Content → 6) Frontend. Diagnostics come after 1–4
   | Speaking delivery | `ielts_speaking` | **`roleplay`** (new UI + new grading entry) |
   | Target | single band | **per-component** (NMC preset: L350/R350/**W300**/S350) |
   | Content | general | **nursing scenarios** |
-- **Subskills = IELTS's** (product decision, confirmed): Writing = `task_response`,
-  `coherence_cohesion`, `lexical_resource`, `grammatical_range_accuracy`; Speaking =
-  `fluency_coherence`, `lexical_resource`, `grammatical_range_accuracy`, `pronunciation`. This
-  supersedes the config's `_subskill_todo` ("do not invent") — we are *borrowing IELTS's*, not
-  inventing OET's.
+- **Subskills = OET's own criteria** (verified — see `OET-NURSING-CONFIG-VERIFICATION.md`; the graders
+  and config follow these, NOT IELTS's): Writing = Purpose (0–3), Content, Conciseness & Clarity,
+  Genre & Style, Organisation & Layout, Language (0–7 each); Speaking = 4 linguistic (0–6:
+  intelligibility/fluency/appropriateness/grammar_expression) + 5 clinical-communication (0–3:
+  relationship_building/patient_perspective/structure/information_gathering/information_giving).
 
 ---
 

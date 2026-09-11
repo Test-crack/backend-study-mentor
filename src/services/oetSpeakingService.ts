@@ -28,7 +28,7 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const LINGUISTIC = [
   { id: 'intelligibility',          label: 'Intelligibility',                 max: 6, bMin: 5 },
   { id: 'fluency',                  label: 'Fluency',                         max: 6, bMin: 5 },
-  { id: 'appropriateness_language', label: 'Appropriateness of Language',     max: 6, bMin: 5 },
+  { id: 'appropriateness', label: 'Appropriateness of Language',     max: 6, bMin: 5 },
   { id: 'grammar_expression',       label: 'Resources of Grammar & Expression', max: 6, bMin: 5 },
 ] as const;
 const CLINICAL = [
@@ -99,7 +99,7 @@ STEP 3 — Score the NINE OET criteria across ALL role-plays together (one holis
 LINGUISTIC criteria (each 0–6; Grade B ≈ 5):
   • intelligibility — pronunciation, stress and intonation; how clearly a listener understands. (6 = readily intelligible throughout; 3 = frequent strain; 0 = largely unintelligible.)
   • fluency — pace and smoothness; natural flow without disruptive hesitation or repetition.
-  • appropriateness_language — register, tone and professionalism suited to THIS patient (warmth without over-familiarity; no unexplained jargon).
+  • appropriateness — register, tone and professionalism suited to THIS patient (warmth without over-familiarity; no unexplained jargon).
   • grammar_expression — grammatical accuracy and range of vocabulary/expression for the task.
 
 CLINICAL COMMUNICATION criteria (each 0–3; Grade B ≈ 2) — these assess patient-centred care:

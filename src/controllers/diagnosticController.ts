@@ -390,6 +390,19 @@ export const submitDiagnosticAssessment = async (req: AuthRequest & { appUserId?
             return res.status(400).json({ error: 'Speaking must be submitted with audio via /api/diagnostic/submit/speaking.' });
         }
 
+        // Fix A: a section is only gradable if it is an ASSESSED component of THIS student's exam.
+        // Spoken English has listening/reading/writing as non-assessed practice surfaces (scale:
+        // null), so scoreComponent(student.exam_id, section) would now throw inside the scorer.
+        // Return a clear message instead. IELTS/OET have all four assessed → unaffected.
+        const examCfg: any = getExamConfig(student.exam_id);
+        const sectionComp = examCfg?.components?.find((c: any) => c.id === skillUpper.toLowerCase());
+        if (!sectionComp || sectionComp.assessed === false || !sectionComp.scale) {
+            return res.status(400).json({
+                error: 'section_not_assessed',
+                message: `The ${skillUpper} section is not a graded part of your exam.`,
+            });
+        }
+
         // Diagnostic is one-time: reject resubmission or any submission after completion.
         if (student.isDiagnosed) {
             return res.status(409).json({ error: 'Diagnostic already completed and cannot be retaken.' });
