@@ -66,8 +66,11 @@ export async function getDailyDrillState(req: AuthRequest, res: Response) {
 
         const drills_completed_today   = drillSessions.length;
         const lexigrid_completed_today = !!lexiGridRecord;
-        // Dashboard unlocks when Drill 2 is accessed â€” still threshold of 2
-        const dashboard_unlocked       = drills_completed_today >= 2;
+        // Dashboard unlocks after the exam's free-drill gate: IELTS = 2 (drill → LexiGrid → drill),
+        // Spoken English = 3 (three MCQ drills, no LexiGrid step). Exam-aware so each exam's own gate
+        // is honoured and the sidebar/route lock matches the dashboard's own gate. IELTS unchanged.
+        const unlockThreshold          = student.exam_id === 'spoken_english' ? 3 : 2;
+        const dashboard_unlocked       = drills_completed_today >= unlockThreshold;
         const extra_sessions_today     = drillSessions.filter(s => s.is_extra_session).length;
         const sessions_remaining       = MAX_SESSIONS_PER_DAY - drills_completed_today;
 
