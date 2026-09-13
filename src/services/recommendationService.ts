@@ -11,10 +11,72 @@ export const getBandLevel = (bandScore: number): RecommendationLevel => {
   return RecommendationLevel[examDifficulty('ielts', bandScore) as keyof typeof RecommendationLevel];
 };
 
+/** CEFR level (a1..c2) → RecommendationLevel bucket, mirroring cefrToDrillLevel on the frontend. */
+export const cefrToRecLevel = (cefr?: string): RecommendationLevel => {
+  const l = (cefr || '').toLowerCase();
+  if (l.startsWith('c')) return RecommendationLevel.ADVANCED;
+  if (l.startsWith('b')) return RecommendationLevel.INTERMEDIATE;
+  return RecommendationLevel.BEGINNER;
+};
+
+// Spoken English CEFR sub-skill id ↔ SubSkillType enum (mirror of spokenEnglishSubskills config).
+const SE_SUB_TO_ENUM: Record<string, string> = {
+  range: 'VOCABULARY', accuracy: 'GRAMMAR', fluency: 'FLUENCY',
+  interaction: 'INTERACTION', coherence: 'COHERENCE', phonology: 'PRONUNCIATION',
+};
+const SE_SUBSKILL_ORDER = ['range', 'accuracy', 'fluency', 'interaction', 'coherence', 'phonology'];
+
+/**
+ * Spoken English recommendations — speaking-only, grouped by the 6 CEFR sub-skills (not the 4
+ * IELTS skills). Each sub-skill's level comes from the competency matrix's subskillProfile, mapped
+ * to a RecommendationLevel bucket; videos are matched by exam_id + SPEAKING + sub_skill + level,
+ * falling back to any level for that sub-skill so a student never sees an empty column.
+ */
+export async function getSpokenEnglishRecommendations(studentId: string, examId: string, page = 1, limit = 10) {
+  const matrix = await prisma.studentCompetencyMatrix.findFirst({ where: { student_id: studentId, skill: 'SPEAKING' } });
+  const sub: any = (matrix?.sub_scores as any) ?? {};
+  const profile: any[] = Array.isArray(sub.subskillProfile) ? sub.subskillProfile : [];
+  const levelById = new Map<string, string>(profile.map((p) => [String(p.id), String(p.level ?? 'a1')]));
+  const skip = (page - 1) * limit;
+
+  const data: Record<string, any[]> = {};
+  const levels: Record<string, RecommendationLevel> = {};
+  const totalItems: Record<string, number> = {};
+
+  await Promise.all(SE_SUBSKILL_ORDER.map(async (id) => {
+    const enumVal = SE_SUB_TO_ENUM[id];
+    const level = cefrToRecLevel(levelById.get(id));
+    levels[id] = level;
+    const base = { exam_id: examId, skill_type: SkillType.SPEAKING, sub_skill: enumVal as any, is_active: true };
+
+    // Prefer the student's level; fall back to any level for the sub-skill if that bucket is empty.
+    let items = await prisma.recommendationItem.findMany({ where: { ...base, level }, skip, take: limit, orderBy: { createdAt: 'desc' } });
+    let total = await prisma.recommendationItem.count({ where: { ...base, level } });
+    if (total === 0) {
+      items = await prisma.recommendationItem.findMany({ where: base, skip, take: limit, orderBy: { createdAt: 'desc' } });
+      total = await prisma.recommendationItem.count({ where: base });
+    }
+    data[id] = items;
+    totalItems[id] = total;
+  }));
+
+  const totalPages: Record<string, number> = {};
+  for (const id of SE_SUBSKILL_ORDER) totalPages[id] = Math.ceil((totalItems[id] || 0) / limit);
+
+  return {
+    success: true,
+    exam_id: examId,
+    subskills: SE_SUBSKILL_ORDER,
+    levels,
+    data,
+    pagination: { page, limit, totalItems, totalPages },
+  };
+}
+
 /**
  * Service to fetch personalized recommendations for a student across all 4 skills.
  */
-export async function getStudentRecommendations(studentId: string, page: number = 1, limit: number = 10) {
+export async function getStudentRecommendations(studentId: string, page: number = 1, limit: number = 10, examId: string = 'ielts') {
   // 1. Fetch current competency scores for this student
   const matrix = await prisma.studentCompetencyMatrix.findMany({
     where: { student_id: studentId }
@@ -38,25 +100,25 @@ export async function getStudentRecommendations(studentId: string, page: number 
   // 3. Query all 4 categories concurrently
   const [listening, reading, writing, speaking, totalCounts] = await Promise.all([
     prisma.recommendationItem.findMany({
-      where: { skill_type: SkillType.LISTENING, level: levels.LISTENING, is_active: true },
+      where: { exam_id: examId, skill_type: SkillType.LISTENING, level: levels.LISTENING, is_active: true },
       skip,
       take: limit,
       orderBy: { createdAt: 'desc' },
     }),
     prisma.recommendationItem.findMany({
-      where: { skill_type: SkillType.READING, level: levels.READING, is_active: true },
+      where: { exam_id: examId, skill_type: SkillType.READING, level: levels.READING, is_active: true },
       skip,
       take: limit,
       orderBy: { createdAt: 'desc' },
     }),
     prisma.recommendationItem.findMany({
-      where: { skill_type: SkillType.WRITING, level: levels.WRITING, is_active: true },
+      where: { exam_id: examId, skill_type: SkillType.WRITING, level: levels.WRITING, is_active: true },
       skip,
       take: limit,
       orderBy: { createdAt: 'desc' },
     }),
     prisma.recommendationItem.findMany({
-      where: { skill_type: SkillType.SPEAKING, level: levels.SPEAKING, is_active: true },
+      where: { exam_id: examId, skill_type: SkillType.SPEAKING, level: levels.SPEAKING, is_active: true },
       skip,
       take: limit,
       orderBy: { createdAt: 'desc' },
@@ -66,10 +128,10 @@ export async function getStudentRecommendations(studentId: string, page: number 
       by: ['skill_type'],
       where: {
         OR: [
-          { skill_type: SkillType.LISTENING, level: levels.LISTENING, is_active: true },
-          { skill_type: SkillType.READING, level: levels.READING, is_active: true },
-          { skill_type: SkillType.WRITING, level: levels.WRITING, is_active: true },
-          { skill_type: SkillType.SPEAKING, level: levels.SPEAKING, is_active: true },
+          { exam_id: examId, skill_type: SkillType.LISTENING, level: levels.LISTENING, is_active: true },
+          { exam_id: examId, skill_type: SkillType.READING, level: levels.READING, is_active: true },
+          { exam_id: examId, skill_type: SkillType.WRITING, level: levels.WRITING, is_active: true },
+          { exam_id: examId, skill_type: SkillType.SPEAKING, level: levels.SPEAKING, is_active: true },
         ]
       },
       _count: { id: true }

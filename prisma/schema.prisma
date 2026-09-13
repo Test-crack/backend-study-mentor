@@ -878,8 +878,10 @@ model RecommendationItem {
   createdAt     DateTime            @default(now()) @db.Timestamptz(6) @map("created_at")
   updatedAt     DateTime            @default(now()) @db.Timestamptz(6) @map("updated_at")
   sub_skill     SubSkillType?
+  exam_id       String              @default("ielts")
 
   @@index([skill_type, level, is_active])
+  @@index([exam_id, skill_type, sub_skill, level, is_active])
   @@map("recommendation_items")
 }
 

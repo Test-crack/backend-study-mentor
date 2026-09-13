@@ -1,7 +1,7 @@
 ﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { getStudentRecommendations } from '../services/recommendationService';
+import { getStudentRecommendations, getSpokenEnglishRecommendations, cefrToRecLevel } from '../services/recommendationService';
 import { BAND_MIN } from '../lib/bandScale';
 import { examDifficulty } from '../exam-engine';
 
@@ -35,8 +35,11 @@ export async function getRecommendations(req: AuthRequest, res: Response) {
              return res.status(404).json({ success: false, error: 'Student record not found.' });
         }
 
-        // Fetch data using the service layer
-        const result = await getStudentRecommendations(student.id, page, limit);
+        // Spoken English gets its speaking-only, sub-skill-grouped recommendations; every other exam
+        // keeps the 4-skill band-based flow (scoped to its own exam_id so exams never cross-pollute).
+        const result = student.exam_id === 'spoken_english'
+            ? await getSpokenEnglishRecommendations(student.id, student.exam_id, page, limit)
+            : await getStudentRecommendations(student.id, page, limit, student.exam_id);
 
         return res.json(result);
 
@@ -70,40 +73,53 @@ export async function getDrillRecommendation(req: AuthRequest, res: Response) {
 
         if (!skill) return res.status(400).json({ success: false, error: 'skill query param is required.' });
 
-        // Derive level from competency matrix for this skill
-        const matrix = await prisma.studentCompetencyMatrix.findUnique({
-            where: { student_id_skill: { student_id: student.id, skill: skill as any } },
-            select: { band_score: true }
-        });
-        // Missing band â†’ 4.0 floor; level thresholds are the shared D3 even-thirds.
-        const band  = parseFloat(String(matrix?.band_score ?? '')) || BAND_MIN;
-        const level = examDifficulty('ielts', band);
+        const examId = student.exam_id;
+
+        // Derive the RecommendationLevel bucket. Spoken English uses the CEFR level of the specific
+        // sub-skill (from the competency matrix subskillProfile); IELTS maps its band via D3 thirds.
+        let level: string;
+        if (examId === 'spoken_english') {
+            const m = await prisma.studentCompetencyMatrix.findFirst({ where: { student_id: student.id, skill: 'SPEAKING' } });
+            const sub: any = (m?.sub_scores as any) ?? {};
+            const profile: any[] = Array.isArray(sub.subskillProfile) ? sub.subskillProfile : [];
+            const ENUM_TO_ID: Record<string, string> = { VOCABULARY: 'range', GRAMMAR: 'accuracy', FLUENCY: 'fluency', INTERACTION: 'interaction', COHERENCE: 'coherence', PRONUNCIATION: 'phonology' };
+            const row = profile.find((p) => p.id === ENUM_TO_ID[subSkill]);
+            level = cefrToRecLevel(row?.level ?? sub.cefrLevel);
+        } else {
+            const matrix = await prisma.studentCompetencyMatrix.findUnique({
+                where: { student_id_skill: { student_id: student.id, skill: skill as any } },
+                select: { band_score: true }
+            });
+            // Missing band â†’ floor; level thresholds are the shared D3 even-thirds.
+            const band = parseFloat(String(matrix?.band_score ?? '')) || BAND_MIN;
+            level = examDifficulty('ielts', band);
+        }
 
         const VIDEO = 'VIDEO' as any;
 
         // 1 â€” exact: skill + sub_skill + level + VIDEO
         let items = await prisma.recommendationItem.findMany({
-            where: { skill_type: skill as any, sub_skill: subSkill ? (subSkill as any) : undefined, level: level as any, type: VIDEO, is_active: true }
+            where: { exam_id: examId, skill_type: skill as any, sub_skill: subSkill ? (subSkill as any) : undefined, level: level as any, type: VIDEO, is_active: true }
         });
 
         // 2 â€” skill + sub_skill (any level) + VIDEO
         if (items.length === 0 && subSkill) {
             items = await prisma.recommendationItem.findMany({
-                where: { skill_type: skill as any, sub_skill: subSkill as any, type: VIDEO, is_active: true }
+                where: { exam_id: examId, skill_type: skill as any, sub_skill: subSkill as any, type: VIDEO, is_active: true }
             });
         }
 
         // 3 â€” skill + level (any sub_skill) + VIDEO
         if (items.length === 0) {
             items = await prisma.recommendationItem.findMany({
-                where: { skill_type: skill as any, level: level as any, type: VIDEO, is_active: true }
+                where: { exam_id: examId, skill_type: skill as any, level: level as any, type: VIDEO, is_active: true }
             });
         }
 
         // 4 â€” skill + VIDEO only
         if (items.length === 0) {
             items = await prisma.recommendationItem.findMany({
-                where: { skill_type: skill as any, type: VIDEO, is_active: true }
+                where: { exam_id: examId, skill_type: skill as any, type: VIDEO, is_active: true }
             });
         }
 

@@ -17,6 +17,28 @@ import { DrillSessionStatus } from '@prisma/client';
 
 const PROMPTS_PER_SUBSKILL = 2;
 const IA_WINDOW_HOURS = 24;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const IA_INTERVAL_DAYS = 3;   // IA schedule: first_drill + 3, +6, +9 … (mirror of iaController)
+
+// IA-schedule date helpers — identical semantics to iaController so SE and IELTS agree on
+// which calendar day (IST) is an IA day. Kept local to avoid exporting iaController internals.
+function toISTDateString(d: Date): string {
+    const ist = new Date(d.getTime() + IST_OFFSET_MS);
+    return [ist.getUTCFullYear(), String(ist.getUTCMonth() + 1).padStart(2, '0'), String(ist.getUTCDate()).padStart(2, '0')].join('-');
+}
+function addCalendarDays(dateStr: string, days: number): string {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const r = new Date(Date.UTC(y, m - 1, d + days));
+    return [r.getUTCFullYear(), String(r.getUTCMonth() + 1).padStart(2, '0'), String(r.getUTCDate()).padStart(2, '0')].join('-');
+}
+function daysBetween(fromStr: string, toStr: string): number {
+    const parse = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+    return Math.round((parse(toStr) - parse(fromStr)) / 86_400_000);
+}
+function formatIADate(dateStr: string): string {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+}
 
 // CEFR subskill id ↔ SubSkillType enum (mirror of the frontend spokenEnglishSubskills config).
 const SUB_TO_ENUM: Record<string, string> = {
@@ -39,6 +61,27 @@ export async function getSpokenEnglishIA(req: AuthRequest, res: Response) {
         if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
         const student = await prisma.instituteStudent.findUnique({ where: { user_id: userId } });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
+
+        // ── Gate: today must be a scheduled IA day (same schedule the dashboard shows — the
+        // first-drill IST date anchor, then every IA_INTERVAL_DAYS). Previously the SE IA served
+        // prompts on ANY day, so a student could start an assessment the schedule said was days away.
+        const scheduleDrills = await prisma.drillSession.findMany({
+            where: { student_id: student.id }, orderBy: { created_at: 'asc' }, select: { created_at: true },
+        });
+        const todayStr = toISTDateString(new Date());
+        const firstDrillStr = scheduleDrills.length ? toISTDateString(scheduleDrills[0].created_at) : null;
+        const daysSinceFirst = firstDrillStr ? daysBetween(firstDrillStr, todayStr) : 0;
+        const isScheduledDay = !!firstDrillStr && daysSinceFirst > 0 && daysSinceFirst % IA_INTERVAL_DAYS === 0;
+        if (!isScheduledDay) {
+            const nextN = firstDrillStr ? Math.floor(daysSinceFirst / IA_INTERVAL_DAYS) + 1 : 1;
+            const nextDate = firstDrillStr ? addCalendarDays(firstDrillStr, nextN * IA_INTERVAL_DAYS) : null;
+            return res.status(400).json({
+                success: false,
+                error: 'not_ia_day',
+                message: 'Today is not a scheduled internal assessment day.',
+                next_ia: nextDate ? { number: nextN, date: nextDate, date_formatted: formatIADate(nextDate), days_away: daysBetween(todayStr, nextDate) } : null,
+            });
+        }
 
         const rubric = getVivaRubric(student.exam_id);
         if (!rubric) return res.status(400).json({ success: false, error: 'IA not configured for this exam.' });
