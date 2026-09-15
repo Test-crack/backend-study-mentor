@@ -1379,7 +1379,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
         // membership excluded exactly the students it exists to surface.
         const instStudents = await prisma.instituteStudent.findMany({
             where:  { institute_id: instituteId, is_active: true },
-            select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true },
+            select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true, exam_id: true },
         });
 
         if (instStudents.length === 0) {
@@ -1467,6 +1467,7 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
                 missed_ia_count: missedIA,
                 current_band:    computeCurrentBand(competency),
                 target_band:     inst?.target_band ? parseFloat(String(inst.target_band)) : null,
+                exam_id:         inst?.exam_id ?? 'ielts',
             };
         });
 
