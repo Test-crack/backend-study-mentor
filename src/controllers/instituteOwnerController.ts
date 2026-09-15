@@ -1601,6 +1601,9 @@ export async function getInstituteAssessmentOverview(req: AuthRequest, res: Resp
                 institute_id: instituteId,
                 is_active: true,
                 ...(scopedUserIds ? { user_id: { in: scopedUserIds } } : {}),
+                // Scope to the selected exam (X-Exam-Id → ctx.examId) so the overview + distribution
+                // reflect the switcher instead of mixing every exam's students together.
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
             },
             select: { id: true, user_id: true, target_band: true, isDiagnosed: true, exam_id: true },
         });
