@@ -1045,6 +1045,9 @@ export async function getInstituteStudents(req: AuthRequest, res: Response) {
                 institute_id: instituteId,
                 is_active: true,
                 ...(scopedUserIds ? { user_id: { in: scopedUserIds } } : {}),
+                // Scope the roster to the selected exam (X-Exam-Id → ctx.examId) so it matches the
+                // switcher; institute-wide when nothing is selected.
+                ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}),
             },
             select: {
                 id: true, user_id: true, target_band: true, momentum_score: true,
