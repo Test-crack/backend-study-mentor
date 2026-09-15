@@ -1378,7 +1378,9 @@ export async function getInstituteAtRisk(req: AuthRequest, res: Response) {
         // nobody's explicit responsibility — so deriving this list from batch
         // membership excluded exactly the students it exists to surface.
         const instStudents = await prisma.instituteStudent.findMany({
-            where:  { institute_id: instituteId, is_active: true },
+            // Scope to the selected exam (X-Exam-Id → ctx.examId) so the at-risk list matches the
+            // rest of the dashboard; without a selected exam it stays institute-wide (all exams).
+            where:  { institute_id: instituteId, is_active: true, ...((req as any).ctx?.examId ? { exam_id: (req as any).ctx.examId } : {}) },
             select: { id: true, user_id: true, isDiagnosed: true, daily_streak: true, momentum_score: true, target_band: true, exam_id: true },
         });
 
