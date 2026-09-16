@@ -83,9 +83,14 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         // profile, not the IELTS 4-skill band shape. Only recommend subskills that actually
         // have drills seeded (so, e.g., 'interaction' surfaces once its drills are imported).
         const isViva = student.exam_id !== 'ielts';
+        // Which speaking sub-skills are drillable. startDrillSession fetches questions from the SHARED
+        // bank (no exam_id filter — reusing the IELTS bank for SE is intentional), so this gate must
+        // match it: skip only sub-skills with NO MCQ drill content anywhere (e.g. INTERACTION), not
+        // ones merely missing an SE-tagged row. Filtering by exam_id here would freeze the whole SE
+        // journey if SE ever relied purely on the reused bank instead of its own tagged rows.
         const seAvailable = isViva
             ? new Set((await prisma.drillQuestion.findMany({
-                where: { exam_id: student.exam_id, is_active: true }, distinct: ['sub_skill'], select: { sub_skill: true },
+                where: { skill: 'SPEAKING' as any, is_active: true }, distinct: ['sub_skill'], select: { sub_skill: true },
               })).map((r) => r.sub_skill as string))
             : null;
         // CEFR subskill id → SubSkillType enum (mirrors the frontend spokenEnglishSubskills config).
