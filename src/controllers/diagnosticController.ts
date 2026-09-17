@@ -346,11 +346,15 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
             if (!row) return res.status(404).json({ error: 'No writing prompt found for this level.' });
 
             return res.json({
-                ok:       true,
-                skill:    'writing',
-                id:       row.id,
-                topic:    row.prompt_text,
-                minWords: row.min_words ?? 150
+                ok:        true,
+                skill:     'writing',
+                id:        row.id,
+                topic:     row.prompt_text,
+                // OET referral-letter tasks carry stimulus case notes in passage_text that the
+                // candidate MUST write from (and the grader scores "Content" against). IELTS
+                // writing is self-contained, so passage_text is null and no block renders.
+                caseNotes: row.passage_text ?? null,
+                minWords:  row.min_words ?? 150
             });
         }
 
