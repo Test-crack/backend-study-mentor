@@ -131,17 +131,22 @@ async function ttsToWav(text: string, voice: string, outPath: string): Promise<v
     type Row = any;
     const rows: Row[] = [];
     const optJson = (o: any) => (o ? o : null);
+    // correct_answer is a plain VARCHAR the scorer compares case-insensitively (===).
+    // Match the IELTS convention exactly: MCQ = bare letter (A/B/C/D); TFNG = T/F/NG
+    // (NOT the option letter) with NO options object — the client renders its own
+    // True/False/Not-Given control and submits T/F/NG.
+    const TFNG_MAP: Record<string, string> = { A: 'T', B: 'F', C: 'NG' };
     for (const r of READING) r.q.forEach((q, i) => rows.push({
       skill: 'READING', question_type: q.type, set_id: r.set, sequence: i + 1,
       passage_text: r.passage, audio_url: null, prompt_text: q.prompt,
-      options: q.type === 'TFNG' ? { A: 'True', B: 'False', C: 'Not Given' } : optJson((q as any).options),
-      correct_answer: q.ans, min_words: null,
+      options: q.type === 'TFNG' ? null : optJson((q as any).options),
+      correct_answer: q.type === 'TFNG' ? (TFNG_MAP[q.ans] ?? q.ans) : q.ans, min_words: null,
     }));
     for (const l of LISTENING) l.q.forEach((q, i) => rows.push({
       skill: 'LISTENING', question_type: q.type, set_id: l.set, sequence: i + 1,
       passage_text: null, audio_url: `/diagnostics/audio/${l.set}.wav`, prompt_text: q.prompt,
-      options: q.type === 'TFNG' ? { A: 'True', B: 'False', C: 'Not Given' } : optJson((q as any).options),
-      correct_answer: q.ans, min_words: null,
+      options: q.type === 'TFNG' ? null : optJson((q as any).options),
+      correct_answer: q.type === 'TFNG' ? (TFNG_MAP[q.ans] ?? q.ans) : q.ans, min_words: null,
     }));
     for (const w of WRITING) rows.push({
       skill: 'WRITING', question_type: 'WRITING_PROMPT', set_id: w.set, sequence: 1,
@@ -164,10 +169,10 @@ async function ttsToWav(text: string, voice: string, outPath: string): Promise<v
 
     await p.$transaction(rows.map((r) => p.$executeRawUnsafe(
       `INSERT INTO diagnostic_questions (skill, question_type, set_id, sequence, passage_text, audio_url, prompt_text, options, correct_answer, min_words, level, exam_id, is_active)
-       VALUES ($1::"SkillType",$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,true)`,
+       VALUES ($1::"SkillType",$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,true)`,
       r.skill, r.question_type, r.set_id, r.sequence, r.passage_text, r.audio_url, r.prompt_text,
       r.options ? JSON.stringify(r.options) : null,
-      r.correct_answer != null ? JSON.stringify(r.correct_answer) : null,
+      r.correct_answer ?? null,
       r.min_words, LEVEL, EXAM,
     )));
     console.log(`\n✅ Inserted ${rows.length} OET diagnostic rows.`);
