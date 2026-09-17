@@ -28,18 +28,24 @@ function resolveLevel(targetBand: number): DiagnosticLevel {
 async function pickRandomSetId(level: string, skill: string, examId: string): Promise<string | null> {
     // GROUP BY deduplicates set_ids without the DISTINCT+ORDER BY restriction.
     // exam_id scopes to the student's exam (A3): an OET student gets OET sets, not IELTS.
-    const rows: any[] = await prisma.$queryRaw`
-        SELECT   set_id
-        FROM     diagnostic_questions
-        WHERE    level     = ${level}
-        AND      skill     = ${skill}::"SkillType"
-        AND      exam_id   = ${examId}
-        AND      is_active = TRUE
-        GROUP BY set_id
-        ORDER BY RANDOM()
-        LIMIT    1
-    `;
-    return rows[0]?.set_id ?? null;
+    // Prefer the student's resolved proficiency level, but exams whose diagnostic
+    // content isn't level-differentiated (e.g. OET is a single-proficiency exam)
+    // can resolve to a level they hold no content for — fall back to ANY level for
+    // this exam+skill so the diagnostic never returns empty. IELTS seeds all levels,
+    // so its level-scoped query always matches and this fallback never fires.
+    const pick = async (levelScoped: boolean): Promise<string | null> => {
+        const rows: any[] = levelScoped
+            ? await prisma.$queryRaw`
+                SELECT set_id FROM diagnostic_questions
+                WHERE level = ${level} AND skill = ${skill}::"SkillType" AND exam_id = ${examId} AND is_active = TRUE
+                GROUP BY set_id ORDER BY RANDOM() LIMIT 1`
+            : await prisma.$queryRaw`
+                SELECT set_id FROM diagnostic_questions
+                WHERE skill = ${skill}::"SkillType" AND exam_id = ${examId} AND is_active = TRUE
+                GROUP BY set_id ORDER BY RANDOM() LIMIT 1`;
+        return rows[0]?.set_id ?? null;
+    };
+    return (await pick(true)) ?? (await pick(false));
 }
 
 /**
@@ -317,14 +323,24 @@ export const getDiagnosticQuestionsBySkill = async (req: AuthRequest & { appUser
         // â”€â”€ WRITING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (skillUpper === 'WRITING') {
             const questionId = await resolveServedId(student, 'WRITING', async () => {
-                const rows: any[] = await prisma.$queryRaw`
-                    SELECT id FROM diagnostic_questions
-                    WHERE  level = ${level} AND skill = 'WRITING'::"SkillType"
-                    AND    question_type = 'WRITING_PROMPT' AND is_active = TRUE
-                    AND    exam_id = ${student?.exam_id ?? 'ielts'}
-                    ORDER  BY RANDOM() LIMIT 1
-                `;
-                return rows[0]?.id ?? null;
+                // Prefer the resolved level; fall back to any level for single-level
+                // exams (see pickRandomSetId) so writing never returns empty.
+                const examId = student?.exam_id ?? 'ielts';
+                const pick = async (levelScoped: boolean): Promise<string | null> => {
+                    const rows: any[] = levelScoped
+                        ? await prisma.$queryRaw`
+                            SELECT id FROM diagnostic_questions
+                            WHERE level = ${level} AND skill = 'WRITING'::"SkillType"
+                            AND question_type = 'WRITING_PROMPT' AND is_active = TRUE AND exam_id = ${examId}
+                            ORDER BY RANDOM() LIMIT 1`
+                        : await prisma.$queryRaw`
+                            SELECT id FROM diagnostic_questions
+                            WHERE skill = 'WRITING'::"SkillType"
+                            AND question_type = 'WRITING_PROMPT' AND is_active = TRUE AND exam_id = ${examId}
+                            ORDER BY RANDOM() LIMIT 1`;
+                    return rows[0]?.id ?? null;
+                };
+                return (await pick(true)) ?? (await pick(false));
             });
             const row = questionId ? await prisma.diagnosticQuestion.findUnique({ where: { id: questionId } }) : null;
             if (!row) return res.status(404).json({ error: 'No writing prompt found for this level.' });
