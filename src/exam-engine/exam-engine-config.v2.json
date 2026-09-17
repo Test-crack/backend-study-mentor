@@ -484,7 +484,7 @@
       "exam_id": "oet_nursing",
       "prisma_enum": "OET",
       "config_version": "2.0.0",
-      "status": "reserved",
+      "status": "live",
       "requires_entitlement": true,
       "_profession": "nursing",
       "_model_note": "Per-profession OET exam (decision D-oet-1). Because exam_id is the ONLY field that scopes content (diagnostic_questions etc.) and no variant column exists, each OET profession is its own exam id (oet_nursing, oet_medicine, …). Listening/Reading are identical across professions but are duplicated per profession until a variant column ships; Writing/Speaking are profession-specific by nature.",
@@ -506,7 +506,7 @@
         "disclaimer_short": "Practice materials only. Not affiliated with or endorsed by Cambridge Boxhill Language Assessment. Scores shown are practice estimates, not official OET results.",
         "disclaimer_full": "This preparation course provides practice materials for healthcare English assessment. It is not affiliated with, endorsed by, or connected to Cambridge Boxhill Language Assessment Pty Ltd, the owner of the OET trademark. OET is a registered trademark of CBLA. Scores and grades shown are practice estimates and are not official OET results.",
         "display_rules": { "show_full_at_onboarding": true, "show_short_in_footer": true },
-        "_status": "BLOCKED_ON_COUNSEL — do not launch on this config.",
+        "_status": "ENABLED 2026-09-17 under the NON-OET product name 'Healthcare English Preparation (Nursing)' per owner decision — the product name carries no 'OET' mark (may_use_mark_in_product_name:false, honoured). Trademark counsel on the 'OET' MARK itself is still pending: never surface 'OET' in any public-facing copy. Original flag: BLOCKED_ON_COUNSEL — do not launch on this config.",
         "_risk_note": "CBLA's published IP policy states its marks 'cannot be used without the prior express written permission of CBLA', and the Terms & Conditions state 'You are not permitted to use any trade marks, logos or trade names appearing on the Website.' Unlike ETS, CBLA publishes NO nominative-use or fair-use carve-out for preparation providers. It instead runs a paid Preparation Provider Programme whose Premium tier grants an official logo. This is materially more restrictive than the IELTS position. Treat 'can we call it OET prep?' as a counsel question with a real chance of 'no'."
       },
 
