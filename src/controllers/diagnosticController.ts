@@ -1005,7 +1005,7 @@ export const submitOetSpeaking = async (req: AuthRequest & { appUserId?: string 
         });
         const overallComplete = await checkAndMarkDiagnosed(student.id, student.exam_id);
 
-        res.json({ message: 'OET speaking submitted successfully', oetScore: oet.oetScore, grade: oet.grade, overallComplete, sub_scores: subScores });
+        res.json({ message: 'OET speaking submitted successfully', bandScore: stored.band_score, oetScore: oet.oetScore, grade: oet.grade, overallComplete, sub_scores: subScores });
     } catch (err) {
         cleanup();
         if (err instanceof DiagnosticAlreadyScoredError) {
