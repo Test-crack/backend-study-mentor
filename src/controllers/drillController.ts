@@ -11,6 +11,7 @@ import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone
 import { paramStr } from '../utils/httpParams';
 import { BAND_MIN } from '../lib/bandScale';
 import { examWeaknessGap } from '../exam-engine';
+import { getVivaRubric } from '../services/viva/registry';
 
 interface DrillItem {
     skill: string;
@@ -79,10 +80,11 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
             return 0.6 * (1 - acc) + 0.4 * examWeaknessGap('ielts', band);
         };
 
-        // CEFR / viva exams (Spoken English & future) drive drills off the speaking subskill
-        // profile, not the IELTS 4-skill band shape. Only recommend subskills that actually
-        // have drills seeded (so, e.g., 'interaction' surfaces once its drills are imported).
-        const isViva = student.exam_id !== 'ielts';
+        // Only CEFR viva exams (Spoken English) drive drills off the speaking subskill profile.
+        // Every other exam — IELTS AND OET — uses the 4-skill/component band shape and the same
+        // drill flow (2 drills + LexiGrid → unlock). Config-driven via the viva registry, NOT
+        // "everything-but-IELTS", so OET (per_component, no viva rubric) takes the IELTS path.
+        const isViva = !!getVivaRubric(student.exam_id);
         // Which speaking sub-skills are drillable. startDrillSession fetches questions from the SHARED
         // bank (no exam_id filter — reusing the IELTS bank for SE is intentional), so this gate must
         // match it: skip only sub-skills with NO MCQ drill content anywhere (e.g. INTERACTION), not
@@ -657,9 +659,10 @@ export async function completeDrillSession(req: AuthRequest, res: Response) {
                     capError = { status: 409, error: 'You have used your free drills for today. Unlock an extra drill to continue.' };
                     return null;
                 }
-                // LexiGrid gate: IELTS's 2nd drill of the day requires LexiGrid done first.
-                // Other exams (e.g. Spoken English: 3 drills, LexiGrid standalone) skip it.
-                if (drillsTodayBefore === 1 && student.exam_id === 'ielts') {
+                // LexiGrid gate: the 2nd drill of the day requires LexiGrid done first — for every
+                // non-viva exam (IELTS AND OET share this 2-drill + LexiGrid gate). Viva exams
+                // (Spoken English: 3 drills, LexiGrid standalone) skip it.
+                if (drillsTodayBefore === 1 && !getVivaRubric(student.exam_id)) {
                     const lexiToday = await t.studentGameScore.findFirst({
                         where:  { student_id: student.id, game_type: 'LEXIGRID', session_date: currentISTDate() },
                         select: { id: true },
