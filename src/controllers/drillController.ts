@@ -224,15 +224,21 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
                     ? "Complete your Initial Assessment (Diagnostics) to unlock personalised drills."
                     : "You have completed all available sub-skills for today!";
 
-        // The authoritative weakness-ranked sub-skill queue for display (the drill "focus queue").
-        // Built from the per-exam sub-skill mapping above, so the client renders real drillable
-        // sub-skills for ANY exam instead of scraping competency sub_scores JSON keys (which
-        // breaks for exams whose sub_scores carry a different shape, e.g. OET's meta flags).
-        const focus_queue = interleaved.map((it) => ({
-            skill: it.skill,
-            sub_skill: it.sub_skill,
-            score: it.sub_skill_score,
-        }));
+        // The authoritative drill "focus queue" for display: the SAME round-robin cycle the
+        // recommender uses, rotated so the CURRENT/next drill (available[startIndex]) sits on top
+        // and already-done-today pairs are excluded — matching the UI copy "today's drill takes the
+        // top of the queue". Built from the per-exam sub-skill mapping, so the client renders real
+        // drillable sub-skills for ANY exam instead of scraping competency sub_scores JSON keys
+        // (which breaks for exams whose sub_scores carry a different shape, e.g. OET's meta flags).
+        // NB: we DON'T re-sort by score on the client — for exams whose sub-skills tie on the skill
+        // band (OET), a score-sort would pin the same skill's sub-skills to the top forever.
+        const focus_queue = N > 0
+            ? Array.from({ length: N }, (_, i) => available[(startIndex + i) % N]).map((it) => ({
+                skill: it.skill,
+                sub_skill: it.sub_skill,
+                score: it.sub_skill_score,
+            }))
+            : [];
 
         return res.json({
             success: true,
