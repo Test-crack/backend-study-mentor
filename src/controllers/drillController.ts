@@ -544,11 +544,20 @@ export async function getActiveDrillSession(req: AuthRequest, res: Response) {
             return res.status(400).json({ success: false, error: 'skill and sub_skill query params are required.' });
         }
 
+        // Validate against the enums BEFORE querying — an invalid value (e.g. the client's
+        // "Overall"/"Loading..." placeholder sent before a real drill is recommended) must
+        // resolve to "no active session", never a Prisma validation 500.
+        const skillUp    = String(skill).toUpperCase();
+        const subSkillUp = String(sub_skill).toUpperCase().replace(/\s+/g, '_');
+        if (!VALID_SKILLS.includes(skillUp) || !VALID_SUB_SKILLS.includes(subSkillUp)) {
+            return res.json({ success: true, session: null });
+        }
+
         const session = await prisma.drillSession.findFirst({
             where: {
                 student_id: student.id,
-                skill:      (skill as string).toUpperCase() as any,
-                sub_skill:  (sub_skill as string).toUpperCase().replace(/\s+/g, '_') as any,
+                skill:      skillUp as any,
+                sub_skill:  subSkillUp as any,
                 status:     { in: [DrillSessionStatus.STARTED, DrillSessionStatus.DRILL_DONE] },
                 created_at: { gte: todayStartIST() },
             },
