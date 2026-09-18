@@ -971,6 +971,10 @@ model DrillQuestion {
   source_key     String?             @unique @db.VarChar(100)
 
   @@index([skill, sub_skill, level, is_active])
+  // Matches the exam-scoped drill serve query (startDrillSession): equality on
+  // exam_id + skill + sub_skill + level + is_active. Keeps per-combo lookups index-only as
+  // the bank grows across exams.
+  @@index([exam_id, skill, sub_skill, level, is_active], map: "idx_drill_questions_exam_combo")
   @@map("drill_questions")
 }
 

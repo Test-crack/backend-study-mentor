@@ -408,7 +408,9 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
         const appUserId = (req as any).appUserId as string;
         if (!appUserId) return res.status(401).json({ success: false, error: 'Unauthorized.' });
 
-        const student = await prisma.instituteStudent.findUnique({ where: { user_id: appUserId } });
+        const student = await prisma.instituteStudent.findUnique({
+            where: { user_id: appUserId }, select: { id: true, exam_id: true },
+        });
         if (!student) return res.status(404).json({ success: false, error: 'Student not found.' });
 
         const { skill, sub_skill, level, is_extra_session } = req.body;
@@ -462,18 +464,26 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
             });
         }
 
-        // Fetch fresh random questions
-        const questions: any[] = await prisma.$queryRaw`
+        // Fetch fresh random questions, SCOPED TO THE STUDENT'S EXAM so drills are
+        // exam-specific (OET students get the healthcare bank, SE its own, IELTS its own).
+        // Fall back to the shared IELTS bank when this exam has no rows for the combo
+        // (e.g. Spoken English ADVANCED, or any exam missing a level) so a drill is never
+        // blocked — exam-specific content is preferred whenever it exists.
+        const examId = student.exam_id ?? 'ielts';
+        const fetchQuestions = (exam: string) => prisma.$queryRaw<any[]>`
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
             WHERE skill     = ${skillUp}::"SkillType"
               AND sub_skill = ${subSkillUp}::"SubSkillType"
               AND level     = ${levelUp}::"RecommendationLevel"
+              AND exam_id   = ${exam}
               AND is_active = true
               AND drill_type = 'MCQ'
             ORDER BY RANDOM()
             LIMIT ${QUESTIONS_PER_SESSION}
         `;
+        let questions: any[] = await fetchQuestions(examId);
+        if (questions.length === 0 && examId !== 'ielts') questions = await fetchQuestions('ielts');
 
         if (questions.length === 0) {
             return res.status(404).json({ success: false, error: 'No drill questions found for the given parameters.' });
