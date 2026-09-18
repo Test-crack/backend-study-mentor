@@ -224,9 +224,20 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
                     ? "Complete your Initial Assessment (Diagnostics) to unlock personalised drills."
                     : "You have completed all available sub-skills for today!";
 
+        // The authoritative weakness-ranked sub-skill queue for display (the drill "focus queue").
+        // Built from the per-exam sub-skill mapping above, so the client renders real drillable
+        // sub-skills for ANY exam instead of scraping competency sub_scores JSON keys (which
+        // breaks for exams whose sub_scores carry a different shape, e.g. OET's meta flags).
+        const focus_queue = interleaved.map((it) => ({
+            skill: it.skill,
+            sub_skill: it.sub_skill,
+            score: it.sub_skill_score,
+        }));
+
         return res.json({
             success: true,
             recommended_drills,
+            focus_queue,
             daily_sessions_completed: todayCompleted,
             total_completed: totalCompleted,
             message,
