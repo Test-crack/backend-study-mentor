@@ -1,0 +1,122 @@
+{
+  "id": "ielts-diagnostic",
+  "label": "IELTS · Diagnostic",
+
+  "columns": [
+    {
+      "name": "skill",
+      "kind": "enum",
+      "members": ["LISTENING", "READING", "WRITING", "SPEAKING"],
+      "invalidCode": "SKILL_INVALID"
+    },
+    {
+      "name": "level",
+      "kind": "enum",
+      "members": ["A", "B", "C"],
+      "invalidCode": "LEVEL_INVALID"
+    },
+    { "name": "set_id", "kind": "text" },
+    { "name": "sequence", "kind": "text" },
+    {
+      "name": "question_type",
+      "kind": "enum",
+      "members": ["MCQ", "TFNG", "WRITING_PROMPT", "SPEAKING_PROMPT"],
+      "invalidCode": "QUESTION_TYPE_INVALID"
+    },
+    {
+      "name": "prompt_text",
+      "kind": "text",
+      "requireNonEmpty": true,
+      "emptyCode": "PROMPT_TEXT_EMPTY"
+    },
+    {
+      "name": "options",
+      "kind": "json_object",
+      "appliesWhen": { "column": "question_type", "in": ["MCQ"] },
+      "when": { "column": "question_type", "in": ["MCQ"] },
+      "requiredKeys": ["A", "B", "C", "D"],
+      "requireNonEmptyValues": true,
+      "requireUniqueValues": true,
+      "codes": {
+        "empty": "OPTIONS_EMPTY",
+        "notJson": "OPTIONS_NOT_JSON",
+        "notObject": "OPTIONS_NOT_OBJECT",
+        "keysWrong": "OPTIONS_KEYS_WRONG",
+        "valueNotString": "OPTION_VALUE_NOT_STRING",
+        "valueEmpty": "OPTION_VALUE_EMPTY",
+        "valueDuplicate": "OPTION_TEXT_DUPLICATE"
+      }
+    },
+    {
+      "name": "correct_answer",
+      "kind": "text",
+      "appliesWhen": { "column": "question_type", "in": ["MCQ", "TFNG"] },
+      "variants": [
+        {
+          "when": { "column": "question_type", "in": ["MCQ"] },
+          "kind": "loose_enum",
+          "parseJson": false,
+          "allowed": ["A", "B", "C", "D"],
+          "codes": {
+            "empty": "CORRECT_ANSWER_EMPTY",
+            "notAllowed": "CORRECT_ANSWER_NOT_A_KEY"
+          }
+        },
+        {
+          "when": { "column": "question_type", "in": ["TFNG"] },
+          "kind": "loose_enum",
+          "parseJson": false,
+          "allowed": ["T", "F", "NG"],
+          "codes": {
+            "empty": "CORRECT_ANSWER_EMPTY",
+            "notAllowed": "CORRECT_ANSWER_NOT_A_KEY"
+          }
+        }
+      ]
+    },
+    {
+      "name": "min_words",
+      "kind": "number",
+      "appliesWhen": { "column": "question_type", "in": ["WRITING_PROMPT"] },
+      "when": { "column": "question_type", "in": ["WRITING_PROMPT"] },
+      "min": 50,
+      "max": 400,
+      "missingCode": "MIN_WORDS_MISSING",
+      "outOfRangeCode": "MIN_WORDS_INVALID",
+      "forbiddenWhen": { "column": "question_type", "in": ["SPEAKING_PROMPT"] },
+      "forbiddenCode": "MIN_WORDS_PRESENT_BUT_NOT_ALLOWED",
+      "forbiddenMessage": "min_words is filled in, but SPEAKING_PROMPT rows must leave it blank."
+    },
+    { "name": "passage_text", "kind": "text" },
+    { "name": "audio_file", "kind": "text" },
+    { "name": "transcript", "kind": "text" }
+  ],
+
+  "sourceKeyColumn": "source_key",
+  "embeddedHeaderThreshold": 4,
+
+  "checkOrder": ["enums", "text", "structured", "hook:promptRowShape"],
+
+  "rowAllowList": {
+    "keyColumn": "skill",
+    "valueColumn": "question_type",
+    "code": "QUESTION_TYPE_SKILL_MISMATCH",
+    "allowed": {
+      "LISTENING": ["MCQ", "TFNG"],
+      "READING": ["MCQ", "TFNG"],
+      "WRITING": ["WRITING_PROMPT"],
+      "SPEAKING": ["SPEAKING_PROMPT"]
+    }
+  },
+
+  "duplicateIdentity": [
+    { "column": "prompt_text", "normalize": "foldCase" },
+    { "column": "options", "normalize": "optionSignature" }
+  ],
+
+  "filenameChecks": [],
+
+  "expectedRows": { "fallback": 5 },
+
+  "hooks": ["promptRowShape", "diagnosticSets"]
+}

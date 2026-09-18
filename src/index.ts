@@ -16,6 +16,8 @@ import domainRoutes from './routes/domainRoutes';
 import ieltsReadingRoutes from './routes/ieltsReadingRoutes';
 import voiceLabRoutes from './routes/voiceLabRoutes';
 import superadminRoutes from './routes/superadminRoutes';
+import superadminVerificationRoutes from './routes/superadminVerificationRoutes';
+import loadoutRoutes from './routes/loadoutRoutes';
 import instituteOwnerRoutes from './routes/instituteOwnerRoutes';
 import instituteAdminRoutes from './routes/instituteAdminRoutes';
 import studentRoutes from './routes/studentRoutes';
@@ -64,6 +66,10 @@ const corsOptions: cors.CorsOptions = {
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Exam-Id'], // X-Exam-Id: owner/admin exam context (A1c)
+  // Browsers hide all response headers from JS except a small safelist unless the
+  // server explicitly exposes more — file-download endpoints set Content-Disposition
+  // to carry the real filename, and without this the client falls back to "download".
+  exposedHeaders: ['Content-Disposition'],
   credentials: true, // enable if you plan to use cookies or JWT via headers
 };
 
@@ -114,6 +120,8 @@ app.use('/api/ielts-reading', ieltsReadingRoutes);
 app.use('/api/voice-lab', voiceLabRoutes);
 app.use('/api/exams', examsRoutes);
 app.use('/api/superadmin', superadminRoutes);
+app.use('/api/superadmin/verification', superadminVerificationRoutes);
+app.use('/api/superadmin/loadouts', loadoutRoutes);
 app.use('/api/institute-owner', instituteOwnerRoutes);
 app.use('/api/institute-admin', instituteAdminRoutes);
 app.use('/api/student', studentRoutes);

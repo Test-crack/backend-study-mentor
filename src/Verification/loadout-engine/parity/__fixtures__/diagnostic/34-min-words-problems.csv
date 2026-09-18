@@ -1,0 +1,4 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+WRITING,A,s5,1,WRITING_PROMPT,"Write about public transport.",,,,,,
+WRITING,A,s5,2,WRITING_PROMPT,"Write about renewable energy.",,,12,,,
+SPEAKING,A,s6,1,SPEAKING_PROMPT,"Describe your hometown.",,,150,,,

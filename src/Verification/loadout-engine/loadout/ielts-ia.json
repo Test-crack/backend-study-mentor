@@ -1,0 +1,205 @@
+{
+  "id": "ielts-ia",
+  "label": "IELTS · Internal Assessment",
+
+  "columns": [
+    {
+      "name": "skill",
+      "kind": "enum",
+      "members": ["LISTENING", "READING", "WRITING", "SPEAKING"],
+      "invalidCode": "SKILL_INVALID"
+    },
+    {
+      "name": "sub_skill",
+      "kind": "enum",
+      "members": [
+        "LISTENING",
+        "READING",
+        "GRAMMAR",
+        "VOCABULARY",
+        "COHERENCE",
+        "TASK_RESPONSE",
+        "FLUENCY",
+        "PRONUNCIATION"
+      ],
+      "invalidCode": "SUB_SKILL_INVALID"
+    },
+    {
+      "name": "difficulty",
+      "kind": "enum",
+      "members": ["BEGINNER", "INTERMEDIATE", "ADVANCED"],
+      "invalidCode": "DIFFICULTY_INVALID"
+    },
+    {
+      "name": "question_type",
+      "kind": "enum",
+      "members": ["MCQ", "TFNG", "WRITING_PROMPT", "SPEAKING_PROMPT"],
+      "invalidCode": "QUESTION_TYPE_INVALID"
+    },
+    { "name": "passage_id", "kind": "text" },
+    { "name": "passage_text", "kind": "text" },
+    { "name": "audio_url", "kind": "text" },
+    {
+      "name": "prompt_text",
+      "kind": "text",
+      "requireNonEmpty": true,
+      "emptyCode": "PROMPT_TEXT_EMPTY"
+    },
+    {
+      "name": "options",
+      "kind": "json_object",
+      "appliesWhen": { "column": "question_type", "in": ["MCQ"] },
+      "when": { "column": "question_type", "in": ["MCQ"] },
+      "requiredKeys": ["A", "B", "C", "D"],
+      "requireNonEmptyValues": true,
+      "requireUniqueValues": true,
+      "codes": {
+        "empty": "OPTIONS_EMPTY",
+        "notJson": "OPTIONS_NOT_JSON",
+        "notObject": "OPTIONS_NOT_OBJECT",
+        "keysWrong": "OPTIONS_KEYS_WRONG",
+        "valueNotString": "OPTION_VALUE_NOT_STRING",
+        "valueEmpty": "OPTION_VALUE_EMPTY",
+        "valueDuplicate": "OPTION_TEXT_DUPLICATE"
+      }
+    },
+    {
+      "name": "correct_answer",
+      "kind": "text",
+      "appliesWhen": { "column": "question_type", "in": ["MCQ", "TFNG"] },
+      "variants": [
+        {
+          "when": { "column": "question_type", "in": ["MCQ"] },
+          "kind": "json_string_enum",
+          "allowed": ["A", "B", "C", "D"],
+          "codes": {
+            "empty": "CORRECT_ANSWER_EMPTY",
+            "notJson": "CORRECT_ANSWER_NOT_A_KEY",
+            "notString": "CORRECT_ANSWER_NOT_A_KEY",
+            "notAllowed": "CORRECT_ANSWER_NOT_A_KEY"
+          }
+        },
+        {
+          "when": { "column": "question_type", "in": ["TFNG"] },
+          "kind": "loose_enum",
+          "allowed": ["T", "F", "NG"],
+          "codes": {
+            "empty": "CORRECT_ANSWER_EMPTY",
+            "notAllowed": "CORRECT_ANSWER_NOT_A_KEY"
+          }
+        }
+      ]
+    },
+    {
+      "name": "explanation",
+      "kind": "text",
+      "appliesWhen": { "column": "question_type", "in": ["MCQ", "TFNG"] },
+      "requireNonEmpty": true,
+      "emptyCode": "EXPLANATION_EMPTY"
+    },
+    {
+      "name": "exam_type",
+      "kind": "enum",
+      "members": ["IELTS", "SPOKEN", "OET", "GRE", "TOEFL", "PTE"],
+      "blankAllowed": true,
+      "invalidCode": "EXAM_TYPE_INVALID"
+    }
+  ],
+
+  "sourceKeyColumn": "source_key",
+  "embeddedHeaderThreshold": 4,
+
+  "checkOrder": [
+    "enums",
+    "text",
+    "structured",
+    "hook:promptRowShape",
+    "hook:promptRowNoPassageAudio",
+    "credit",
+    "sourceKey"
+  ],
+  "enumOrder": ["skill", "sub_skill", "difficulty", "exam_type", "question_type"],
+
+  "bucket": {
+    "dimensions": ["skill", "sub_skill", "difficulty"],
+    "allowList": {
+      "keyDimension": "skill",
+      "valueDimension": "sub_skill",
+      "invalidCode": "BUCKET_PAIR_INVALID",
+      "allowed": {
+        "LISTENING": ["LISTENING"],
+        "READING": ["READING"],
+        "WRITING": ["GRAMMAR", "VOCABULARY", "COHERENCE", "TASK_RESPONSE"],
+        "SPEAKING": ["GRAMMAR", "VOCABULARY", "FLUENCY", "PRONUNCIATION"]
+      }
+    }
+  },
+
+  "rowAllowList": {
+    "keyColumn": "skill",
+    "valueColumn": "question_type",
+    "code": "QUESTION_TYPE_SKILL_MISMATCH",
+    "allowed": {
+      "LISTENING": ["MCQ"],
+      "READING": ["MCQ", "TFNG"],
+      "WRITING": ["WRITING_PROMPT"],
+      "SPEAKING": ["SPEAKING_PROMPT"]
+    }
+  },
+
+  "sourceKey": {
+    "prefix": "ia",
+    "segments": ["skill", "sub_skill", "difficulty"],
+    "pad": 3,
+    "words": {
+      "skill": {
+        "LISTENING": "listening",
+        "READING": "reading",
+        "WRITING": "writing",
+        "SPEAKING": "speaking"
+      },
+      "sub_skill": {
+        "LISTENING": "listening",
+        "READING": "reading",
+        "GRAMMAR": "grammar",
+        "VOCABULARY": "vocabulary",
+        "COHERENCE": "coherence",
+        "TASK_RESPONSE": "task_response",
+        "FLUENCY": "fluency",
+        "PRONUNCIATION": "pronunciation"
+      },
+      "difficulty": {
+        "BEGINNER": "beginner",
+        "INTERMEDIATE": "intermediate",
+        "ADVANCED": "advanced"
+      }
+    }
+  },
+
+  "filenameChecks": [
+    { "dimension": "difficulty", "onMissing": "nameOther" },
+    { "dimension": "skill", "onMissing": "nameOther" },
+    { "dimension": "sub_skill", "onMissing": "contradictOrUndetermined" }
+  ],
+  "filenameShowWords": false,
+
+  "folderCheck": { "dimension": "difficulty", "code": "DIFFICULTY_FOLDER_MISMATCH" },
+
+  "duplicateIdentity": [
+    { "column": "prompt_text", "normalize": "foldCase" },
+    { "column": "options", "normalize": "optionSignature" }
+  ],
+
+  "expectedRows": { "fallback": 5 },
+
+  "warnings": {
+    "explanationCredit": {
+      "answerColumn": "correct_answer",
+      "explanationColumn": "explanation",
+      "optionKeys": ["A", "B", "C", "D"],
+      "appliesWhen": { "column": "question_type", "in": ["MCQ"] }
+    }
+  },
+
+  "hooks": ["promptRowShape", "promptRowNoPassageAudio", "iaPassageGroups"]
+}

@@ -1,0 +1,3 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+LISTENING,A,s4,1,MCQ,"Where does the speaker go?","{""A"":""home"",""B"":""work"",""C"":""school"",""D"":""gym""}",B,,,rec1.mp3,
+LISTENING,A,s4,2,MCQ,"What time?","{""A"":""six"",""B"":""seven"",""C"":""eight"",""D"":""nine""}",C,,,rec1.mp3,"Speaker: I leave at eight."

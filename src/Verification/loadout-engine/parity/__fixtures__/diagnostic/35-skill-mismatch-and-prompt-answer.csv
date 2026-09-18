@@ -1,0 +1,3 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+WRITING,A,s7,1,MCQ,"Is MCQ allowed for writing?","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}",A,,,,
+SPEAKING,A,s8,1,SPEAKING_PROMPT,"Talk about food.",,A,,,,

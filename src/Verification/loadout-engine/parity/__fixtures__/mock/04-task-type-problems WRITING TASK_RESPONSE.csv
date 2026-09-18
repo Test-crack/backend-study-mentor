@@ -1,0 +1,4 @@
+skill,sub_skill,question_type,task_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+WRITING,TASK_RESPONSE,WRITING_PROMPT,,,,,"Describe the chart of rainfall by month.",,,,IELTS
+WRITING,TASK_RESPONSE,WRITING_PROMPT,Task9,,,,"Discuss whether cities should ban cars.",,,,IELTS
+WRITING,TASK_RESPONSE,MCQ,Task1,,,,"Which sentence is best structured?","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}","""A""","A is best structured.",IELTS

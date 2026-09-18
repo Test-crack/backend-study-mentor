@@ -1,0 +1,3 @@
+skill,sub_skill,question_type,task_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+SPEAKING,FLUENCY,SPEAKING_PROMPT,Part2,,,,"Describe a journey you enjoyed.","{""A"":""x"",""B"":""y"",""C"":""z"",""D"":""w""}",,,IELTS
+SPEAKING,FLUENCY,SPEAKING_PROMPT,Part1,,,https://cdn.test/stray.mp3,"What do you do at weekends?",,,,IELTS

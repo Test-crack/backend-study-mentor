@@ -1,0 +1,3 @@
+skill,sub_skill,question_type,task_type,passage_id,passage_text,audio_url,prompt_text,options,correct_answer,explanation,exam_type
+READING,COHERENCE,TFNG,,p1,"The reef has recovered since 2019.",,"The reef declined after 2019.",,"F","The passage says it recovered.",IELTS
+READING,COHERENCE,TFNG,,p1,"The reef has DIFFERENT text here.",,"The reef is monitored yearly.",,"NG","Monitoring frequency is not stated.",IELTS

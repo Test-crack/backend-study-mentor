@@ -1,0 +1,4 @@
+skill,level,set_id,sequence,question_type,prompt_text,options,correct_answer,min_words,passage_text,audio_file,transcript
+READING,A,,1,MCQ,"A row with no set.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}",B,,"Some passage.",,
+READING,A,s2,1,MCQ,"First in set.","{""A"":""one"",""B"":""two"",""C"":""three"",""D"":""four""}",A,,"Shared passage text.",,
+READING,A,s2,5,MCQ,"Third in set, wrong number.","{""A"":""five"",""B"":""six"",""C"":""seven"",""D"":""eight""}",C,,"Shared passage text.",,
