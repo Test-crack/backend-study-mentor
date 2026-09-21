@@ -9,6 +9,7 @@ import prisma from '../lib/prisma';
 import fs from 'fs';
 import { getVivaRubric } from '../services/viva/registry';
 import { gradeResponse, PromptResponseInput } from '../services/viva/pipeline';
+import { applyGuardrails } from '../services/viva/scoring';
 import { getScale, pctToLevel, provenance } from '../exam-engine';
 import { CEFR_ORDINAL, CefrLevel, GradedResponse } from '../services/viva/types';
 
@@ -122,13 +123,23 @@ export async function submitSpokenEnglishMock(req: AuthRequest, res: Response) {
         const session = await prisma.mockSession.findUnique({ where: { id: session_id } });
         if (!session || session.student_id !== student.id) { cleanup(); return res.status(404).json({ success: false, error: 'Session not found.' }); }
         if (session.status === 'COMPLETED') { cleanup(); return res.json({ success: true, already_done: true }); }
+        // Enforce the monthly window. SE recordings live only in the browser, so an
+        // expired session can't be auto-graded — mark it abandoned (slot consumed),
+        // rather than silently accept a late submit. Mirrors the IELTS window guard.
+        if (session.window_closes_at && session.window_closes_at.getTime() < Date.now()) {
+            cleanup();
+            if (session.status !== 'ABANDONED') {
+                await prisma.mockSession.update({ where: { id: session.id }, data: { status: 'ABANDONED' as any } });
+            }
+            return res.status(409).json({ success: false, error: 'This mock session has expired. Your monthly slot has been used.', slot_status: 'ABANDONED' });
+        }
 
         const rubric = getVivaRubric(student.exam_id)!;
         const scale = getScale(rubric.scaleId);
         const rows = await prisma.iAQuestion.findMany({ where: { id: { in: (session.question_ids as string[]) ?? [] } } });
         const byId = new Map(rows.map((r) => [r.id, r]));
 
-        let graded: Array<{ subskillId: string; levels: Record<string, CefrLevel> }> = [];
+        let graded: Array<{ subskillId: string; resp: GradedResponse }> = [];
         try {
             const toGrade = files
                 .map((f) => ({ f, row: byId.get(f.fieldname) }))
@@ -140,8 +151,8 @@ export async function submitSpokenEnglishMock(req: AuthRequest, res: Response) {
                     promptText: row.passage_text ? `The student read aloud: "${row.passage_text}"` : row.prompt_text,
                     scoredSubskills: Array.isArray(o.scored_subskills) ? o.scored_subskills : undefined,
                 };
-                const g: GradedResponse = await gradeResponse(input, rubric);
-                return { subskillId: ENUM_TO_SUB[String(row.sub_skill)], levels: (g.levels ?? {}) as Record<string, CefrLevel> };
+                const resp: GradedResponse = await gradeResponse(input, rubric);
+                return { subskillId: ENUM_TO_SUB[String(row.sub_skill)], resp };
             }));
         } catch (aiErr) {
             console.error('[submitSpokenEnglishMock] grading failed:', aiErr);
@@ -151,18 +162,43 @@ export async function submitSpokenEnglishMock(req: AuthRequest, res: Response) {
 
         if (graded.length === 0) return res.status(400).json({ success: false, error: 'No recognised answers submitted.' });
 
-        // Per assessed sub-skill: mean of its dimension across prompts → CEFR, lightly smoothed
-        // (50/50) against the previous score — a mock is a full run-through but still one data point.
+        // Apply the SAME rubric guardrails as the IA/diagnostic path (aggregateViva):
+        // empty/inaudible/non-English/under-min-words → no usable response; short answer → cap;
+        // off-topic → cap the affected subskills. Without this the mock would bank a silent or
+        // off-topic recording at whatever raw level the model returned.
+        const guarded = graded.map((x) => ({ subskillId: x.subskillId, levels: applyGuardrails(x.resp, rubric) }));
+        const noResponseCount = guarded.filter((g) => g.levels === null).length;
+        // Too many unusable answers → withhold rather than store a misleading level; leave the
+        // session IN_PROGRESS so the student can retake within the window (no slot burned).
+        if (noResponseCount >= rubric.guardrails.withholdNoResponseCount) {
+            return res.status(422).json({
+                success: false,
+                error: `We couldn't score enough of your answers (${noResponseCount} of ${guarded.length} had no usable response). Please retake your mock.`,
+                withheld: true, can_retry: true,
+            });
+        }
+
+        // Per assessed sub-skill: mean of its (guardrail-capped) dimension across prompts → CEFR,
+        // lightly smoothed (50/50) against the previous score — a mock is a full run-through but
+        // still one data point.
         const prev: any = (await prisma.studentCompetencyMatrix.findFirst({ where: { student_id: student.id, skill: 'SPEAKING' } }))?.sub_scores ?? {};
         const profile: any[] = Array.isArray(prev.subskillProfile) ? [...prev.subskillProfile] : [];
-        const assessed = [...new Set(graded.map((g) => g.subskillId))];
+        const assessed = [...new Set(guarded.map((g) => g.subskillId))];
         const sectionScores: Array<{ subskill: string; level: string; previous_level: string | null }> = [];
         const storedScores: Array<{ skill: string; sub_skill: string; band: number; correct: number; total: number; ai_graded: boolean; cefr_label: string }> = [];
 
         for (const subId of assessed) {
-            const vals = graded.filter((g) => g.subskillId === subId).map((g) => rubric.levelToScore[g.levels[subId]] ?? rubric.levelToScore.below_a1);
-            const gradedPct = vals.reduce((a, b) => a + b, 0) / vals.length;
+            // Only prompts targeting this sub-skill that produced a usable, guardrail-capped level.
+            const vals = guarded
+                .filter((g) => g.subskillId === subId && g.levels !== null)
+                .map((g) => rubric.levelToScore[(g.levels as Record<string, CefrLevel>)[subId]] ?? rubric.levelToScore.below_a1);
             const row = profile.find((p) => p.id === subId);
+            // No usable answer for this sub-skill → keep the previous score, don't overwrite with noise.
+            if (vals.length === 0) {
+                if (row) sectionScores.push({ subskill: subId, level: row.level, previous_level: row.level });
+                continue;
+            }
+            const gradedPct = vals.reduce((a, b) => a + b, 0) / vals.length;
             const prevPct = Number(row?.score ?? gradedPct);
             const smoothed = Math.round((0.5 * prevPct + 0.5 * gradedPct) * 10) / 10;
             const level = (pctToLevel(smoothed, scale) as any) ?? 'b1';

@@ -4,7 +4,7 @@ import prisma from '../lib/prisma';
 import { gradeIAWritingPrompt, gradeIASpeakingPrompt, AIGradingError } from '../lib/iaGrading';
 import { applySmoothing } from '../lib/iaProcessor';
 import { BAND_MIN, toBand, internalToBand } from '../lib/bandScale';
-import { scoreComponent, scoreOverall, provenance } from '../exam-engine';
+import { scoreComponent, scoreOverall, provenance, getExamConfig } from '../exam-engine';
 import { paramStr } from '../utils/httpParams';
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -32,6 +32,21 @@ const MOCK_Q_WS_MCQ    = 4;
 const MOCK_Q_WS_PROMPT = 1;
 
 const MOCK_SKILL_ORDER = ['LISTENING', 'READING', 'WRITING', 'SPEAKING'] as const;
+
+// The skills a given exam actually assesses, resolved from the engine config and
+// uppercased to match SkillType. IELTS/OET → all four; Spoken English → SPEAKING
+// only (its L/R/W components are assessed:false). Eligibility must key off THIS,
+// not the fixed four, or a speaking-only exam can never satisfy the mock gate.
+// Falls back to the IELTS four if the config is missing so nothing regresses.
+function assessedSkillsFor(examId: string | null | undefined): string[] {
+    try {
+        const comps = (getExamConfig(examId || 'ielts')?.components ?? []) as Array<{ id: string; assessed?: boolean }>;
+        const skills = comps.filter(c => c.assessed).map(c => String(c.id).toUpperCase());
+        return skills.length ? skills : [...MOCK_SKILL_ORDER];
+    } catch {
+        return [...MOCK_SKILL_ORDER];
+    }
+}
 
 const WRITING_SUB_SKILLS  = ['GRAMMAR', 'VOCABULARY', 'COHERENCE', 'TASK_RESPONSE'] as const;
 const SPEAKING_SUB_SKILLS = ['GRAMMAR', 'VOCABULARY', 'FLUENCY',   'PRONUNCIATION'] as const;
@@ -159,7 +174,9 @@ interface EligibilityResult {
     currentBands:    Map<string, number>;
 }
 
-async function checkEligibility(studentId: string): Promise<EligibilityResult> {
+async function checkEligibility(studentId: string, examId: string): Promise<EligibilityResult> {
+    // Exam-aware: which skills must be IA-covered / can drive band improvement.
+    const requiredSkills = assessedSkillsFor(examId);
     const [completedIAs, diagnosticHistory, competency] = await Promise.all([
         prisma.iASession.findMany({
             where:  { student_id: studentId, status: 'COMPLETED' },
@@ -196,7 +213,7 @@ async function checkEligibility(studentId: string): Promise<EligibilityResult> {
 
     let bestImprovement = 0;
     let improvedSkill: string | null = null;
-    for (const skill of MOCK_SKILL_ORDER) {
+    for (const skill of requiredSkills) {
         const diag = diagnosticBands.get(skill) ?? null;
         const curr = currentBands.get(skill) ?? null;
         if (diag !== null && curr !== null && (curr - diag) > bestImprovement) {
@@ -213,7 +230,7 @@ async function checkEligibility(studentId: string): Promise<EligibilityResult> {
         const rem = MOCK_IA_THRESHOLD - totalIAs;
         reasons.push({ key: 'ia_count', message: `Complete ${rem} more IA${rem !== 1 ? 's' : ''} (${totalIAs}/${MOCK_IA_THRESHOLD} done)` });
     }
-    for (const skill of MOCK_SKILL_ORDER) {
+    for (const skill of requiredSkills) {
         if (!skillsCovered.has(skill))
             reasons.push({ key: `ia_skill_${skill.toLowerCase()}`, message: `Complete at least 1 IA covering ${skill}` });
     }
@@ -313,7 +330,7 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
             }
         }
 
-        const eligibility = await checkEligibility(student.id);
+        const eligibility = await checkEligibility(student.id, student.exam_id);
         const monthYear   = currentMonthYear();
 
         const thisMonthSessions = await prisma.mockSession.findMany({
@@ -364,7 +381,7 @@ export async function getMockStatus(req: AuthRequest, res: Response) {
             progress: {
                 ia_completed:    eligibility.totalIAs,
                 ia_required:     MOCK_IA_THRESHOLD,
-                ia_per_skill:    Object.fromEntries(MOCK_SKILL_ORDER.map(s => [s, eligibility.skillsCovered.has(s)])),
+                ia_per_skill:    Object.fromEntries(assessedSkillsFor(student.exam_id).map(s => [s, eligibility.skillsCovered.has(s)])),
                 band_improved:   eligibility.bandImproved,
                 best_improvement: Math.round(eligibility.bestImprovement * 10) / 10,
                 improved_skill:  eligibility.improvedSkill,
@@ -421,7 +438,7 @@ export async function getMockQuestions(req: AuthRequest, res: Response) {
         }
 
         // â”€â”€ 2. Validate eligibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        const eligibility = await checkEligibility(student.id);
+        const eligibility = await checkEligibility(student.id, student.exam_id);
         if (!eligibility.isEligible) return res.status(403).json({ success: false, error: 'Not eligible for mock test.', reasons: eligibility.reasons });
 
         // â”€â”€ 3. Check monthly slot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
