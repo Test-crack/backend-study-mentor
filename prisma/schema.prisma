@@ -889,7 +889,9 @@ model DrillSession {
   id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   student_id         String             @db.Uuid
   skill              SkillType
-  sub_skill          SubSkillType
+  // Config-driven: an exam's own sub-skill / criterion id (e.g. OET 'genre_style'), not the
+  // fixed SubSkillType enum. The enum type is retained for IA + the verification pipeline.
+  sub_skill          String
   drill_type         String?
   prompts_completed  Int
   momentum_earned    Int
@@ -957,7 +959,8 @@ model LexiGridWord {
 model DrillQuestion {
   id             String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   skill          SkillType
-  sub_skill      SubSkillType
+  // Config-driven sub-skill / criterion id (e.g. OET 'genre_style') — see DrillSession.sub_skill.
+  sub_skill      String
   level          RecommendationLevel
   drill_type     String              @db.VarChar(50)
   prompt_text    String

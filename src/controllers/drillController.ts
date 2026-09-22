@@ -1,16 +1,19 @@
 ﻿import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { DrillSessionStatus, SkillType, SubSkillType, RecommendationLevel } from '@prisma/client';
+import { DrillSessionStatus, SkillType, RecommendationLevel } from '@prisma/client';
 
 // Derived from Prisma enums â€” stays in sync automatically when schema changes
 const VALID_SKILLS     = Object.values(SkillType) as string[];
-const VALID_SUB_SKILLS = Object.values(SubSkillType) as string[];
+// sub_skill is now a config-driven id (any exam's own criterion/sub-skill), not a fixed enum,
+// so validate the FORMAT (an uppercase slug) rather than membership. Unknown slugs simply match
+// no rows (404), never a DB enum-cast error.
+const SUBSKILL_SLUG = /^[A-Z][A-Z0-9_]*$/;
 const VALID_LEVELS     = Object.values(RecommendationLevel) as string[];
 import { todayStartIST, currentISTDate, yesterdayISTDate } from '../lib/timezone';
 import { paramStr } from '../utils/httpParams';
 import { BAND_MIN } from '../lib/bandScale';
-import { examWeaknessGap } from '../exam-engine';
+import { examWeaknessGap, getExamConfig } from '../exam-engine';
 import { getVivaRubric } from '../services/viva/registry';
 
 interface DrillItem {
@@ -85,6 +88,13 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         // drill flow (2 drills + LexiGrid → unlock). Config-driven via the viva registry, NOT
         // "everything-but-IELTS", so OET (per_component, no viva rubric) takes the IELTS path.
         const isViva = !!getVivaRubric(student.exam_id);
+        // Per-component exams (OET) drive drills off their OWN config sub-skills (the component
+        // criteria, e.g. writing: purpose/content/…), ranked by the per-criterion scores stored in
+        // sub_scores.criteria — NOT the IELTS hardcoded grammar/vocab/etc. mapping. Fully config-driven:
+        // a new per-component exam needs no code here, just its config subskills + imported drills.
+        const examCfg: any = getExamConfig(student.exam_id);
+        const perComponent = examCfg?.overall?.mode === 'per_component';
+        const examComponents: any[] = Array.isArray(examCfg?.components) ? examCfg.components : [];
         // Which speaking sub-skills are drillable. startDrillSession fetches questions from the SHARED
         // bank (no exam_id filter — reusing the IELTS bank for SE is intentional), so this gate must
         // match it: skip only sub-skills with NO MCQ drill content anywhere (e.g. INTERACTION), not
@@ -120,6 +130,34 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
                     const acc = accuracyByKey.get(`${matrix.skill}::${sub}`) ?? 0;
                     const weakness = 0.6 * (1 - acc) + 0.4 * (1 - Math.min(1, scorePct / 100));
                     items.push({ skill: matrix.skill, sub_skill: sub, skill_band_score: skillBandScore, sub_skill_score: scorePct, weakness });
+                }
+                continue;
+            }
+
+            // Per-component exams (OET): sub-skills come from the exam config's component.subskills,
+            // ranked by the per-criterion scores in sub_scores.criteria. Component-level skills with
+            // no subskills (Listening/Reading) drill the skill itself. Fully config-driven.
+            if (perComponent) {
+                const comp = examComponents.find((c) => String(c?.id).toUpperCase() === String(matrix.skill).toUpperCase());
+                const subs: any[] = Array.isArray(comp?.subskills) ? comp.subskills : [];
+                const criteria = (subScores.criteria ?? {}) as Record<string, any>;
+                if (subs.length === 0) {
+                    // Accuracy-scored component (L/R): drill the skill itself (sub_skill = the skill id).
+                    items.push({ skill: matrix.skill, sub_skill: matrix.skill, skill_band_score: skillBandScore, sub_skill_score: skillBandScore, weakness: weaknessOf(matrix.skill, matrix.skill, skillBandScore) });
+                } else {
+                    for (const s of subs) {
+                        // criteria is keyed by the lowercase config id (the grader writes it);
+                        // the drill sub_skill is UPPERCASED to match the enum-era convention that
+                        // startDrillSession/getActiveDrillSession still uppercase inbound params.
+                        const subId = String(s.id).toUpperCase();
+                        const c = criteria[s.id];
+                        // criterion score/max → a 0–9 proxy so the client's level derivation + weakness
+                        // ranking stay on the same domain as the band-based exams.
+                        const pct = c && Number(c.max) > 0 ? Math.max(0, Math.min(1, Number(c.score) / Number(c.max))) : (skillBandScore / 9);
+                        const proxyBand = Math.round(pct * 9 * 10) / 10;
+                        const acc = accuracyByKey.get(`${matrix.skill}::${subId}`) ?? 0;
+                        items.push({ skill: matrix.skill, sub_skill: subId, skill_band_score: skillBandScore, sub_skill_score: proxyBand, weakness: 0.6 * (1 - acc) + 0.4 * (1 - pct) });
+                    }
                 }
                 continue;
             }
@@ -282,7 +320,7 @@ export async function getDrillQuestions(req: AuthRequest, res: Response) {
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
             WHERE skill = ${skill}::"SkillType"
-              AND sub_skill = ${subskill}::"SubSkillType"
+              AND sub_skill = ${subskill}
               AND level = ${level}::"RecommendationLevel"
               AND exam_id = ${examId}
               AND is_active = true
@@ -442,8 +480,8 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
         if (!VALID_SKILLS.includes(skillUp)) {
             return res.status(400).json({ success: false, error: `Invalid skill. Expected one of: ${VALID_SKILLS.join(', ')}.` });
         }
-        if (!VALID_SUB_SKILLS.includes(subSkillUp)) {
-            return res.status(400).json({ success: false, error: `Invalid sub_skill. Expected one of: ${VALID_SUB_SKILLS.join(', ')}.` });
+        if (!SUBSKILL_SLUG.test(subSkillUp)) {
+            return res.status(400).json({ success: false, error: 'Invalid sub_skill format.' });
         }
         if (!VALID_LEVELS.includes(levelUp)) {
             return res.status(400).json({ success: false, error: `Invalid level. Expected one of: ${VALID_LEVELS.join(', ')}.` });
@@ -491,7 +529,7 @@ export async function startDrillSession(req: AuthRequest, res: Response) {
             SELECT id, skill, sub_skill, level, drill_type, prompt_text, options, correct_answer, explanation, is_active
             FROM drill_questions
             WHERE skill     = ${skillUp}::"SkillType"
-              AND sub_skill = ${subSkillUp}::"SubSkillType"
+              AND sub_skill = ${subSkillUp}
               AND level     = ${levelUp}::"RecommendationLevel"
               AND exam_id   = ${exam}
               AND is_active = true
@@ -566,7 +604,7 @@ export async function getActiveDrillSession(req: AuthRequest, res: Response) {
         // resolve to "no active session", never a Prisma validation 500.
         const skillUp    = String(skill).toUpperCase();
         const subSkillUp = String(sub_skill).toUpperCase().replace(/\s+/g, '_');
-        if (!VALID_SKILLS.includes(skillUp) || !VALID_SUB_SKILLS.includes(subSkillUp)) {
+        if (!VALID_SKILLS.includes(skillUp) || !SUBSKILL_SLUG.test(subSkillUp)) {
             return res.json({ success: true, session: null });
         }
 
