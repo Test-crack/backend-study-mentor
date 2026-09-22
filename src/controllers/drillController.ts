@@ -270,10 +270,16 @@ export async function getNextActionDrill(req: AuthRequest, res: Response) {
         // (which breaks for exams whose sub_scores carry a different shape, e.g. OET's meta flags).
         // NB: we DON'T re-sort by score on the client — for exams whose sub-skills tie on the skill
         // band (OET), a score-sort would pin the same skill's sub-skills to the top forever.
+        // Human labels straight from the exam config (e.g. GENRE_STYLE → "Genre & Style"), keyed by
+        // the uppercased subskill id. IELTS/SE have no per-component config subskills here → no label,
+        // and the client falls back to humanising the id.
+        const subLabels: Record<string, string> = {};
+        for (const c of examComponents) for (const s of (c?.subskills ?? [])) subLabels[String(s.id).toUpperCase()] = s.label ?? s.id;
         const focus_queue = N > 0
             ? Array.from({ length: N }, (_, i) => available[(startIndex + i) % N]).map((it) => ({
                 skill: it.skill,
                 sub_skill: it.sub_skill,
+                label: subLabels[it.sub_skill] ?? undefined,
                 score: it.sub_skill_score,
             }))
             : [];
