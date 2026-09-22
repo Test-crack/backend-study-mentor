@@ -12,7 +12,23 @@ import prisma from '../lib/prisma';
 import { EngineConfig, ExamConfigEntry } from './types';
 import { validateConfig } from './validator';
 
-let CONFIG: EngineConfig | null = null;
+let CONFIG: EngineConfig | null = null;                 // pure FILE config (built-ins) — the source of truth for shipped exams
+let AUTHORED: Record<string, ExamConfigEntry> = {};     // published DB-authored exams (Exam.source='authored')
+let MERGED: EngineConfig | null = null;                 // what the engine actually serves: built-ins + authored
+
+/**
+ * Recompute the served view. File built-ins WIN on any id collision, so a DB row can never
+ * shadow a shipped exam (IELTS/SE/OET are locked by construction). Scales stay the built-in
+ * library — authored exams reuse it (referencing an unknown scale fails config verification).
+ */
+function rebuildMerged(): void {
+  if (!CONFIG) { MERGED = null; return; }
+  const exams: Record<string, ExamConfigEntry> = { ...CONFIG.exams };
+  for (const [id, entry] of Object.entries(AUTHORED)) {
+    if (!exams[id]) exams[id] = entry;   // never override a built-in
+  }
+  MERGED = { ...CONFIG, exams };
+}
 
 export function configFilePath(): string {
   return path.join(__dirname, 'exam-engine-config.v2.json');
@@ -40,14 +56,16 @@ export async function loadExamEngine(): Promise<void> {
   }
 
   CONFIG = cfg;
+  rebuildMerged();   // built-ins available immediately, even if the DB is unreachable
 
-  // Seeding needs the DB; a blip here must not take down the server, but an
-  // invalid config (above) must. So: fatal validation, best-effort seed.
+  // Seeding + authored-exam load need the DB; a blip must not take down the server, but an
+  // invalid FILE config (above) must. So: fatal validation, best-effort DB.
   try {
     await seedExamConfigs(cfg);
   } catch (err: any) {
     console.warn(`[exam-engine] ⚠️  could not seed exam_configs (engine still runs from cache): ${err?.message ?? err}`);
   }
+  await reloadAuthoredExams();   // merge published DB-authored exams on top of the built-ins
 
   console.log(
     `[exam-engine] loaded config v${cfg.config_version} (engine v${cfg.engine_version}) — ` +
@@ -60,8 +78,8 @@ async function seedExamConfigs(cfg: EngineConfig): Promise<void> {
   for (const [examId, exam] of Object.entries(cfg.exams)) {
     await prisma.exam.upsert({
       where: { id: examId },
-      update: { label: exam?.naming?.public_display_name ?? examId, status: String(exam?.status ?? 'reserved') },
-      create: { id: examId, label: exam?.naming?.public_display_name ?? examId, status: String(exam?.status ?? 'reserved') },
+      update: { label: exam?.naming?.public_display_name ?? examId, status: String(exam?.status ?? 'reserved'), source: 'file' },
+      create: { id: examId, label: exam?.naming?.public_display_name ?? examId, status: String(exam?.status ?? 'reserved'), source: 'file' },
     });
 
     const existing = await prisma.examConfig.findUnique({
@@ -75,15 +93,41 @@ async function seedExamConfigs(cfg: EngineConfig): Promise<void> {
   }
 }
 
+/**
+ * Load published DB-authored exams (source='authored', not draft, with an active config)
+ * and merge them on top of the file built-ins. Best-effort: on any DB error the built-ins
+ * still serve. Call at boot and after any publish/unpublish so the served view stays current.
+ */
+export async function reloadAuthoredExams(): Promise<void> {
+  try {
+    const rows = await prisma.examConfig.findMany({
+      where: { is_active: true, exams: { source: 'authored', status: { in: ['live', 'reserved'] } } },
+    });
+    const next: Record<string, ExamConfigEntry> = {};
+    for (const r of rows) next[r.exam_id] = r.config as unknown as ExamConfigEntry;
+    AUTHORED = next;
+    rebuildMerged();
+    console.log(`[exam-engine] authored exams merged: ${Object.keys(AUTHORED).length}`);
+  } catch (err: any) {
+    console.warn(`[exam-engine] ⚠️  could not load authored exams (built-ins still serve): ${err?.message ?? err}`);
+  }
+}
+
 // ── Read accessors (from the in-memory cache) ───────────────────────────────
 
 export function getEngineConfig(): EngineConfig {
-  if (!CONFIG) throw new Error('[exam-engine] config not loaded — call loadExamEngine() at startup');
-  return CONFIG;
+  if (!MERGED) throw new Error('[exam-engine] config not loaded — call loadExamEngine() at startup');
+  return MERGED;   // file built-ins + published authored exams (built-ins win on collision)
 }
 
 export function getExamConfig(examId: string): ExamConfigEntry | null {
   return getEngineConfig().exams[examId] ?? null;
+}
+
+/** Is this a FILE built-in (IELTS/SE/OET/…)? Built-ins are file-locked — the dashboard
+ *  may never author or overwrite them. Reads the pure file config, not the merged view. */
+export function isBuiltinExam(examId: string): boolean {
+  return !!CONFIG?.exams[examId];
 }
 
 export function listExamConfigs(): ExamConfigEntry[] {

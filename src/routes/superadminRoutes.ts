@@ -41,6 +41,28 @@ router.get('/subscriptions', superadminController.getSubscriptions);
 // GET /api/superadmin/exams              — list exams (status/label)
 // GET /api/superadmin/exams/:id/config   — full config entry (view / draft template)
 router.get('/exams', superadminController.listExamsForConfig);
+router.get('/exams/authored', superadminController.listAuthoredExams);   // before :id routes
 router.get('/exams/:id/config', superadminController.getExamConfigForView);
+
+// Config verification (Stage 0) — structural + plain-English interpretation, READ-ONLY.
+// GET  /api/superadmin/exams/:id/verify  — verify a loaded exam
+// POST /api/superadmin/config/verify     — verify a pasted candidate { exam, scales? }
+router.get('/exams/:id/verify', superadminController.verifyExistingExamConfig);
+router.post('/config/verify', superadminController.verifyCandidateConfig);
+
+// Exam authoring lifecycle (Stage 0/1) — DRAFT → verify-gated PUBLISH → LIVE (immutable).
+// Built-ins (source='file') are file-locked and rejected by every write below.
+// POST   /api/superadmin/exams              — create a draft
+// GET    /api/superadmin/exams/:id/draft    — fetch a draft to resume editing
+// PUT    /api/superadmin/exams/:id/draft    — replace a draft's config
+// POST   /api/superadmin/exams/:id/publish  — publish (draft → live/reserved)
+// POST   /api/superadmin/exams/:id/disable  — take a published exam out of service
+// DELETE /api/superadmin/exams/:id          — delete a draft
+router.post('/exams', superadminController.createExamDraft);
+router.get('/exams/:id/draft', superadminController.getExamDraft);
+router.put('/exams/:id/draft', superadminController.updateExamDraft);
+router.post('/exams/:id/publish', superadminController.publishExam);
+router.post('/exams/:id/disable', superadminController.disableExam);
+router.delete('/exams/:id', superadminController.deleteExamDraft);
 
 export default router;

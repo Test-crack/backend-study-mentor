@@ -802,7 +802,8 @@ model InstituteExamSubscription {
 model Exam {
   id      String       @id @db.VarChar(40) // "ielts", "spoken_english", "oet", "gre", "gmat"
   label   String       @db.VarChar(120)
-  status  String       @default("reserved") @db.VarChar(20) // live | reserved | disabled
+  status  String       @default("reserved") @db.VarChar(20) // draft | live | reserved | disabled
+  source  String       @default("file")     @db.VarChar(20) // file = built-in, file-locked · authored = dashboard-created (DB)
   configs ExamConfig[]
 
   @@map("exams")

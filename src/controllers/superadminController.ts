@@ -5,7 +5,8 @@ import prisma from '../lib/prisma';
 import { sendInvite } from '../lib/sendInvite';
 import { UserRoleType } from '@prisma/client';
 import { paramStr } from '../utils/httpParams';
-import { listExamConfigs, getExamConfig } from '../exam-engine';
+import { listExamConfigs, getExamConfig, isBuiltinExam, reloadAuthoredExams } from '../exam-engine';
+import { verifyConfig } from '../Verification/config/verify';
 
 const VALID_ROLES = Object.values(UserRoleType);
 const VALID_BILLING_STATUSES = ['TRIAL', 'ACTIVE', 'CANCELLED'] as const;
@@ -43,6 +44,179 @@ export async function getExamConfigForView(req: AuthRequest, res: Response) {
     } catch (err: any) {
         console.error('[superadmin] getExamConfigForView error:', err);
         return res.status(500).json({ error: 'Failed to fetch exam config' });
+    }
+}
+
+// ─── Config verification (Stage 0) ──────────────────────────────────────────────────────
+// Layer 1 = structural ("will the engine run it?"), Layer 2 = plain-English interpretation
+// (the SAME resolution the runtime uses — so admin + app never diverge). Read-only.
+
+/** GET /api/superadmin/exams/:id/verify — verify an existing (loaded) exam config. */
+export async function verifyExistingExamConfig(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const cfg = getExamConfig(examId);
+        if (!cfg) return res.status(404).json({ error: `Unknown exam '${examId}'` });
+        return res.json({ data: verifyConfig(cfg) });
+    } catch (err: any) {
+        console.error('[superadmin] verifyExistingExamConfig error:', err);
+        return res.status(500).json({ error: 'Failed to verify exam config' });
+    }
+}
+
+/**
+ * POST /api/superadmin/config/verify — verify a pasted CANDIDATE config before it is ever
+ * seeded. Body: an exam-config object, or `{ exam, scales? }` when it brings its own scales.
+ */
+export async function verifyCandidateConfig(req: AuthRequest, res: Response) {
+    try {
+        const body: any = req.body ?? {};
+        const exam = body.exam ?? body;
+        if (!exam || typeof exam !== 'object' || Array.isArray(exam)) {
+            return res.status(400).json({ error: 'Body must be an exam-config object (or { exam, scales }).' });
+        }
+        return res.json({ data: verifyConfig(exam, body.scales ?? {}) });
+    } catch (err: any) {
+        console.error('[superadmin] verifyCandidateConfig error:', err);
+        return res.status(500).json({ error: 'Failed to verify candidate config' });
+    }
+}
+
+// ─── Exam authoring lifecycle (Stage 0/1) ───────────────────────────────────────────────
+// zero → DRAFT (DB, editable) → PUBLISH (verify-gated) → LIVE (immutable to the admin).
+// Built-ins (source='file') are file-locked and can NEVER be authored/edited here. Live
+// changes to a published exam go through the dev team (a new config version).
+
+const cv = (exam: any): string => String(exam?.config_version ?? 'v1');
+
+/** Guard: the exam must exist, be dashboard-authored, and still be a draft. */
+async function loadAuthoredDraft(examId: string): Promise<{ err?: number; msg?: string }> {
+    const exam = await prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam) return { err: 404, msg: `Unknown exam '${examId}'` };
+    if (exam.source !== 'authored') return { err: 403, msg: `'${examId}' is a built-in exam — file-locked; changes go through the dev team.` };
+    if (exam.status !== 'draft') return { err: 409, msg: `'${examId}' is ${exam.status}, not a draft — published exams are immutable here (ask the dev team for changes).` };
+    return {};
+}
+
+/** GET /api/superadmin/exams/authored — list dashboard-authored exams (incl. drafts). */
+export async function listAuthoredExams(_req: AuthRequest, res: Response) {
+    try {
+        const rows = await prisma.exam.findMany({ where: { source: 'authored' }, orderBy: { id: 'asc' } });
+        return res.json({ data: rows.map((r) => ({ exam_id: r.id, label: r.label, status: r.status, source: r.source })) });
+    } catch (err: any) {
+        console.error('[superadmin] listAuthoredExams error:', err);
+        return res.status(500).json({ error: 'Failed to list authored exams' });
+    }
+}
+
+/** POST /api/superadmin/exams — create a DRAFT authored exam. Body: an exam config (or { exam, scales }). */
+export async function createExamDraft(req: AuthRequest, res: Response) {
+    try {
+        const body: any = req.body ?? {};
+        const exam = body.exam ?? body;
+        const examId = String(exam?.exam_id ?? '').trim();
+        if (!/^[a-z][a-z0-9_]*$/.test(examId)) return res.status(400).json({ error: 'exam_id must be a lowercase slug (a–z, 0–9, _).' });
+        if (isBuiltinExam(examId)) return res.status(409).json({ error: `'${examId}' is a built-in exam — built-ins are file-locked and cannot be authored from the dashboard.` });
+        if (await prisma.exam.findUnique({ where: { id: examId } })) return res.status(409).json({ error: `An exam '${examId}' already exists.` });
+
+        const label = String(exam?.naming?.public_display_name ?? examId);
+        await prisma.exam.create({ data: { id: examId, label, status: 'draft', source: 'authored' } });
+        await prisma.examConfig.create({ data: { exam_id: examId, config_version: cv(exam), config: exam, is_active: false } });
+        return res.status(201).json({ data: { exam_id: examId, status: 'draft', verify: verifyConfig(exam, body.scales ?? {}) } });
+    } catch (err: any) {
+        console.error('[superadmin] createExamDraft error:', err);
+        return res.status(500).json({ error: 'Failed to create draft' });
+    }
+}
+
+/** GET /api/superadmin/exams/:id/draft — fetch a draft's config to resume editing. */
+export async function getExamDraft(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const exam = await prisma.exam.findUnique({ where: { id: examId } });
+        if (!exam || exam.source !== 'authored') return res.status(404).json({ error: `No authored exam '${examId}'` });
+        const cfg = await prisma.examConfig.findFirst({ where: { exam_id: examId }, orderBy: { created_at: 'desc' } });
+        return res.json({ data: { exam_id: examId, status: exam.status, config: cfg?.config ?? null } });
+    } catch (err: any) {
+        console.error('[superadmin] getExamDraft error:', err);
+        return res.status(500).json({ error: 'Failed to fetch draft' });
+    }
+}
+
+/** PUT /api/superadmin/exams/:id/draft — replace a draft's config (draft-only). */
+export async function updateExamDraft(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const g = await loadAuthoredDraft(examId);
+        if (g.err) return res.status(g.err).json({ error: g.msg });
+
+        const body: any = req.body ?? {};
+        const exam = { ...(body.exam ?? body), exam_id: examId };   // id is immutable once created
+        // One draft config per exam — replace it wholesale (drafts are cheap + never referenced by results).
+        await prisma.examConfig.deleteMany({ where: { exam_id: examId } });
+        await prisma.examConfig.create({ data: { exam_id: examId, config_version: cv(exam), config: exam, is_active: false } });
+        await prisma.exam.update({ where: { id: examId }, data: { label: String(exam?.naming?.public_display_name ?? examId) } });
+        return res.json({ data: { exam_id: examId, status: 'draft', verify: verifyConfig(exam, body.scales ?? {}) } });
+    } catch (err: any) {
+        console.error('[superadmin] updateExamDraft error:', err);
+        return res.status(500).json({ error: 'Failed to update draft' });
+    }
+}
+
+/** POST /api/superadmin/exams/:id/publish — verify-gated publish (draft → live/reserved). */
+export async function publishExam(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const g = await loadAuthoredDraft(examId);
+        if (g.err) return res.status(g.err).json({ error: g.msg });
+
+        const targetStatus = ['live', 'reserved'].includes(req.body?.status) ? req.body.status : 'live';
+        const draftCfg = await prisma.examConfig.findFirst({ where: { exam_id: examId }, orderBy: { created_at: 'desc' } });
+        if (!draftCfg) return res.status(409).json({ error: 'No draft config to publish.' });
+
+        const exam = draftCfg.config as any;
+        const verify = verifyConfig(exam);
+        if (verify.layer1.outcome === 'fail') {
+            return res.status(422).json({ error: 'Config fails structural verification — fix Layer 1 before publishing.', data: { verify } });
+        }
+        await prisma.examConfig.update({ where: { id: draftCfg.id }, data: { is_active: true } });
+        await prisma.exam.update({ where: { id: examId }, data: { status: targetStatus } });
+        await reloadAuthoredExams();   // the engine now serves it
+        return res.json({ data: { exam_id: examId, status: targetStatus, verify } });
+    } catch (err: any) {
+        console.error('[superadmin] publishExam error:', err);
+        return res.status(500).json({ error: 'Failed to publish' });
+    }
+}
+
+/** POST /api/superadmin/exams/:id/disable — take a published authored exam out of service (keeps records). */
+export async function disableExam(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const exam = await prisma.exam.findUnique({ where: { id: examId } });
+        if (!exam) return res.status(404).json({ error: `Unknown exam '${examId}'` });
+        if (exam.source !== 'authored') return res.status(403).json({ error: `'${examId}' is a built-in exam — ask the dev team.` });
+        if (!['live', 'reserved'].includes(exam.status)) return res.status(409).json({ error: `'${examId}' is ${exam.status}; nothing to disable.` });
+        await prisma.exam.update({ where: { id: examId }, data: { status: 'disabled' } });
+        await reloadAuthoredExams();
+        return res.json({ data: { exam_id: examId, status: 'disabled' } });
+    } catch (err: any) {
+        console.error('[superadmin] disableExam error:', err);
+        return res.status(500).json({ error: 'Failed to disable' });
+    }
+}
+
+/** DELETE /api/superadmin/exams/:id — delete a DRAFT (only). Cascades its config. */
+export async function deleteExamDraft(req: AuthRequest, res: Response) {
+    try {
+        const examId = paramStr(req.params.id);
+        const g = await loadAuthoredDraft(examId);
+        if (g.err) return res.status(g.err).json({ error: g.msg });
+        await prisma.exam.delete({ where: { id: examId } });   // ExamConfig cascades
+        return res.json({ data: { exam_id: examId, deleted: true } });
+    } catch (err: any) {
+        console.error('[superadmin] deleteExamDraft error:', err);
+        return res.status(500).json({ error: 'Failed to delete draft' });
     }
 }
 

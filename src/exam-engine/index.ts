@@ -20,6 +20,8 @@ export {
 export type { PublicExamConfig, PublicExamSummary } from './publicConfig';
 export {
   loadExamEngine,
+  reloadAuthoredExams,
+  isBuiltinExam,
   getEngineConfig,
   getExamConfig,
   listExamConfigs,
