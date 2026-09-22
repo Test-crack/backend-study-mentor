@@ -108,6 +108,13 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 
     if (!DO_INSERT) { console.log('\n(dry-run — set DO_INSERT=1 to replace the generic OET W/S drills)'); return; }
 
+    // Safety: never delete the working generic drills for a sparse/failed generation. Require at
+    // least 5 per job (a viable session) before touching live data.
+    if (all.length < jobs.length * 5) {
+      console.log(`\n❌ ABORT: only ${all.length}/${jobs.length * 5} min MCQs generated — leaving existing OET drills untouched.`);
+      return;
+    }
+
     // Replace: delete the old generic Writing/Speaking OET drills (keep L/R), then insert criterion drills.
     const del = await p.$executeRawUnsafe(`DELETE FROM drill_questions WHERE exam_id='${EXAM}' AND skill IN ('WRITING','SPEAKING')`);
     console.log(`\ndeleted ${del} old generic OET W/S drills (L/R kept)`);
